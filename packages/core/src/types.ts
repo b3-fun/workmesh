@@ -13,13 +13,36 @@ export interface AgentSession {
   phase?: string;
   /** Parent session key whose own count this session subsumes (avoids double-count). */
   orchestrator?: string;
+  /** Working only on its own background shells/subagents; it resumes by itself. */
+  background?: boolean;
+  /** Full working directory (local only — never formatted into the Slack status). */
+  cwd?: string;
+  /** Human session name (Claude Code's session name, or one a custom source reports). */
+  name?: string;
   startedAt: number; // epoch ms
   updatedAt: number; // epoch ms of last event
+  /** epoch ms when the session entered its current state (working/waiting/idle). */
+  stateSince: number;
+}
+
+/** A session as the snapshot presents it, with fan-out folded in. */
+export interface SessionView extends AgentSession {
+  /**
+   * Agents running under this session beyond itself: its own reported fan-out
+   * (agents − 1) plus the agents of working sessions that name it as their
+   * orchestrator (e.g. the ultracode workflows it launched). Shown as "+N".
+   */
+  subagents: number;
+  /**
+   * Set on a session whose orchestrator is present in the snapshot: its agents
+   * are already counted in that row's `subagents`, so list UIs can hide it.
+   */
+  foldedInto?: string;
 }
 
 export interface StatusSnapshot {
   /** Sessions sorted by updatedAt descending (most recent first). */
-  sessions: AgentSession[];
+  sessions: SessionView[];
   /** Number of working *sessions* (not agents). */
   working: number;
   waiting: number;

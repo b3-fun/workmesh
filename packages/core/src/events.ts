@@ -43,6 +43,19 @@ export const sessionEventSchema = z.object({
    * on top of its own fleet. Ignored when the referenced session isn't present.
    */
   orchestrator: z.string().max(200).optional(),
+  /**
+   * The session is only waiting on its own background work (shells, subagents)
+   * and resumes by itself. Meaningful with kind "working"; cleared by the next
+   * working event that doesn't set it.
+   */
+  background: z.boolean().optional(),
+  /**
+   * Full working directory. Stays on this machine: local clients (menu bar app)
+   * use it to reveal the folder; it is never sent to Slack or the relay.
+   */
+  cwd: z.string().max(1024).optional(),
+  /** Human session name, e.g. Claude Code's "documents-07". Local only, like cwd. */
+  name: z.string().max(120).optional(),
 });
 export type SessionEvent = z.infer<typeof sessionEventSchema>;
 

@@ -115,4 +115,81 @@ describe("SessionStore", () => {
     store2.apply(ev(), 600);
     expect(store2.snapshot().signature).toBe(b);
   });
+
+  it("stateSince marks when the current state began, not the last event", () => {
+    const store = new SessionStore();
+    store.apply(ev({ kind: "working", activity: "thinking" }), 1000);
+    store.apply(ev({ kind: "working", activity: "editing a.ts" }), 5000);
+    expect(store.snapshot().sessions[0]?.stateSince).toBe(1000);
+    store.apply(ev({ kind: "waiting" }), 9000);
+    expect(store.snapshot().sessions[0]?.stateSince).toBe(9000);
+    store.apply(ev({ kind: "heartbeat" }), 12_000);
+    expect(store.snapshot().sessions[0]?.stateSince).toBe(9000);
+  });
+
+  it("sweep demotion resets stateSince and clears background", () => {
+    const store = new SessionStore({ workingStaleMs: 1000 });
+    store.apply(ev({ background: true }), 1000);
+    store.sweep(5000);
+    const s = store.snapshot().sessions[0];
+    expect(s?.state).toBe("idle");
+    expect(s?.stateSince).toBe(5000);
+    expect(s?.background).toBeUndefined();
+  });
+
+  it("background is set only by the event that reports it; heartbeats keep it", () => {
+    const store = new SessionStore();
+    store.apply(ev({ activity: "running in background", background: true }), 1000);
+    expect(store.snapshot().sessions[0]?.background).toBe(true);
+    store.apply(ev({ kind: "heartbeat" }), 2000);
+    expect(store.snapshot().sessions[0]?.background).toBe(true);
+    store.apply(ev({ activity: "running commands" }), 3000);
+    expect(store.snapshot().sessions[0]?.background).toBeUndefined();
+    // never on a non-working session
+    store.apply(ev({ kind: "idle", background: true }), 4000);
+    expect(store.snapshot().sessions[0]?.background).toBeUndefined();
+  });
+
+  it("keeps cwd and name sticky across events", () => {
+    const store = new SessionStore();
+    store.apply(ev({ cwd: "/x/agentblip", name: "agentblip-1" }), 1000);
+    store.apply(ev({ activity: "thinking" }), 2000);
+    const s = store.snapshot().sessions[0];
+    expect(s?.cwd).toBe("/x/agentblip");
+    expect(s?.name).toBe("agentblip-1");
+  });
+
+  it("remove drops a session; annotate sets a name without counting as activity", () => {
+    const store = new SessionStore();
+    store.apply(ev(), 1000);
+    store.apply(ev({ sessionId: "s2" }), 1000);
+    store.annotate("claude-code:s1", { name: "documents-07" });
+    const s1 = store.snapshot().sessions.find((s) => s.sessionId === "s1");
+    expect(s1?.name).toBe("documents-07");
+    expect(s1?.updatedAt).toBe(1000);
+    store.annotate("claude-code:missing", { name: "x" }); // no-op, no throw
+    expect(store.remove("claude-code:s1")).toBe(true);
+    expect(store.remove("claude-code:s1")).toBe(false);
+    expect(store.snapshot().sessions.map((s) => s.sessionId)).toEqual(["s2"]);
+  });
+
+  it("folds orchestrated sessions into their orchestrator's row", () => {
+    const store = new SessionStore();
+    store.apply(ev({ sessionId: "parent", activity: "orchestrating a workflow" }), 1000);
+    store.apply(
+      ev({ source: "workflow", sessionId: "wf1", agents: 5, orchestrator: "claude-code:parent" }),
+      1001,
+    );
+    store.apply(ev({ source: "workflow", sessionId: "wf2", agents: 3 }), 1002); // no parent
+    store.apply(ev({ source: "workflow", sessionId: "wf3", agents: 2, orchestrator: "claude-code:gone" }), 1003);
+    const snap = store.snapshot();
+    const by = (id: string) => snap.sessions.find((s) => s.sessionId === id);
+    expect(by("parent")?.subagents).toBe(5);
+    expect(by("parent")?.foldedInto).toBeUndefined();
+    expect(by("wf1")?.foldedInto).toBe("claude-code:parent");
+    expect(by("wf2")?.subagents).toBe(2); // its own fan-out beyond itself
+    expect(by("wf2")?.foldedInto).toBeUndefined();
+    expect(by("wf3")?.foldedInto).toBeUndefined(); // orchestrator not present
+    expect(snap.agentCount).toBe(10); // unchanged: 5 + 3 + 2, parent subsumed
+  });
 });

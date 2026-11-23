@@ -1,5 +1,5 @@
 import type { SessionEvent, SessionState } from "./events";
-import type { AgentSession, StatusSnapshot } from "./types";
+import type { AgentSession, SessionView, StatusSnapshot } from "./types";
 import {
   DEFAULT_IDLE_EVICT_MS,
   DEFAULT_WAITING_STALE_MS,
@@ -66,11 +66,21 @@ export class SessionStore {
 
     if (existing && ts < existing.updatedAt) return; // drop out-of-order events
 
+    // `background` is not sticky: only the event that reports it sets it (a
+    // heartbeat keeps it), so the next real working event clears it.
+    const background =
+      nextState !== "working"
+        ? undefined
+        : event.kind === "heartbeat"
+          ? existing?.background
+          : event.background || undefined;
+
     this.sessions.set(key, {
       key,
       source: event.source,
       sessionId: event.sessionId,
       state: nextState,
+      background,
       // "working" events without a label keep the previous label (tool chatter
       // often arrives label-less between richer events).
       activity: event.activity ?? (nextState === "working" ? existing?.activity : undefined),
@@ -80,9 +90,33 @@ export class SessionStore {
       agents: event.agents ?? existing?.agents ?? 1,
       phase: event.phase ?? (nextState === "working" ? existing?.phase : undefined),
       orchestrator: event.orchestrator ?? existing?.orchestrator,
+      cwd: event.cwd ?? existing?.cwd,
+      name: event.name ?? existing?.name,
       startedAt: existing?.startedAt ?? ts,
       updatedAt: ts,
+      stateSince:
+        existing && existing.state === nextState ? existing.stateSince : ts,
     });
+  }
+
+  /** Drops a session (dismissed by the user, or its process is gone). */
+  remove(key: string): boolean {
+    return this.sessions.delete(key);
+  }
+
+  /**
+   * Attaches metadata learned out of band (e.g. Claude Code's session name)
+   * without counting as activity: updatedAt and state are untouched.
+   */
+  annotate(key: string, meta: { name?: string }): void {
+    const s = this.sessions.get(key);
+    if (!s || meta.name === undefined || meta.name === s.name) return;
+    this.sessions.set(key, { ...s, name: meta.name });
+  }
+
+  /** Live sessions, unsorted. Read-only view for adapters (liveness probes). */
+  list(): readonly AgentSession[] {
+    return [...this.sessions.values()];
   }
 
   /** Demote stale working/waiting sessions, evict long-idle ones. */
@@ -99,6 +133,8 @@ export class SessionStore {
           activity: undefined,
           agents: 1,
           phase: undefined,
+          background: undefined,
+          stateSince: now,
         });
       } else if (s.state === "idle" && silentFor > this.idleEvictMs) {
         this.sessions.delete(key);
@@ -107,9 +143,26 @@ export class SessionStore {
   }
 
   snapshot(): StatusSnapshot {
-    const sessions = [...this.sessions.values()].sort(
+    const sorted = [...this.sessions.values()].sort(
       (a, b) => b.updatedAt - a.updatedAt,
     );
+    // Fold each orchestrated session into its orchestrator's row (when that
+    // row exists): the parent shows "+N", the child is marked foldedInto.
+    const present = new Set(sorted.map((s) => s.key));
+    const fleet = new Map<string, number>();
+    for (const s of sorted) {
+      if (s.state === "working" && s.orchestrator && present.has(s.orchestrator)) {
+        fleet.set(s.orchestrator, (fleet.get(s.orchestrator) ?? 0) + (s.agents || 1));
+      }
+    }
+    const sessions: SessionView[] = sorted.map((s) => {
+      const view: SessionView = {
+        ...s,
+        subagents: Math.max(0, (s.agents || 1) - 1) + (fleet.get(s.key) ?? 0),
+      };
+      if (s.orchestrator && present.has(s.orchestrator)) view.foldedInto = s.orchestrator;
+      return view;
+    });
     const workingSessions = sessions.filter((s) => s.state === "working");
     const working = workingSessions.length;
     const waiting = sessions.filter((s) => s.state === "waiting").length;

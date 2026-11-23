@@ -2,11 +2,15 @@ import http from "node:http";
 import { sessionEventSchema } from "@agentblip/core";
 import type { SessionEvent, SlackStatus, StatusSnapshot } from "@agentblip/core";
 import { secretsEqual } from "../lib/daemon-auth";
+import { z } from "zod";
 import { liveConfigPatchSchema } from "../lib/config";
 import type { LiveConfigPatch, SafeConfig } from "../lib/config";
+import { pauseRequestSchema, resolvePauseUntil } from "../lib/snooze";
 import type { OwnershipSummary } from "./pusher";
 
 const MAX_BODY_BYTES = 64 * 1024;
+
+const dismissRequestSchema = z.object({ key: z.string().min(1).max(200) }).strict();
 
 export interface DaemonServerDeps {
   /** Per-daemon bearer secret required on every endpoint except /health. */
@@ -16,13 +20,18 @@ export interface DaemonServerDeps {
     snapshot: StatusSnapshot;
     formatted: SlackStatus | null;
     paused: boolean;
+    /** When a snooze ends (epoch ms); absent while paused until resumed, or not paused. */
+    pausedUntil?: number;
     lastError?: string;
   };
   getLastError(): string | undefined;
   /** Ownership guard summary — included in /state and /health. */
   getOwnership(): OwnershipSummary;
-  pause(): Promise<void>;
+  /** Pause pushing; `until` (epoch ms) makes it a snooze that resumes itself. */
+  pause(until?: number): Promise<void>;
   resume(): void;
+  /** Drop a session from the list (POST /sessions/dismiss). False when unknown. */
+  dismiss(key: string): boolean;
   /** Token-free config view (GET /config). */
   getConfig(): SafeConfig;
   /** Apply live-tunable settings and persist them (POST /config). */
@@ -50,6 +59,32 @@ function readBody(req: http.IncomingMessage): Promise<string> {
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
+}
+
+type ParsedBody<T> = { ok: true; data: T } | { ok: false; error: string };
+
+/** Reads a JSON body (empty = `{}`) and validates it; errors are client-facing. */
+async function parseBody<T>(
+  req: http.IncomingMessage,
+  schema: z.ZodType<T>,
+): Promise<ParsedBody<T>> {
+  const body = await readBody(req);
+  let raw: unknown = {};
+  if (body.trim()) {
+    try {
+      raw = JSON.parse(body) as unknown;
+    } catch {
+      return { ok: false, error: "invalid JSON body" };
+    }
+  }
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; "),
+    };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 function isAuthorized(req: http.IncomingMessage, secret: string): boolean {
@@ -111,11 +146,34 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
         return;
       }
       if (method === "POST" && url === "/pause") {
+        // Optional body: {} pauses until resumed, {for: "30m"|"1h"|"tomorrow"}
+        // or {until: epochMs} snoozes with an auto-resume.
+        const parsed = await parseBody(req, pauseRequestSchema);
+        if (!parsed.ok) {
+          json(res, 400, { ok: false, error: parsed.error });
+          return;
+        }
+        let until: number | undefined;
+        try {
+          until = resolvePauseUntil(parsed.data);
+        } catch (err) {
+          json(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad until" });
+          return;
+        }
         // Respond immediately: pause() flips the flag synchronously but then
         // awaits a status-clear push (up to 10s) — far past the CLI's 1.5s
         // request timeout. The clearing push runs in the background.
-        void deps.pause().catch(() => {});
-        json(res, 200, { ok: true, paused: true });
+        void deps.pause(until).catch(() => {});
+        json(res, 200, { ok: true, paused: true, ...(until === undefined ? {} : { pausedUntil: until }) });
+        return;
+      }
+      if (method === "POST" && url === "/sessions/dismiss") {
+        const parsed = await parseBody(req, dismissRequestSchema);
+        if (!parsed.ok) {
+          json(res, 400, { ok: false, error: parsed.error });
+          return;
+        }
+        json(res, 200, { ok: true, removed: deps.dismiss(parsed.data.key) });
         return;
       }
       if (method === "POST" && url === "/resume") {

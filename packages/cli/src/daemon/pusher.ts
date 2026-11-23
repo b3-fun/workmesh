@@ -78,6 +78,8 @@ function sameOwnership(a: OwnershipState, b: OwnershipState): boolean {
  */
 export class Pusher {
   paused = false;
+  /** When a snooze ends (epoch ms); undefined while paused = until resumed. */
+  pausedUntil: number | undefined;
   consecutiveFailures = 0;
   /** Pushes stopped after repeated permanent sink failures — restart to retry. */
   halted = false;
@@ -163,7 +165,13 @@ export class Pusher {
     this.evaluate();
   }
 
-  async pause(): Promise<void> {
+  /**
+   * Pauses pushing and clears the status. With `until` it is a snooze: the
+   * sweep tick resumes on its own once that time passes. Calling it while
+   * paused just retimes (or un-times) the pause.
+   */
+  async pause(until?: number): Promise<void> {
+    this.pausedUntil = until;
     if (this.paused) return;
     this.paused = true;
     this.clearTrailing();
@@ -173,6 +181,7 @@ export class Pusher {
 
   resume(): void {
     this.paused = false;
+    this.pausedUntil = undefined;
     this.evaluate();
   }
 
@@ -184,6 +193,7 @@ export class Pusher {
       this.interval = undefined;
     }
     this.paused = true;
+    this.pausedUntil = undefined;
     // Push even when our signature is already clear if ownership has residue:
     // a displaced status may still need restoring (or ours clearing).
     const residue =
@@ -207,6 +217,11 @@ export class Pusher {
 
   private tick(): void {
     this.store.sweep();
+    if (this.paused && this.pausedUntil !== undefined && Date.now() >= this.pausedUntil) {
+      this.log("snooze over — resuming status updates");
+      this.resume(); // evaluates
+      return;
+    }
     this.evaluate();
   }
 

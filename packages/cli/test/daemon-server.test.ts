@@ -20,6 +20,8 @@ interface TestHarness {
   lastError: { value?: string };
   ownership: { value: OwnershipSummary };
   pauseStarted: { value: boolean };
+  pauseUntil: Array<number | undefined>;
+  dismissed: string[];
   config: { value: SafeConfig };
   configPatches: Array<Record<string, unknown>>;
 }
@@ -43,6 +45,8 @@ async function startServer(): Promise<TestHarness> {
     value: { backedOff: false, savedPrior: false, policy: "respect" },
   };
   const pauseStarted = { value: false };
+  const pauseUntil: Array<number | undefined> = [];
+  const dismissed: string[] = [];
   const config = { value: { ...BASE_CONFIG } };
   const configPatches: Array<Record<string, unknown>> = [];
   const server = createDaemonServer({
@@ -64,11 +68,16 @@ async function startServer(): Promise<TestHarness> {
     }),
     getLastError: () => lastError.value,
     getOwnership: () => ownership.value,
-    pause: () => {
+    pause: (until) => {
       pauseStarted.value = true;
+      pauseUntil.push(until);
       return new Promise<void>(() => {}); // hangs — like a slow sink push
     },
     resume: () => {},
+    dismiss: (key) => {
+      dismissed.push(key);
+      return key === "claude-code:s1";
+    },
     getConfig: () => config.value,
     setConfig: (patch) => {
       configPatches.push(patch);
@@ -80,7 +89,18 @@ async function startServer(): Promise<TestHarness> {
     server.listen(0, "127.0.0.1", resolve);
   });
   const port = (server.address() as AddressInfo).port;
-  return { server, port, applied, lastError, ownership, pauseStarted, config, configPatches };
+  return {
+    server,
+    port,
+    applied,
+    lastError,
+    ownership,
+    pauseStarted,
+    pauseUntil,
+    dismissed,
+    config,
+    configPatches,
+  };
 }
 
 const event: SessionEvent = {
@@ -108,6 +128,7 @@ describe("daemon server auth", () => {
       ["GET", "/state"],
       ["POST", "/pause"],
       ["POST", "/resume"],
+      ["POST", "/sessions/dismiss"],
     ] as const) {
       const res = await fetch(url(pathname), {
         method,
@@ -177,6 +198,58 @@ describe("daemon server auth", () => {
     expect((await res.json()) as object).toEqual({ ok: true, paused: true });
     expect(Date.now() - started).toBeLessThan(1000);
     expect(h.pauseStarted.value).toBe(true);
+  });
+
+  const post = (pathname: string, body: unknown): Promise<Response> =>
+    fetch(url(pathname), {
+      method: "POST",
+      headers: { authorization: `Bearer ${SECRET}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("POST /pause with a preset snoozes: passes the end time and echoes it", async () => {
+    const before = Date.now();
+    const res = await post("/pause", { for: "30m" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { paused: boolean; pausedUntil: number };
+    expect(body.paused).toBe(true);
+    expect(body.pausedUntil).toBeGreaterThanOrEqual(before + 30 * 60_000);
+    expect(body.pausedUntil).toBeLessThan(before + 31 * 60_000);
+    expect(h.pauseUntil).toEqual([body.pausedUntil]);
+  });
+
+  it("POST /pause with an empty body pauses until resumed", async () => {
+    await post("/pause", {});
+    expect(h.pauseUntil).toEqual([undefined]);
+  });
+
+  it("POST /pause accepts an explicit future until", async () => {
+    const until = Date.now() + 10 * 60_000;
+    const res = await post("/pause", { until });
+    expect(res.status).toBe(200);
+    expect(h.pauseUntil).toEqual([until]);
+  });
+
+  it.each([
+    [{ for: "2h" }],
+    [{ until: 1000 }],
+    [{ until: Date.now() + 30 * 24 * 3600_000 }],
+    [{ for: "1h", until: Date.now() + 60_000 }],
+    [{ minutes: 5 }],
+  ])("POST /pause rejects a bad body %j", async (body) => {
+    const res = await post("/pause", body);
+    expect(res.status).toBe(400);
+    expect(h.pauseStarted.value).toBe(false);
+  });
+
+  it("POST /sessions/dismiss drops a session and reports whether it existed", async () => {
+    const hit = await post("/sessions/dismiss", { key: "claude-code:s1" });
+    expect((await hit.json()) as object).toEqual({ ok: true, removed: true });
+    const miss = await post("/sessions/dismiss", { key: "claude-code:nope" });
+    expect((await miss.json()) as object).toEqual({ ok: true, removed: false });
+    expect(h.dismissed).toEqual(["claude-code:s1", "claude-code:nope"]);
+    const bad = await post("/sessions/dismiss", { id: "x" });
+    expect(bad.status).toBe(400);
   });
 
   it("GET /config returns the token-free config view", async () => {

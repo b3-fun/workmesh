@@ -6,6 +6,7 @@ import type { SessionEvent, SlackStatus, StatusSnapshot } from "@agentblip/core"
 import type { OwnershipSummary } from "../daemon/pusher";
 import type { Config } from "./config";
 import { readDaemonSecret } from "./daemon-auth";
+import type { SnoozePreset } from "./snooze";
 import { logFilePath, spawnLockPath, startFailedMarkerPath, stateDir } from "./paths";
 import { sleep } from "./ui";
 
@@ -19,6 +20,8 @@ export interface DaemonState {
   snapshot: StatusSnapshot;
   formatted: SlackStatus | null;
   paused: boolean;
+  /** When a snooze ends (epoch ms); absent for an open-ended pause or older daemons. */
+  pausedUntil?: number;
   lastError?: string;
   /** Optional: daemons predating the ownership guard don't report it. */
   ownership?: OwnershipSummary;
@@ -71,8 +74,11 @@ export function getState(port: number): Promise<DaemonState> {
   return daemonFetch(port, "/state");
 }
 
-export function pauseDaemon(port: number): Promise<{ ok: boolean; paused: boolean }> {
-  return daemonFetch(port, "/pause", "POST");
+export function pauseDaemon(
+  port: number,
+  snooze?: SnoozePreset,
+): Promise<{ ok: boolean; paused: boolean; pausedUntil?: number }> {
+  return daemonFetch(port, "/pause", "POST", snooze ? { for: snooze } : undefined);
 }
 
 export function resumeDaemon(port: number): Promise<{ ok: boolean; paused: boolean }> {

@@ -30,7 +30,13 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
   }
 
   if (state.paused) {
-    console.log(yellow("paused — status updates suspended (`agentblip resume`)"));
+    console.log(
+      yellow(
+        state.pausedUntil
+          ? `snoozed — status updates resume in ${formatDuration(state.pausedUntil - Date.now())} (or \`agentblip resume\`)`
+          : "paused — status updates suspended (`agentblip resume`)",
+      ),
+    );
   }
   if (state.ownership?.backedOff) {
     console.log(

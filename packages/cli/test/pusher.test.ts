@@ -251,6 +251,43 @@ describe("Pusher", () => {
     expect(pushes[2]).not.toBeNull();
   });
 
+  it("a snooze resumes on its own once its time passes", async () => {
+    const { store, pusher, pushes, logs } = build({ debounceMs: 1000 });
+    pusher.start();
+    store.apply(working("a", "editing a.ts"));
+    pusher.notify();
+    await pusher.flush();
+    const until = Date.now() + 60_000;
+    await pusher.pause(until);
+    expect(pusher.pausedUntil).toBe(until);
+    expect(pushes.at(-1)).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(pusher.paused).toBe(true);
+    store.apply(working("a", "editing b.ts")); // still working, keeps it fresh
+    await vi.advanceTimersByTimeAsync(30_000); // the next sweep tick is past `until`
+    await pusher.flush();
+    expect(pusher.paused).toBe(false);
+    expect(pusher.pausedUntil).toBeUndefined();
+    expect(logs).toContain("snooze over — resuming status updates");
+    expect(pushes.at(-1)?.text).toContain("editing b.ts");
+  });
+
+  it("pausing again retimes or un-times a snooze; resume clears it", async () => {
+    const { pusher } = build();
+    pusher.start();
+    await pusher.pause(Date.now() + 60_000);
+    await pusher.pause(Date.now() + 120_000);
+    expect(pusher.pausedUntil).toBe(Date.now() + 120_000);
+    await pusher.pause(); // open-ended now: no auto-resume
+    expect(pusher.pausedUntil).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(pusher.paused).toBe(true);
+    await pusher.pause(Date.now() + 60_000);
+    pusher.resume();
+    expect(pusher.pausedUntil).toBeUndefined();
+  });
+
   it("survives sink failures and retries on the next sweep", async () => {
     const { store, pusher, pushes, fail } = build({ debounceMs: 1000 });
     pusher.start();

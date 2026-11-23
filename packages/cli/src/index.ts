@@ -93,6 +93,7 @@ program
 program
   .command("pause")
   .description("Pause status updates and clear your Slack status")
+  .option("--for <length>", "snooze, then resume on its own: 30m | 1h | tomorrow (9 AM)")
   .action(wrap(runPause));
 
 program

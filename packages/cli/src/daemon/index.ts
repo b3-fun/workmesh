@@ -80,14 +80,26 @@ export async function runDaemon(config: Config): Promise<void> {
         snapshot,
         formatted: formatStatus(snapshot, formatOpts),
         paused: pusher.paused,
+        pausedUntil: pusher.paused ? pusher.pausedUntil : undefined,
         lastError: pusher.lastError,
       };
     },
     getLastError: () => pusher.lastError,
     getOwnership: () => pusher.ownershipSummary(),
-    pause: () => pusher.pause(),
+    pause: (until) => {
+      log(until === undefined ? "paused via API" : `snoozed via API until ${new Date(until).toISOString()}`);
+      return pusher.pause(until);
+    },
     resume: () => {
       pusher.resume();
+    },
+    dismiss: (key) => {
+      const removed = store.remove(key);
+      if (removed) {
+        log(`dismissed ${key} via API`);
+        pusher.notify();
+      }
+      return removed;
     },
     getConfig: () => safeConfig(liveConfig),
     setConfig: (patch) => {

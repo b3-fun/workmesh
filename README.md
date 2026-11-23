@@ -212,15 +212,28 @@ onto the session lifecycle:
 |---|---|
 | `SessionStart` | `start` |
 | `UserPromptSubmit` | `working` |
-| `PreToolUse` | `working` (tool as activity) |
+| `PreToolUse` | `working` (tool as activity); `waiting` for `AskUserQuestion` / `ExitPlanMode` |
 | `PostToolUse` | `working` (keeps liveness fresh) |
-| `Notification` | `waiting` (permission prompt, question) |
+| `Notification` | `waiting` for permission prompts and dialogs; for the 60s idle reminder, see below |
 | `Stop` | `idle` |
 | `SessionEnd` | `end` |
 
 Each hook pipes its JSON to `agentblip hook claude-code`, which forwards a normalized
 event to the daemon. Multiple concurrent sessions just work — each is tracked by its
 session id.
+
+**"Waiting on me" means waiting on you.** Claude Code's idle reminder fires for every
+finished turn left unanswered. agentblip reads the end of the session transcript and
+only counts it as waiting when the turn ended by asking you something (a question, "want
+me to…", "needs your OK", an open `AskUserQuestion`). A session still running its own
+background shells or subagents shows as working in the background; a turn that simply
+finished ("When he replies, I'll run the release") goes idle. If the transcript can't be
+read, it falls back to waiting.
+
+**Crashed sessions clear themselves.** The daemon checks Claude Code's per-process
+session files every 15 seconds. A session whose process is gone for two minutes without
+a `SessionEnd` is ended, and a session Claude Code reports busy stays "working" through
+one long tool call.
 
 > **Subagents & workflows — automatic.** Hooks fire per session, so Claude Code can't
 > tell agentblip how many subagents a session fanned out into. For ultracode
@@ -293,20 +306,24 @@ schema, event semantics, staleness rules, and adapter-writing guide:
 | `agentblip emit` | Send a session event by hand (testing, scripts) |
 | `agentblip report` | Report a fan-out of concurrent agents (`--agents N --phase X`, `--done`) so "N agents working" is accurate |
 | `agentblip hook <source>` | stdin→event adapter wired into agent hooks (e.g. `agentblip hook claude-code`) |
-| `agentblip pause` | Pause Slack updates without stopping the daemon |
+| `agentblip pause [--for 30m\|1h\|tomorrow]` | Pause Slack updates without stopping the daemon; `--for` snoozes and resumes on its own (`tomorrow` = 9 AM) |
 | `agentblip resume` | Resume Slack updates |
 | `agentblip unlink` | Revoke this device's token and clear the status |
 | `agentblip doctor [--json]` | Diagnose config, daemon, hooks, and connectivity |
 
 ## Menu bar app (macOS)
 
-A tiny native SwiftUI menu bar app puts the blip on your own screen — a colored
-dot that shows idle / N working / waiting, with a dropdown to pause, change the
-detail level, and flip the overwrite-vs-respect policy live. It's a thin client
-of the daemon (holds no logic of its own), so nothing duplicates the core.
+A tiny native SwiftUI menu bar app puts the blip on your own screen. The icon is
+calm while agents work and turns orange only when one needs you. The dropdown
+shows your sessions grouped into Needs you, Working, Background and Idle, with
+the project, what each is doing, its session name and how long it has been in
+that state. Click a row to copy its name, reveal its folder or dismiss it. Snooze
+Slack sync for 30 minutes, an hour or until tomorrow, and change the detail level
+and own-status policy live. It's a thin client of the daemon (holds no logic of
+its own), so nothing duplicates the core.
 
 ```bash
-cd apps/menubar && ./scripts/make-app.sh && open dist/agentblip.app
+cd apps/menubar && ./scripts/make-app.sh 0.2.0 && open dist/agentblip.app
 ```
 
 Requires macOS 13+ and the daemon running. See [`apps/menubar/`](apps/menubar/README.md).

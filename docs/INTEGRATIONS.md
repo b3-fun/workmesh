@@ -22,8 +22,10 @@ AUTH="authorization: Bearer $(cat ~/.local/state/agentblip/daemon.secret)"
 |---|---|---|
 | `POST /event` | session event (below) | Report a session event. `200` on accept, `400` on schema failure, `401` without the bearer secret |
 | `GET /state` | — | Current sessions, the formatted status, and status ownership, as JSON |
-| `POST /pause` | — | Pause Slack updates (daemon keeps tracking) |
+| `POST /pause` | optional `{"for": "30m"\|"1h"\|"tomorrow"}` or `{"until": epochMs}` | Pause Slack updates (daemon keeps tracking). With a body it's a snooze that resumes on its own; `tomorrow` = 9 AM local. Echoes `pausedUntil` |
 | `POST /resume` | — | Resume Slack updates |
+| `POST /sessions/dismiss` | `{"key": "source:sessionId"}` | Drop a session from the list (it returns with its next event). `{ok, removed}` |
+| `GET` / `POST /config` | live config patch | Read or live-tune `granularity`, `statusPolicy`, `showProject`, `repoPrefix` |
 | `GET /health` | — | Liveness probe (no auth) |
 
 ### The `/state` response
@@ -42,8 +44,14 @@ agentblip from overwriting a Slack status it didn't set:
         "sessionId": "abc123",
         "state": "working",
         "activity": "editing format.ts",
+        "project": "agentblip",
+        "cwd": "/Users/you/code/agentblip",
+        "name": "agentblip-3f",
+        "agents": 1,
+        "subagents": 0,
         "startedAt": 1751830000000,
-        "updatedAt": 1751830042000
+        "updatedAt": 1751830042000,
+        "stateSince": 1751830031000
       }
     ],
     "working": 1,
@@ -59,6 +67,7 @@ agentblip from overwriting a Slack status it didn't set:
     "expirationSec": 1751830342
   },
   "paused": false,
+  "pausedUntil": 1751871600000,
   "ownership": {
     "backedOff": false,
     "savedPrior": false,
@@ -66,6 +75,13 @@ agentblip from overwriting a Slack status it didn't set:
   }
 }
 ```
+
+Per session: `stateSince` is when the current state began; `background: true` marks a
+working session that is only waiting on its own shells or subagents; `cwd` and `name`
+are local-only (never formatted into Slack); `subagents` counts agents running under the
+session (its own `agents − 1` plus workflows naming it as `orchestrator`), and
+`foldedInto` marks a session already counted in another row. `pausedUntil` is present
+while snoozed.
 
 | `ownership` field | Meaning |
 |---|---|
@@ -87,6 +103,10 @@ agentblip from overwriting a Slack status it didn't set:
 | `project` | string, ≤120 chars | no | Usually the basename of the session's cwd |
 | `agents` | int, 1–999 | no | How many concurrent agents this one session represents (default 1). Orchestrators set it so `agentCount` = total agents, not sessions |
 | `phase` | string, ≤60 chars | no | Orchestrator phase label, e.g. `"verify"` or `"2/4"`; appended to the status |
+| `orchestrator` | string, ≤200 chars | no | Session key (`source:sessionId`) whose row already accounts for this session's agents |
+| `background` | boolean | no | With `working`: only waiting on its own background work. Cleared by the next working event without it |
+| `cwd` | string, ≤1024 chars | no | Full working directory, local only (menu bar "Reveal in Finder") |
+| `name` | string, ≤120 chars | no | Human session name, local only |
 | `ts` | positive int | no | Epoch **milliseconds**; defaults to receipt time |
 
 `GET /state`'s snapshot reports both `working` (number of working *sessions*) and
@@ -127,9 +147,12 @@ Details worth knowing:
 The daemon assumes adapters die without saying goodbye, so liveness is enforced
 (constants from `@agentblip/core`):
 
-- A `working`/`waiting` session silent for **3 minutes** is demoted to idle and its
-  activity cleared. During long operations, send `heartbeat` (or repeat `working`)
-  more often than that.
+- A `working` session silent for **3 minutes** is demoted to idle and its activity
+  cleared (a `waiting` one gets **30 minutes**, since waiting is quiet by design).
+  During long operations, send `heartbeat` (or repeat `working`) more often than that.
+- Claude Code sessions also get a process check every 15 seconds: one whose process
+  is gone for **2 minutes** without a `SessionEnd` is ended, and one Claude Code
+  reports busy is kept working without hook events.
 - An idle session silent for **15 minutes** is evicted entirely.
 - Independently, the Slack status itself carries a rolling **5-minute** expiration —
   if the whole daemon dies, Slack clears the status on its own.

@@ -11,7 +11,7 @@
 - **Repo**: github.com/seangeng/agentblip (open source, MIT)
 - **npm**: `agentblip` (CLI)
 - **Status**: building
-- **Last updated**: 2026-07-06
+- **Last updated**: 2026-11-23
 
 ---
 
@@ -72,7 +72,7 @@ Any tool (curl) ───┼─────────────────�
 │           └── sinks/         # relay, slack-direct, console
 ├── apps/
 │   └── menubar/               # native SwiftUI macOS menu bar app (thin daemon client)
-│       ├── Sources/AgentblipMenuBar/  # App, AppModel(poll loop), DaemonClient, Models, StatusIcon, MenuContent
+│       ├── Sources/AgentblipMenuBar/  # App, AppModel(poll loop), DaemonClient, Models, StatusIcon, MenuContent, SessionRow, Notifier
 │       └── scripts/make-app.sh        # SwiftPM build → agentblip.app (LSUIElement)
 └── docs/                      # SELF_HOSTING.md, INTEGRATIONS.md, slack-app-manifest
 ```
@@ -90,8 +90,11 @@ Any tool (curl) ───┼─────────────────�
 
 ### Daemon loopback API (127.0.0.1:4519, bearer secret except /health)
 
-- `GET /health` · `GET /state` · `POST /event` · `POST /pause` · `POST /resume`
-- `GET /config` — token-free `safeConfig` view · `POST /config` — live-tune `granularity`/`statusPolicy`/`showProject` (validated by `liveConfigPatchSchema`, applied via `pusher.applyConfig()`, persisted). Used by the menu bar app.
+- `GET /health` · `GET /state` · `POST /event` · `POST /resume`
+- `POST /pause` — empty body pauses until resumed; `{for: "30m"|"1h"|"tomorrow"}` or `{until}` snoozes, the pusher's sweep tick auto-resumes (`lib/snooze.ts`); `/state.pausedUntil`
+- `POST /sessions/dismiss {key}` — drops a session (`SessionStore.remove`); it returns with its next event
+- `GET /config` — token-free `safeConfig` view · `POST /config` — live-tune `granularity`/`statusPolicy`/`showProject`/`repoPrefix` (validated by `liveConfigPatchSchema`, applied via `pusher.applyConfig()`, persisted). Used by the menu bar app.
+- `/state` sessions are `SessionView`s: `stateSince`, `background`, `cwd`, `name` (local only), `subagents` + `foldedInto` (fan-out folding). Keep it additive: the menu bar app and Sean's desk clock (~/dev/studio-pixbar) both read it.
 
 Wire contracts: `packages/core/src/events.ts` (zod schemas, shared CLI ↔ Worker).
 
@@ -123,6 +126,10 @@ Wire contracts: `packages/core/src/events.ts` (zod schemas, shared CLI ↔ Worke
 | 2026-07-06 | Daemon loopback API requires an auto-generated bearer secret (`~/.local/state/agentblip/daemon.secret`, 0600) on `/event` `/state` `/pause` `/resume`; `/health` open | localhost isn't a trust boundary — blocks other local users and browser-based (DNS-rebinding) event injection |
 | 2026-07-06 | Pairing handover: plaintext device token only in the pair record (≤15 min, single-use + 60s delivered-grace); device records provisional (24h TTL) until first authenticated use | Keeps privacy claims strictly true; abandoned pairings self-clean |
 | 2026-07-06 | Status ownership protocol: new `users.profile:read` user scope; daemon reads current status before each push, core `planStatusUpdate()` (packages/core/src/ownership.ts) decides push/restore/clear/skip; `statusPolicy: "respect"` (default) never overwrites a foreign status and resumes when it clears, `"overwrite"` saves the displaced status and restores it on clear; a manual mid-session change always wins; tokens without the read scope degrade to legacy blind pushes (`readable:false`) | agentblip must never clobber a status it didn't set; the status field is shared with the human and other apps |
+
+| 2026-11-23 | Claude Code `idle_prompt` is "needs my input" only when the turn ended by asking: the hook reads the transcript tail (64 KB → 1 MB) for the last assistant text (question mark, ask phrases, "## Needs your OK" headings, negation-aware) or an unanswered AskUserQuestion/ExitPlanMode; otherwise idle/"done"; background work → working/background; unreadable → waiting | The idle reminder fires for every unanswered turn, so Slack/menu bar/desk clock said "waiting on me" for turns waiting on a colleague. ~1 ms on 400 MB transcripts |
+| 2026-11-23 | Daemon liveness probe over `~/.claude/sessions/<pid>.json` every 15s (`daemon/claude-liveness.ts`): reap a session seen alive then gone > 2 min; `SessionStore.touch` working sessions Claude reports busy/shell; annotate session names | Crashed sessions never send SessionEnd. Never reaps a session it never saw alive (older Claude Code, other config dirs). `touch` is separate from `updatedAt` so a probe can't make apply() drop a real hook event as out-of-order |
+| 2026-11-23 | Menu bar 0.2: grouped live list, SF Symbol template icon (orange only for needs-you), row actions, snooze; all new data via `/state` fields and daemon endpoints | Keeps the thin-client rule; roadmap in apps/menubar/README.md |
 
 ## Cloudflare Resources
 

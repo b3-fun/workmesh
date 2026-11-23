@@ -35,7 +35,86 @@ const hookInputSchema = z.looseObject({
   cwd: z.string().optional(),
   tool_name: z.string().optional(),
   tool_input: z.record(z.string(), z.unknown()).optional(),
+  notification_type: z.string().optional(),
 });
+
+/** A subagent transcript written this recently means that subagent is still running. */
+const SUBAGENT_LIVE_MS = 120_000;
+
+/**
+ * True when a Claude Code session is idle only because it is waiting on its own
+ * background work, which resumes it automatically:
+ *  - Claude Code's per-process file ~/.claude/sessions/<pid>.json reports status
+ *    "shell" (turn over, background Bash still running) or "busy"; or
+ *  - a subagent transcript under ~/.claude/projects/<project>/<session>/subagents/
+ *    (including workflow agents) was written in the last two minutes.
+ * Best effort: any read error counts as "no background work".
+ */
+export function hasBackgroundWork(
+  sessionId: string,
+  now = Date.now(),
+  claudeDir = path.join(os.homedir(), ".claude"),
+): boolean {
+  try {
+    const dir = path.join(claudeDir, "sessions");
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith(".json")) continue;
+      try {
+        const info = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as {
+          sessionId?: unknown;
+          status?: unknown;
+        };
+        if (info.sessionId === sessionId && (info.status === "shell" || info.status === "busy")) {
+          return true;
+        }
+      } catch {
+        // unreadable / half-written file: skip
+      }
+    }
+  } catch {
+    // no sessions dir
+  }
+  const fresh = (file: string): boolean => {
+    try {
+      return now - fs.statSync(file).mtimeMs < SUBAGENT_LIVE_MS;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    const projects = path.join(claudeDir, "projects");
+    for (const proj of fs.readdirSync(projects)) {
+      const subDir = path.join(projects, proj, sessionId, "subagents");
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(subDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const e of entries) {
+        if (e.isFile() && e.name.endsWith(".jsonl") && fresh(path.join(subDir, e.name))) return true;
+        if (e.isDirectory() && e.name === "workflows") {
+          for (const run of fs.readdirSync(path.join(subDir, e.name), { withFileTypes: true })) {
+            if (!run.isDirectory()) continue;
+            const runDir = path.join(subDir, e.name, run.name);
+            for (const f of fs.readdirSync(runDir)) {
+              if (f.endsWith(".jsonl") && fresh(path.join(runDir, f))) return true;
+            }
+          }
+        }
+      }
+      return false; // the session's own project dir was found; no need to scan others
+    }
+  } catch {
+    // no projects dir
+  }
+  return false;
+}
+
+export interface MapHookOptions {
+  /** Injected for tests; defaults to reading Claude Code's local state. */
+  backgroundWork?: (sessionId: string) => boolean;
+}
 
 function toolLabel(
   toolName: string | undefined,
@@ -71,7 +150,11 @@ function toolLabel(
 }
 
 /** Maps Claude Code hook stdin JSON to a wire SessionEvent, or null to ignore. */
-export function mapHookInput(json: unknown, fallbackNow = Date.now()): SessionEvent | null {
+export function mapHookInput(
+  json: unknown,
+  fallbackNow = Date.now(),
+  opts: MapHookOptions = {},
+): SessionEvent | null {
   const parsed = hookInputSchema.safeParse(json);
   if (!parsed.success) return null;
   const input = parsed.data;
@@ -103,8 +186,17 @@ export function mapHookInput(json: unknown, fallbackNow = Date.now()): SessionEv
         kind: "working",
         activity: toolLabel(input.tool_name, input.tool_input)?.slice(0, 200),
       };
-    case "Notification":
+    case "Notification": {
+      // Claude Code's 60s idle reminder ("idle_prompt") also fires when the turn is
+      // over but the session is still waiting on its own background shells or
+      // subagents, which resume it automatically. That is not "needs my input".
+      // Permission prompts and questions (and unknown types) still are.
+      const backgroundWork = opts.backgroundWork ?? ((id: string) => hasBackgroundWork(id));
+      if (input.notification_type === "idle_prompt" && backgroundWork(base.sessionId)) {
+        return { ...base, kind: "working", activity: "running in background" };
+      }
       return { ...base, kind: "waiting", activity: "needs my input" };
+    }
     case "Stop":
     case "SubagentStop":
       return { ...base, kind: "idle" };

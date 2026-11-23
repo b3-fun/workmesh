@@ -1,5 +1,8 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { claudeHookCommand, mapHookInput } from "../src/adapters/claude-code";
+import { claudeHookCommand, hasBackgroundWork, mapHookInput } from "../src/adapters/claude-code";
 
 const input = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   hook_event_name: "PreToolUse",
@@ -104,6 +107,38 @@ describe("mapHookInput", () => {
     expect(event?.activity).toBe("needs my input");
   });
 
+  it("treats the idle reminder as background work when the session has some", () => {
+    const event = mapHookInput(
+      input({ hook_event_name: "Notification", notification_type: "idle_prompt" }),
+      1,
+      { backgroundWork: (id) => id === "sess-1" },
+    );
+    expect(event?.kind).toBe("working");
+    expect(event?.activity).toBe("running in background");
+  });
+
+  it("keeps the idle reminder as waiting when nothing runs in the background", () => {
+    const event = mapHookInput(
+      input({ hook_event_name: "Notification", notification_type: "idle_prompt" }),
+      1,
+      { backgroundWork: () => false },
+    );
+    expect(event?.kind).toBe("waiting");
+  });
+
+  it.each(["permission_prompt", "elicitation_dialog"])(
+    "keeps %s as waiting even with background work",
+    (type) => {
+      const event = mapHookInput(
+        input({ hook_event_name: "Notification", notification_type: type }),
+        1,
+        { backgroundWork: () => true },
+      );
+      expect(event?.kind).toBe("waiting");
+      expect(event?.activity).toBe("needs my input");
+    },
+  );
+
   it.each(["Stop", "SubagentStop"])("maps %s to idle", (name) => {
     expect(mapHookInput(input({ hook_event_name: name }))?.kind).toBe("idle");
   });
@@ -141,5 +176,52 @@ describe("claudeHookCommand", () => {
     expect(command.endsWith('" hook claude-code')).toBe(true);
     // install idempotency checks command.includes("agentblip")
     expect(command).toContain("agentblip");
+  });
+});
+
+describe("hasBackgroundWork", () => {
+  const setup = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-claude-"));
+    fs.mkdirSync(path.join(dir, "sessions"));
+    fs.mkdirSync(path.join(dir, "projects", "-Users-dev-proj", "sess-1", "subagents"), { recursive: true });
+    return dir;
+  };
+  const writeSession = (dir: string, pid: number, sessionId: string, status: string) =>
+    fs.writeFileSync(path.join(dir, "sessions", `${pid}.json`), JSON.stringify({ pid, sessionId, status }));
+
+  it("is true when Claude Code reports background shells (status shell)", () => {
+    const dir = setup();
+    writeSession(dir, 11, "sess-1", "shell");
+    writeSession(dir, 12, "other", "idle");
+    expect(hasBackgroundWork("sess-1", Date.now(), dir)).toBe(true);
+  });
+
+  it("is false for an idle session with no live subagents", () => {
+    const dir = setup();
+    writeSession(dir, 11, "sess-1", "idle");
+    expect(hasBackgroundWork("sess-1", Date.now(), dir)).toBe(false);
+  });
+
+  it("is true while a subagent transcript is fresh, false once it goes quiet", () => {
+    const dir = setup();
+    writeSession(dir, 11, "sess-1", "idle");
+    const file = path.join(dir, "projects", "-Users-dev-proj", "sess-1", "subagents", "agent-a.jsonl");
+    fs.writeFileSync(file, "{}\n");
+    expect(hasBackgroundWork("sess-1", Date.now(), dir)).toBe(true);
+    const old = new Date(Date.now() - 10 * 60_000);
+    fs.utimesSync(file, old, old);
+    expect(hasBackgroundWork("sess-1", Date.now(), dir)).toBe(false);
+  });
+
+  it("counts live workflow agents too", () => {
+    const dir = setup();
+    const run = path.join(dir, "projects", "-Users-dev-proj", "sess-1", "subagents", "workflows", "wf_1");
+    fs.mkdirSync(run, { recursive: true });
+    fs.writeFileSync(path.join(run, "agent-b.jsonl"), "{}\n");
+    expect(hasBackgroundWork("sess-1", Date.now(), dir)).toBe(true);
+  });
+
+  it("is false (not throwing) when Claude's dirs are missing", () => {
+    expect(hasBackgroundWork("sess-1", Date.now(), path.join(os.tmpdir(), "ab-missing-xyz"))).toBe(false);
   });
 });

@@ -36,7 +36,11 @@ const hookInputSchema = z.looseObject({
   tool_name: z.string().optional(),
   tool_input: z.record(z.string(), z.unknown()).optional(),
   notification_type: z.string().optional(),
+  transcript_path: z.string().optional(),
 });
+
+/** Tools whose PreToolUse means Claude is now asking the user and blocks on the answer. */
+const ASKS_USER_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 
 /** A subagent transcript written this recently means that subagent is still running. */
 const SUBAGENT_LIVE_MS = 120_000;
@@ -111,9 +115,195 @@ export function hasBackgroundWork(
   return false;
 }
 
+/**
+ * Claude Code's config dir as seen by this session, derived from its transcript
+ * path (<dir>/projects/<slug>/<session>.jsonl). Honors CLAUDE_CONFIG_DIR
+ * setups without the hook needing that env var. Undefined when the path has
+ * another shape.
+ */
+export function claudeDirFromTranscript(transcriptPath: string | undefined): string | undefined {
+  if (!transcriptPath) return undefined;
+  const projects = path.dirname(path.dirname(transcriptPath));
+  return path.basename(projects) === "projects" ? path.dirname(projects) : undefined;
+}
+
+/** How a finished turn ended: by asking the user something, or not. */
+export type TurnEnding = "asks" | "done";
+
+/** Phrases that put a question or an ask to the user, even without a "?". */
+const ASK_PHRASES =
+  /\b(want me to|should i|shall i|do you want|would you like|would you prefer|do you prefer|let me know|tell me (?:if|whether|which)|please confirm|can you confirm|needs? your|waiting (?:on|for) your|your (?:ok|okay|go-ahead|approval|sign-?off|call|decision|input))\b/gi;
+/** A heading that opens a section of asks ("## Needs your OK", "**Questions for you**"). */
+const ASK_HEADING =
+  /\b(needs? (?:you|your)|waiting (?:on|for) you|for you|your (?:ok|okay|call|input|decision|approval|sign-?off)|open questions?|questions?|action (?:required|needed))\b/gi;
+const HEADING_LINE = /^\s{0,3}(?:#{1,6}\s+(.+)|\*\*([^*]+)\*\*:?)\s*$/;
+/** "nothing is waiting on you", "doesn't need your input": a negated ask is no ask. */
+const NEGATION = /\b(nothing|no longer|not|never|none|no)\b[^.?!\n]{0,24}$|n't\b[^.?!\n]{0,24}$/i;
+
+/** True when `pattern` matches somewhere in `text` not preceded by a negation. */
+function hasUnnegated(pattern: RegExp, text: string): boolean {
+  for (const m of text.matchAll(pattern)) {
+    const before = text.slice(Math.max(0, m.index - 40), m.index);
+    if (!NEGATION.test(before)) return true;
+  }
+  return false;
+}
+/** A "?" that ends a sentence or clause (not one inside a URL or identifier). */
+const QUESTION_MARK = /\?(?=["'\u201d\u2019)\]*_~]*(\s|$))/;
+const LIST_LINE = /^\s*([-*\u2022+]|\d+[.)])\s+/;
+
+/** Removes text that can't be a question to the user: code, URLs, quotes, blockquotes. */
+function proseOnly(paragraph: string): string {
+  return paragraph
+    .split("\n")
+    .filter((line) => !/^\s*>/.test(line)) // quoted message drafts, not addressed to the user
+    .join("\n")
+    .replace(/`[^`]*`/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/"[^"\n]*"|\u201c[^\u201d\n]*\u201d/g, " ") // reported speech: "Can you install it?"
+    .trim();
+}
+
+/**
+ * True when an assistant message ends by asking the user something:
+ *  - its final paragraph (plus the lead-in, when that paragraph is a list) has
+ *    a question mark ending a sentence, or an ask like "want me to", "should
+ *    I", "let me know", "needs your OK", "waiting on your";
+ *  - or any heading in it opens a section of asks ("## Needs your OK").
+ * Code, URLs, quoted speech and blockquotes are ignored, and negated asks
+ * ("nothing is waiting on you") don't count, so a message that reports a
+ * question sent to someone else ("I asked An: \"can you…?\"", "When he
+ * replies, I'll…") reads as done.
+ */
+export function textAsksUser(text: string): boolean {
+  const prose = text.replace(/```[\s\S]*?```/g, " ");
+  for (const line of prose.split("\n")) {
+    const h = HEADING_LINE.exec(line);
+    const heading = h?.[1] ?? h?.[2];
+    if (heading && hasUnnegated(ASK_HEADING, heading)) return true;
+  }
+  const paragraphs = prose
+    .split(/\n\s*\n/)
+    .map(proseOnly)
+    .filter((p) => p.length > 0);
+  const last = paragraphs.at(-1);
+  if (last === undefined) return false;
+  const lines = last.split("\n").filter((l) => l.trim());
+  const isList = lines.length > 0 && lines.every((l) => LIST_LINE.test(l));
+  const tail = isList && paragraphs.length > 1 ? `${paragraphs.at(-2)}\n${last}` : last;
+  return QUESTION_MARK.test(tail) || hasUnnegated(ASK_PHRASES, tail);
+}
+
+const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
+const TRANSCRIPT_TAIL_MAX_BYTES = 1024 * 1024;
+/** Walked past every complete line in the tail without deciding. */
+const NEED_MORE = Symbol("need-more");
+
+interface TranscriptBlock {
+  type?: unknown;
+  text?: unknown;
+  name?: unknown;
+  id?: unknown;
+  tool_use_id?: unknown;
+}
+interface TranscriptEntry {
+  type?: unknown;
+  isSidechain?: unknown;
+  isMeta?: unknown;
+  isCompactSummary?: unknown;
+  isVisibleInTranscriptOnly?: unknown;
+  message?: { content?: unknown };
+}
+
+/** Walks transcript lines newest-first and decides how the last turn ended. */
+function classifyLines(lines: string[]): TurnEnding | undefined | typeof NEED_MORE {
+  const answered = new Set<string>();
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    // Cheap prefilter: most lines (api requests, attachments, system) are irrelevant.
+    if (!line.includes('"assistant"') && !line.includes('"user"')) continue;
+    let entry: TranscriptEntry;
+    try {
+      entry = JSON.parse(line) as TranscriptEntry;
+    } catch {
+      continue;
+    }
+    if (entry.isSidechain === true) continue;
+    const content = entry.message?.content;
+    if (entry.type === "user") {
+      // Injected context and compaction summaries aren't the user speaking.
+      if (entry.isMeta === true || entry.isCompactSummary === true || entry.isVisibleInTranscriptOnly === true) {
+        continue;
+      }
+      if (typeof content === "string") return undefined; // a real prompt, no reply since
+      if (!Array.isArray(content)) continue;
+      let prompt = false;
+      for (const b of content as TranscriptBlock[]) {
+        if (b.type === "tool_result" && typeof b.tool_use_id === "string") answered.add(b.tool_use_id);
+        else if (b.type === "text") prompt = true;
+      }
+      if (prompt) return undefined;
+      continue;
+    }
+    if (entry.type !== "assistant" || !Array.isArray(content)) continue;
+    const blocks = content as TranscriptBlock[];
+    for (let j = blocks.length - 1; j >= 0; j--) {
+      const b = blocks[j]!;
+      if (
+        b.type === "tool_use" &&
+        typeof b.name === "string" &&
+        ASKS_USER_TOOLS.has(b.name) &&
+        !(typeof b.id === "string" && answered.has(b.id))
+      ) {
+        return "asks"; // a question dialog is still open
+      }
+      if (b.type === "text" && typeof b.text === "string" && b.text.trim()) {
+        return textAsksUser(b.text) ? "asks" : "done";
+      }
+    }
+  }
+  return NEED_MORE;
+}
+
+/**
+ * Reads the end of a Claude Code transcript (64 KB, growing to 1 MB when the
+ * tail holds no assistant text) and reports whether the last turn ended by
+ * asking the user something. Undefined when it can't tell: unreadable file,
+ * or the user spoke last (e.g. an interrupted turn).
+ */
+export function lastTurnEnding(transcriptPath: string): TurnEnding | undefined {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(transcriptPath, "r");
+    const size = fs.fstatSync(fd).size;
+    for (let want = TRANSCRIPT_TAIL_BYTES; ; want *= 4) {
+      const start = Math.max(0, size - want);
+      const buf = Buffer.alloc(size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      const lines = buf.toString("utf8").split("\n");
+      if (start > 0) lines.shift(); // partial first line
+      const result = classifyLines(lines);
+      if (result !== NEED_MORE) return result;
+      if (start === 0 || want >= TRANSCRIPT_TAIL_MAX_BYTES) return undefined;
+    }
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
 export interface MapHookOptions {
   /** Injected for tests; defaults to reading Claude Code's local state. */
   backgroundWork?: (sessionId: string) => boolean;
+  /** Injected for tests; defaults to reading the tail of the session transcript. */
+  turnEnding?: (transcriptPath: string | undefined) => TurnEnding | undefined;
 }
 
 function toolLabel(
@@ -139,6 +329,9 @@ function toolLabel(
     case "Task":
     case "Agent":
       return "delegating to subagents";
+    case "AskUserQuestion":
+    case "ExitPlanMode":
+      return "thinking"; // PostToolUse: the user answered, Claude carries on
     case "Workflow":
       return "orchestrating a workflow";
     case "WebFetch":
@@ -163,6 +356,7 @@ export function mapHookInput(
     source: "claude-code",
     sessionId: input.session_id.slice(0, 128),
     project: project || undefined,
+    cwd: input.cwd && input.cwd.length <= 1024 ? input.cwd : undefined,
     ts: fallbackNow,
   };
   switch (input.hook_event_name) {
@@ -171,6 +365,10 @@ export function mapHookInput(
     case "UserPromptSubmit":
       return { ...base, kind: "working", activity: "thinking" };
     case "PreToolUse":
+      // AskUserQuestion / ExitPlanMode open a dialog and block on the user.
+      if (input.tool_name && ASKS_USER_TOOLS.has(input.tool_name)) {
+        return { ...base, kind: "waiting", activity: "needs my input" };
+      }
       return {
         ...base,
         kind: "working",
@@ -187,13 +385,28 @@ export function mapHookInput(
         activity: toolLabel(input.tool_name, input.tool_input)?.slice(0, 200),
       };
     case "Notification": {
-      // Claude Code's 60s idle reminder ("idle_prompt") also fires when the turn is
-      // over but the session is still waiting on its own background shells or
-      // subagents, which resume it automatically. That is not "needs my input".
-      // Permission prompts and questions (and unknown types) still are.
-      const backgroundWork = opts.backgroundWork ?? ((id: string) => hasBackgroundWork(id));
-      if (input.notification_type === "idle_prompt" && backgroundWork(base.sessionId)) {
-        return { ...base, kind: "working", activity: "running in background" };
+      // Claude Code's 60s idle reminder ("idle_prompt") fires whenever a finished
+      // turn sits unanswered. It only "needs my input" when the turn ended by
+      // asking the user something:
+      //  - still running its own background shells/subagents → working
+      //    (it resumes by itself);
+      //  - the last assistant text asks nothing (e.g. "When he replies, I'll…")
+      //    → idle/"done";
+      //  - it asks, or we can't tell → waiting, as before.
+      // Permission prompts, elicitation dialogs and unknown types stay waiting.
+      if (input.notification_type === "idle_prompt") {
+        const claudeDir = claudeDirFromTranscript(input.transcript_path);
+        const backgroundWork =
+          opts.backgroundWork ?? ((id: string) => hasBackgroundWork(id, Date.now(), claudeDir));
+        if (backgroundWork(base.sessionId)) {
+          return { ...base, kind: "working", activity: "running in background", background: true };
+        }
+        const ending = opts.turnEnding
+          ? opts.turnEnding(input.transcript_path)
+          : input.transcript_path
+            ? lastTurnEnding(input.transcript_path)
+            : undefined;
+        if (ending === "done") return { ...base, kind: "idle", activity: "done" };
       }
       return { ...base, kind: "waiting", activity: "needs my input" };
     }

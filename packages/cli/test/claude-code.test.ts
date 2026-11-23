@@ -2,7 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { claudeHookCommand, hasBackgroundWork, mapHookInput } from "../src/adapters/claude-code";
+import {
+  claudeDirFromTranscript,
+  claudeHookCommand,
+  hasBackgroundWork,
+  lastTurnEnding,
+  mapHookInput,
+  textAsksUser,
+} from "../src/adapters/claude-code";
 
 const input = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   hook_event_name: "PreToolUse",
@@ -19,6 +26,7 @@ describe("mapHookInput", () => {
       sessionId: "sess-1",
       kind: "start",
       project: "agentblip",
+      cwd: "/Users/dev/projects/agentblip",
       ts: 123,
     });
   });
@@ -126,13 +134,84 @@ describe("mapHookInput", () => {
     expect(event?.kind).toBe("waiting");
   });
 
+  it("maps an idle reminder after a turn that asked nothing to idle/done", () => {
+    const seen: Array<string | undefined> = [];
+    const event = mapHookInput(
+      input({
+        hook_event_name: "Notification",
+        notification_type: "idle_prompt",
+        transcript_path: "/h/.claude/projects/-x/sess-1.jsonl",
+      }),
+      1,
+      {
+        backgroundWork: () => false,
+        turnEnding: (p) => {
+          seen.push(p);
+          return "done";
+        },
+      },
+    );
+    expect(event?.kind).toBe("idle");
+    expect(event?.activity).toBe("done");
+    expect(seen).toEqual(["/h/.claude/projects/-x/sess-1.jsonl"]);
+  });
+
+  it("keeps the idle reminder as waiting when the turn ended with a question", () => {
+    const event = mapHookInput(
+      input({ hook_event_name: "Notification", notification_type: "idle_prompt" }),
+      1,
+      { backgroundWork: () => false, turnEnding: () => "asks" },
+    );
+    expect(event?.kind).toBe("waiting");
+    expect(event?.activity).toBe("needs my input");
+  });
+
+  it("falls back to waiting when the transcript can't be read", () => {
+    const event = mapHookInput(
+      input({ hook_event_name: "Notification", notification_type: "idle_prompt" }),
+      1,
+      { backgroundWork: () => false, turnEnding: () => undefined },
+    );
+    expect(event?.kind).toBe("waiting");
+  });
+
+  it("background work wins over the transcript check and is flagged", () => {
+    let checked = false;
+    const event = mapHookInput(
+      input({ hook_event_name: "Notification", notification_type: "idle_prompt" }),
+      1,
+      {
+        backgroundWork: () => true,
+        turnEnding: () => {
+          checked = true;
+          return "done";
+        },
+      },
+    );
+    expect(event?.kind).toBe("working");
+    expect(event?.background).toBe(true);
+    expect(checked).toBe(false);
+  });
+
+  it.each(["AskUserQuestion", "ExitPlanMode"])(
+    "maps PreToolUse %s to waiting (a dialog blocks on the user)",
+    (tool) => {
+      const event = mapHookInput(input({ tool_name: tool }));
+      expect(event?.kind).toBe("waiting");
+      expect(event?.activity).toBe("needs my input");
+      const after = mapHookInput(input({ hook_event_name: "PostToolUse", tool_name: tool }));
+      expect(after?.kind).toBe("working");
+      expect(after?.activity).toBe("thinking");
+    },
+  );
+
   it.each(["permission_prompt", "elicitation_dialog"])(
     "keeps %s as waiting even with background work",
     (type) => {
       const event = mapHookInput(
         input({ hook_event_name: "Notification", notification_type: type }),
         1,
-        { backgroundWork: () => true },
+        { backgroundWork: () => true, turnEnding: () => "done" },
       );
       expect(event?.kind).toBe("waiting");
       expect(event?.activity).toBe("needs my input");
@@ -223,5 +302,138 @@ describe("hasBackgroundWork", () => {
 
   it("is false (not throwing) when Claude's dirs are missing", () => {
     expect(hasBackgroundWork("sess-1", Date.now(), path.join(os.tmpdir(), "ab-missing-xyz"))).toBe(false);
+  });
+});
+
+describe("claudeDirFromTranscript", () => {
+  it("derives the config dir from a transcript path", () => {
+    expect(claudeDirFromTranscript("/h/.claude-alt/projects/-Users-x/abc.jsonl")).toBe("/h/.claude-alt");
+  });
+  it("is undefined for other shapes", () => {
+    expect(claudeDirFromTranscript(undefined)).toBeUndefined();
+    expect(claudeDirFromTranscript("/tmp/abc.jsonl")).toBeUndefined();
+  });
+});
+
+describe("textAsksUser", () => {
+  it("is false for the fleet-agent turn that waits on a colleague", () => {
+    const text = [
+      "I've sent An another message about the GitHub App: https://npc-labs.slack.com/archives/D07H47Q131V/p1795469362963969",
+      "Before sending, I checked that nothing had been done since the last ask on 11-21.",
+      "The message tags him and says #2696 is merged. It gives him three key points:\n- the App must be named exactly `b3iq-fleet-agent-actions`\n- it gets Actions read/write only\n- the three values go into Doppler, never Slack",
+      "When he replies, I'll run the release that installs the secrets and check that the agent can make the GitHub calls itself.",
+    ].join("\n\n");
+    expect(textAsksUser(text)).toBe(false);
+  });
+
+  it.each([
+    "Done. Want me to ship it?",
+    "Tests pass.\n\nShould I merge #12 now",
+    "Two options.\n\nWhich do you prefer, A or B?",
+    "All green. Let me know if you want changes.",
+    "Built it.\n\n**Deploy now?**",
+    "Built both.\n\nWhich way should this go?\n\n1. keep the cache\n2. drop it",
+    "Done.\n\n> Hey An, draft below.\n\nOK to send? ",
+    "Shipped.\n\n## Needs your OK\n\n- **The post in #soc2.** Still waiting on your \"post it\".\n- **A note to Allie.** Draft:\n  > @Allie one more gap.",
+    "## Needs you\n\n- approve the deploy\n\n## Done today\n\n- merged #12",
+    "Merged. Tell me if you want it handled differently.",
+  ])("is true when the message asks: %j", (text) => {
+    expect(textAsksUser(text)).toBe(true);
+  });
+
+  it.each([
+    "Shipped in abc123. Tests pass.",
+    "Why did it fail? A stale cache.\n\nFixed in abc123 and deployed.",
+    "Deployed. Logs are at https://example.com/logs?run=42 for reference.",
+    'I asked An: "Can you install the app?" and will check back.',
+    "Sent him this:\n\n> Can you approve #12?",
+    "Run `ls?` to see it.",
+    "```\nwhat?\n```",
+    "Steady is healthy and nothing is waiting on you today.",
+    "It doesn't need your approval; merged and deployed.",
+    "## Nothing needs you\n\nAll green.",
+  ])("is false when the ending asks nothing of the user: %j", (text) => {
+    expect(textAsksUser(text)).toBe(false);
+  });
+});
+
+describe("lastTurnEnding", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-transcript-"));
+  let n = 0;
+  const write = (entries: unknown[], padBefore = 0): string => {
+    const file = path.join(dir, `t${n++}.jsonl`);
+    const pad = Array.from({ length: padBefore }, () =>
+      JSON.stringify({ type: "api-request", params: "x".repeat(2000) }),
+    );
+    fs.writeFileSync(file, [...pad, ...entries.map((e) => JSON.stringify(e))].join("\n") + "\n");
+    return file;
+  };
+  const say = (text: string) => ({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] } });
+  const prompt = (text: string) => ({ type: "user", message: { role: "user", content: text } });
+  const toolUse = (name: string, id: string) => ({
+    type: "assistant",
+    message: { role: "assistant", content: [{ type: "tool_use", name, id, input: {} }] },
+  });
+  const toolResult = (id: string) => ({
+    type: "user",
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] },
+  });
+  const system = { type: "system", subtype: "turn_duration", durationMs: 5 };
+
+  it("reads the last assistant text: done vs asks", () => {
+    expect(lastTurnEnding(write([prompt("go"), say("Shipped."), system]))).toBe("done");
+    expect(lastTurnEnding(write([prompt("go"), say("Shipped. Want me to tag it?"), system]))).toBe("asks");
+  });
+
+  it("uses only the last text of the turn, skipping tool calls after it", () => {
+    const file = write([prompt("go"), say("Should I start?"), toolUse("Bash", "t1"), toolResult("t1"), say("Done, merged."), system]);
+    expect(lastTurnEnding(file)).toBe("done");
+  });
+
+  it("treats a pending AskUserQuestion as asking, an answered one as not", () => {
+    expect(lastTurnEnding(write([prompt("go"), say("Checking."), toolUse("AskUserQuestion", "q1")]))).toBe("asks");
+    expect(
+      lastTurnEnding(write([prompt("go"), toolUse("AskUserQuestion", "q1"), toolResult("q1"), say("Picked A, done.")])),
+    ).toBe("done");
+  });
+
+  it("ignores sidechain and meta entries", () => {
+    const file = write([
+      prompt("go"),
+      say("All done."),
+      { ...say("Should I?"), isSidechain: true },
+      { type: "user", isMeta: true, message: { role: "user", content: "<system-reminder>" } },
+    ]);
+    expect(lastTurnEnding(file)).toBe("done");
+  });
+
+  it("looks past a compaction summary to the turn's last text", () => {
+    const file = write([
+      prompt("go"),
+      say("Healthy; nothing waiting on you."),
+      { type: "user", isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: "user", content: "Summary: …" } },
+      { type: "attachment", attachment: {} },
+    ]);
+    expect(lastTurnEnding(file)).toBe("done");
+  });
+
+  it("can't tell when the user spoke last (e.g. an interrupted turn)", () => {
+    expect(lastTurnEnding(write([say("Working on it."), prompt("[Request interrupted by user]")]))).toBeUndefined();
+  });
+
+  it("looks past a tail full of non-conversation lines (grows the read window)", () => {
+    // ~200 KB of api-request lines after the reply: beyond the first 64 KB read
+    const file = write([prompt("go"), say("Want me to deploy?")]);
+    const pad = Array.from({ length: 100 }, () =>
+      JSON.stringify({ type: "api-request", params: "y".repeat(2000) }),
+    );
+    fs.appendFileSync(file, pad.join("\n") + "\n");
+    expect(fs.statSync(file).size).toBeGreaterThan(64 * 1024);
+    expect(lastTurnEnding(file)).toBe("asks");
+  });
+
+  it("returns undefined for a missing or empty transcript", () => {
+    expect(lastTurnEnding(path.join(dir, "nope.jsonl"))).toBeUndefined();
+    expect(lastTurnEnding(write([]))).toBeUndefined();
   });
 });

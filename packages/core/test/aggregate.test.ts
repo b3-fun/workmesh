@@ -192,4 +192,19 @@ describe("SessionStore", () => {
     expect(by("wf3")?.foldedInto).toBeUndefined(); // orchestrator not present
     expect(snap.agentCount).toBe(10); // unchanged: 5 + 3 + 2, parent subsumed
   });
+
+  it("touch keeps a busy session from going stale without bumping updatedAt", () => {
+    const store = new SessionStore({ workingStaleMs: 1000 });
+    store.apply(ev({ activity: "running commands" }), 1000);
+    store.touch("claude-code:s1", 1800);
+    store.sweep(2500); // 1500 since the event, 700 since the touch
+    const s = store.snapshot().sessions[0];
+    expect(s?.state).toBe("working");
+    expect(s?.updatedAt).toBe(1000);
+    // a hook event stamped before the touch still applies (not out-of-order)
+    store.apply(ev({ kind: "idle", ts: 1700 }), 2600);
+    expect(store.snapshot().sessions[0]?.state).toBe("idle");
+    store.touch("claude-code:nope", 3000); // unknown key: no-op
+    expect(store.snapshot().total).toBe(1);
+  });
 });

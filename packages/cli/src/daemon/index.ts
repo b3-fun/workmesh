@@ -17,8 +17,12 @@ import {
   writePidFile,
 } from "../lib/pidfile";
 import { createSink } from "../sinks";
+import { ClaudeLiveness, readLiveClaudeSessions } from "./claude-liveness";
 import { Pusher } from "./pusher";
 import { createDaemonServer } from "./server";
+
+/** How often the daemon checks Claude Code's session files for liveness. */
+const CLAUDE_LIVENESS_INTERVAL_MS = 15_000;
 
 /** Runs the daemon in the foreground until SIGINT/SIGTERM. */
 export async function runDaemon(config: Config): Promise<void> {
@@ -53,9 +57,10 @@ export async function runDaemon(config: Config): Promise<void> {
 
   const hidden = new Set(config.hideProjects ?? []);
   const applyEvent = (event: SessionEvent): void => {
+    // A hidden project contributes no project text anywhere, its path included.
     const clean =
       event.project !== undefined && hidden.has(event.project)
-        ? { ...event, project: undefined }
+        ? { ...event, project: undefined, cwd: undefined }
         : event;
     store.apply(clean);
     pusher.notify();
@@ -124,6 +129,27 @@ export async function runDaemon(config: Config): Promise<void> {
       log(`watching Claude Code workflows in ${projectsDir}`);
     }
 
+    // End Claude Code sessions whose process died without a SessionEnd, keep
+    // ones Claude Code reports busy from going stale mid tool call, and pick
+    // up session names for the menu bar.
+    let livenessTimer: NodeJS.Timeout | undefined;
+    if (config.adapters.claudeCode.enabled) {
+      const liveness = new ClaudeLiveness();
+      const checkLiveness = (): void => {
+        const now = Date.now();
+        const actions = liveness.step(store.list(), readLiveClaudeSessions(), now);
+        for (const [key, name] of actions.names) store.annotate(key, { name });
+        for (const key of actions.touch) store.touch(key, now);
+        for (const key of actions.reap) {
+          store.remove(key);
+          log(`ended ${key}: its Claude Code process is gone`);
+        }
+        if (actions.reap.length > 0) pusher.notify();
+      };
+      livenessTimer = setInterval(checkLiveness, CLAUDE_LIVENESS_INTERVAL_MS);
+      livenessTimer.unref();
+    }
+
     log(
       `agentblip daemon listening on 127.0.0.1:${config.port} (sink: ${sink.name}, granularity: ${config.granularity}, statusPolicy: ${config.statusPolicy})`,
     );
@@ -134,6 +160,7 @@ export async function runDaemon(config: Config): Promise<void> {
       shuttingDown = true;
       log(`${signal} received — clearing status and shutting down`);
       void (async () => {
+        if (livenessTimer) clearInterval(livenessTimer);
         server.close();
         try {
           await watcher?.close();

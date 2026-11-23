@@ -34,6 +34,12 @@ const KIND_TO_STATE: Record<string, SessionState | undefined> = {
  */
 export class SessionStore {
   private sessions = new Map<string, AgentSession>();
+  /**
+   * Out-of-band liveness (e.g. Claude Code reports the process busy), kept
+   * apart from updatedAt: bumping updatedAt would make apply() drop a real
+   * hook event stamped a moment earlier as out-of-order.
+   */
+  private aliveAt = new Map<string, number>();
   private readonly workingStaleMs: number;
   private readonly waitingStaleMs: number;
   private readonly idleEvictMs: number;
@@ -55,6 +61,7 @@ export class SessionStore {
 
     if (event.kind === "end") {
       this.sessions.delete(key);
+      this.aliveAt.delete(key);
       return;
     }
 
@@ -101,7 +108,17 @@ export class SessionStore {
 
   /** Drops a session (dismissed by the user, or its process is gone). */
   remove(key: string): boolean {
+    this.aliveAt.delete(key);
     return this.sessions.delete(key);
+  }
+
+  /**
+   * Confirms a session is still active without an event (a liveness probe saw
+   * its process busy): sweep() measures silence from the later of its last
+   * event and its last touch. State, activity and updatedAt are untouched.
+   */
+  touch(key: string, now = Date.now()): void {
+    if (this.sessions.has(key)) this.aliveAt.set(key, now);
   }
 
   /**
@@ -122,7 +139,7 @@ export class SessionStore {
   /** Demote stale working/waiting sessions, evict long-idle ones. */
   sweep(now = Date.now()): void {
     for (const [key, s] of this.sessions) {
-      const silentFor = now - s.updatedAt;
+      const silentFor = now - Math.max(s.updatedAt, this.aliveAt.get(key) ?? 0);
       const staleAfter =
         s.state === "working" ? this.workingStaleMs : this.waitingStaleMs;
       if (s.state !== "idle" && silentFor > staleAfter) {
@@ -138,6 +155,7 @@ export class SessionStore {
         });
       } else if (s.state === "idle" && silentFor > this.idleEvictMs) {
         this.sessions.delete(key);
+        this.aliveAt.delete(key);
       }
     }
   }
@@ -203,5 +221,6 @@ export class SessionStore {
 
   clear(): void {
     this.sessions.clear();
+    this.aliveAt.clear();
   }
 }

@@ -1,54 +1,68 @@
 import AppKit
 
-/// Renders the menu bar "blip": a colored dot whose color/shape encodes state,
-/// with a small count for multiple working/waiting agents. Non-template so the
-/// on-air color shows through (a template image would be flattened to mono).
+/// The menu bar glyph, built from SF Symbols so it sits with the system icons.
+///
+/// - Calm states are template images (macOS tints them for light/dark bars):
+///   a ring when nothing runs, a filled dot (or numbered dot) while agents work.
+///   Filled = syncing to Slack ("on air"); outlined = sync is off (paused,
+///   snoozed, or standing down for your own status).
+/// - "Needs you" is the only coloured state: an orange dot, numbered when more
+///   than one session is waiting, so it reads at a glance without flashing.
 enum StatusIcon {
+    private static let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+
     static func image(for blip: BlipState) -> NSImage {
-        let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        defer { image.unlockFocus() }
-
-        let (color, filled, count): (NSColor, Bool, Int?) = {
-            switch blip {
-            case .unreachable: return (.tertiaryLabelColor, false, nil)
-            case .paused: return (.secondaryLabelColor, false, nil)
-            case .backedOff: return (.systemGray, false, nil)
-            case .idle: return (.systemGray, false, nil)
-            case .waiting(let n): return (.systemOrange, true, n > 1 ? n : nil)
-            case .working(let n): return (.systemGreen, true, n > 1 ? n : nil)
-            }
-        }()
-
-        let inset: CGFloat = 4
-        let rect = NSRect(x: inset, y: inset, width: size.width - inset * 2, height: size.height - inset * 2)
-        let path = NSBezierPath(ovalIn: rect)
-        if filled {
-            color.setFill()
-            path.fill()
-        } else {
-            color.setStroke()
-            path.lineWidth = 1.6
-            path.stroke()
+        switch blip {
+        case .unreachable:
+            return template("circle.dashed", alpha: 0.45, label: "agentblip: daemon offline")
+        case .idle:
+            return template("circle", label: "agentblip: no agents running")
+        case .working(let n, let onAir):
+            let base = numbered(n)
+            return template(onAir ? "\(base).fill" : base, label: "agentblip: \(n) working")
+        case .needsYou(let n):
+            return tinted("\(numbered(n)).fill", color: .systemOrange, label: "agentblip: \(n) need you")
         }
+    }
 
-        if let count {
-            let text = "\(min(count, 9))"
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 9, weight: .bold),
-                .foregroundColor: NSColor.white,
-            ]
-            let attributed = NSAttributedString(string: text, attributes: attrs)
-            let textSize = attributed.size()
-            let point = NSPoint(
-                x: rect.midX - textSize.width / 2,
-                y: rect.midY - textSize.height / 2
-            )
-            attributed.draw(at: point)
+    /// "circle" for one, "3.circle" for 2…50 (SF Symbols ships numbered circles to 50).
+    private static func numbered(_ n: Int) -> String {
+        (2...50).contains(n) ? "\(n).circle" : "circle"
+    }
+
+    private static func symbol(_ name: String, label: String) -> NSImage {
+        let img = NSImage(systemSymbolName: name, accessibilityDescription: label)
+            ?? NSImage(systemSymbolName: "circle", accessibilityDescription: label)!
+        return img.withSymbolConfiguration(config) ?? img
+    }
+
+    private static func template(_ name: String, alpha: CGFloat = 1, label: String) -> NSImage {
+        let base = symbol(name, label: label)
+        guard alpha < 1 else {
+            base.isTemplate = true
+            return base
         }
+        let faded = NSImage(size: base.size, flipped: false) { rect in
+            base.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha)
+            return true
+        }
+        faded.isTemplate = true
+        faded.accessibilityDescription = label
+        return faded
+    }
 
-        image.isTemplate = false
-        return image
+    /// Colours the symbol's shape; knocked-out parts (the number) stay clear,
+    /// so the menu bar shows through like it does for template icons.
+    private static func tinted(_ name: String, color: NSColor, label: String) -> NSImage {
+        let base = symbol(name, label: label)
+        let img = NSImage(size: base.size, flipped: false) { rect in
+            base.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        img.isTemplate = false
+        img.accessibilityDescription = label
+        return img
     }
 }

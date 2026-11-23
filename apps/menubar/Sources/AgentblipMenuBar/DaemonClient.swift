@@ -63,6 +63,20 @@ struct DaemonClient {
     @discardableResult
     func pause() async throws -> Data { try await request("POST", "/pause") }
 
+    /// Snooze: the daemon resumes Slack sync on its own when the preset ends.
+    @discardableResult
+    func snooze(_ preset: SnoozePreset) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: ["for": preset.rawValue])
+        return try await request("POST", "/pause", body: body)
+    }
+
+    /// Drops a session from the daemon's list until it reports again.
+    @discardableResult
+    func dismiss(key: String) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: ["key": key])
+        return try await request("POST", "/sessions/dismiss", body: body)
+    }
+
     @discardableResult
     func resume() async throws -> Data { try await request("POST", "/resume") }
 

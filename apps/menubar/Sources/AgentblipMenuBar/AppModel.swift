@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import SwiftUI
 
 /// Owns the poll loop and exposes the current daemon view to SwiftUI.
@@ -7,14 +7,24 @@ final class AppModel: ObservableObject {
     @Published private(set) var state: DaemonState?
     @Published private(set) var config: DaemonConfig?
     @Published private(set) var reachable = false
+    /// Notify when a session newly needs you. App-local preference, off by default.
+    @Published var notifyOnNeedsYou: Bool {
+        didSet {
+            UserDefaults.standard.set(notifyOnNeedsYou, forKey: Self.notifyKey)
+            if notifyOnNeedsYou { notifier.requestPermission() }
+        }
+    }
 
+    private static let notifyKey = "notifyOnNeedsYou"
     private let client = DaemonClient()
+    private let notifier = Notifier()
     private var timer: Timer?
     private let pollInterval: TimeInterval = 2
 
     var blip: BlipState { BlipState.from(state: reachable ? state : nil) }
 
     init() {
+        notifyOnNeedsYou = UserDefaults.standard.bool(forKey: Self.notifyKey)
         start() // begin polling at launch so the icon is live before first click
     }
 
@@ -34,25 +44,28 @@ final class AppModel: ObservableObject {
             state = s
             if let c { config = c }
             reachable = true
+            notifier.update(sessions: s.snapshot.sessions, enabled: notifyOnNeedsYou)
         } catch {
             reachable = false
         }
     }
 
-    // Optimistic control actions — reflect immediately, then reconcile on the
-    // next poll so a failed call self-corrects.
-    func setPaused(_ paused: Bool) {
+    // Control actions: fire, then reconcile on a fresh poll so a failed call
+    // self-corrects.
+    func pause() { act { try await $0.pause() } }
+    func resume() { act { try await $0.resume() } }
+    func snooze(_ preset: SnoozePreset) { act { try await $0.snooze(preset) } }
+    func dismiss(_ session: AgentSession) { act { try await $0.dismiss(key: session.key) } }
+
+    private func act(_ call: @escaping (DaemonClient) async throws -> Data) {
         Task {
-            do {
-                _ = paused ? try await client.pause() : try await client.resume()
-            } catch {}
+            _ = try? await call(client)
             await refresh()
         }
     }
 
     func setGranularity(_ value: String) { patch(["granularity": value]) }
     func setPolicy(_ value: String) { patch(["statusPolicy": value]) }
-    func setShowProject(_ value: Bool) { patch(["showProject": value]) }
     func setRepoPrefix(_ value: Bool) { patch(["repoPrefix": value]) }
 
     private func patch(_ p: [String: Any]) {
@@ -60,6 +73,17 @@ final class AppModel: ObservableObject {
             if let c = try? await client.patchConfig(p) { config = c }
             await refresh()
         }
+    }
+
+    // MARK: Row actions (local, no daemon round trip)
+
+    func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    func revealInFinder(_ path: String) {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
     func openConfigFile() {

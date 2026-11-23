@@ -1,169 +1,307 @@
 import SwiftUI
 
-/// Maps the handful of Slack shortcodes the formatter emits to real glyphs.
-private func glyph(_ shortcode: String) -> String {
-    switch shortcode {
-    case ":robot_face:": return "🤖"
-    case ":raised_hand:": return "✋"
-    default: return ""
-    }
-}
-
+/// The dropdown: what Slack shows (and the sync control) on top, the live
+/// session list grouped by what it needs from you, settings tucked in a menu.
 struct MenuContent: View {
     @ObservedObject var model: AppModel
+    @AppStorage("idleExpanded") private var idleExpanded = false
+
+    /// Beyond this many visible rows the list scrolls.
+    private let maxRowsBeforeScroll = 9
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            if !model.reachable {
-                notRunning
+        VStack(alignment: .leading, spacing: 0) {
+            if model.reachable, let s = model.state {
+                header(s)
+                Divider().padding(.horizontal, 14)
+                list(s)
             } else {
-                if let s = model.state, s.ownership.backedOff {
-                    banner("Standing down — your existing Slack status is untouched.",
-                           systemImage: "pause.circle")
-                }
-                sessions
-                Divider()
-                controls
+                offline
             }
-            Divider()
+            Divider().padding(.horizontal, 14)
             footer
         }
-        .padding(12)
-        .frame(width: 300)
+        .frame(width: 340)
     }
 
-    // MARK: - Sections
+    // MARK: - Header: the Slack line + sync control
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(nsImage: StatusIcon.image(for: model.blip))
-            Text(headline).font(.system(size: 13, weight: .semibold))
-            Spacer()
+    private func header(_ s: DaemonState) -> some View {
+        let line = slackLine(s)
+        return HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Image(systemName: line.symbol)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+            // Up to Slack's 100 characters: two lines, so "· 1 waiting on me" isn't cut.
+            Text(line.text)
+                .font(.system(size: 12))
+                .foregroundStyle(line.live ? .primary : .secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .help(line.help)
+            if let err = s.lastError {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                    .help("Last Slack update failed: \(err)")
+            }
+            Spacer(minLength: 8)
+            syncControl(s)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
-    private var headline: String {
-        guard model.reachable, let s = model.state else { return "agentblip — daemon offline" }
-        if s.paused { return "Paused" }
+    private struct SlackLine {
+        let symbol: String
+        let text: String
+        let help: String
+        let live: Bool
+    }
+
+    private func slackLine(_ s: DaemonState) -> SlackLine {
+        if s.paused, let until = s.pausedUntil {
+            let at = Date(timeIntervalSince1970: until / 1000)
+            return SlackLine(symbol: "moon.zzz", text: "Snoozed until \(Self.clock(at))",
+                             help: "Slack sync resumes on its own at \(Self.clock(at)).", live: false)
+        }
+        if s.paused {
+            return SlackLine(symbol: "pause.circle", text: "Slack sync paused",
+                             help: "Your Slack status is cleared until you resume.", live: false)
+        }
+        if s.ownership.backedOff {
+            return SlackLine(symbol: "person.crop.circle", text: "Your own Slack status is up",
+                             help: "agentblip leaves it alone and picks up again when it clears.", live: false)
+        }
         if let f = s.formatted {
-            let g = glyph(f.emoji)
-            return g.isEmpty ? f.text : "\(g)  \(f.text)"
+            return SlackLine(symbol: "bubble.left.fill", text: f.text,
+                             help: "Your Slack status: \(f.text)", live: true)
         }
-        return "No agents running"
+        return SlackLine(symbol: "bubble.left", text: "Slack status clear",
+                         help: "No agents are working, so agentblip shows nothing.", live: false)
     }
 
-    private var notRunning: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("The agentblip daemon isn't running.")
+    @ViewBuilder
+    private func syncControl(_ s: DaemonState) -> some View {
+        if s.paused {
+            Button("Resume") { model.resume() }
+                .controlSize(.small)
+        } else {
+            Menu {
+                ForEach(SnoozePreset.allCases, id: \.self) { p in
+                    Button("Snooze \(p.title)") { model.snooze(p) }
+                }
+                Divider()
+                Button("Pause Until I Resume") { model.pause() }
+            } label: {
+                Image(systemName: "moon.zzz")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Snooze Slack sync")
+            .accessibilityLabel("Snooze Slack sync")
+        }
+    }
+
+    // MARK: - Session list
+
+    private func list(_ s: DaemonState) -> some View {
+        let visible = s.snapshot.sessions.filter { $0.foldedInto == nil }
+        let groups = SessionGroup.allCases.compactMap { g -> (SessionGroup, [AgentSession])? in
+            let rows = Self.order(visible.filter { SessionGroup.of($0) == g }, in: g)
+            return rows.isEmpty ? nil : (g, rows)
+        }
+        let rowCount = groups.reduce(0) { n, g in
+            n + (g.0 == .idle && !idleExpanded ? 0 : g.1.count)
+        }
+        let content = VStack(alignment: .leading, spacing: 0) {
+            if groups.isEmpty {
+                Text("No agents running")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+            }
+            ForEach(groups, id: \.0) { group, rows in
+                section(group, rows)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.bottom, 6)
+
+        return Group {
+            if rowCount > maxRowsBeforeScroll {
+                ScrollView { content }.frame(height: 460)
+            } else {
+                content
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func section(_ group: SessionGroup, _ rows: [AgentSession]) -> some View {
+        let now = Date()
+        if group == .idle {
+            Button {
+                idleExpanded.toggle()
+            } label: {
+                sectionHeader(group, count: rows.count, chevron: idleExpanded ? "chevron.down" : "chevron.right")
+            }
+            .buttonStyle(.plain)
+            if idleExpanded {
+                ForEach(rows) { row($0, group, now) }
+            }
+        } else {
+            sectionHeader(group, count: rows.count, chevron: nil)
+            ForEach(rows) { row($0, group, now) }
+        }
+    }
+
+    private func sectionHeader(_ group: SessionGroup, count: Int, chevron: String?) -> some View {
+        HStack(spacing: 4) {
+            Text(group.title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(group == .needsYou ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+            if count > 1 || chevron != nil {
+                Text("\(count)")
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            if let chevron {
+                Image(systemName: chevron)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 9)
+        .padding(.bottom, 3)
+        .contentShape(Rectangle())
+    }
+
+    private func row(_ s: AgentSession, _ group: SessionGroup, _ now: Date) -> some View {
+        SessionRow(session: s, group: group, now: now, actions: actions(for: s, group))
+    }
+
+    private func actions(for s: AgentSession, _ group: SessionGroup) -> [RowAction] {
+        var out: [RowAction] = []
+        if let name = s.name {
+            out.append(RowAction(title: "Copy Name", systemImage: "doc.on.doc") { model.copy(name) })
+        }
+        out.append(RowAction(title: "Copy Session ID", systemImage: "number") { model.copy(s.sessionId) })
+        if let cwd = s.cwd, FileManager.default.fileExists(atPath: cwd) {
+            out.append(RowAction(title: "Reveal in Finder", systemImage: "folder") { model.revealInFinder(cwd) })
+        }
+        // A working session would reappear with its next event; dismiss is for
+        // a stale wait, a finished turn, or background work you've seen.
+        if group != .working {
+            out.append(RowAction(title: "Dismiss", systemImage: "xmark.circle", separated: true) {
+                model.dismiss(s)
+            })
+        }
+        return out
+    }
+
+    /// Stable order so rows don't jump on every tool call: the longest wait
+    /// first under "Needs you", otherwise by name.
+    static func order(_ rows: [AgentSession], in group: SessionGroup) -> [AgentSession] {
+        if group == .needsYou {
+            return rows.sorted { ($0.stateSince ?? $0.updatedAt) < ($1.stateSince ?? $1.updatedAt) }
+        }
+        return rows.sorted {
+            let a = ($0.project ?? $0.name ?? "").lowercased()
+            let b = ($1.project ?? $1.name ?? "").lowercased()
+            return a == b ? $0.startedAt < $1.startedAt : a < b
+        }
+    }
+
+    // MARK: - Offline
+
+    private var offline: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("The agentblip daemon isn't running", systemImage: "circle.dashed")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-            Text("Start it with  agentblip start --detach")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .textSelection(.enabled)
+            HStack {
+                Text("agentblip start --detach")
+                    .font(.system(size: 11, design: .monospaced))
+                    .textSelection(.enabled)
+                Spacer()
+                Button {
+                    model.copy("agentblip start --detach")
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .help("Copy")
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
         }
+        .padding(14)
     }
 
-    private var sessions: some View {
-        Group {
-            if let s = model.state, !s.snapshot.sessions.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(s.snapshot.sessions) { session in
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(color(for: session.state))
-                                .frame(width: 7, height: 7)
-                            Text(session.source)
-                                .font(.system(size: 12, weight: .medium))
-                            Text(session.activity ?? session.state)
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                            Spacer()
-                            if let p = session.project {
-                                Text(p)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle(isOn: Binding(
-                get: { !(model.state?.paused ?? false) },
-                set: { model.setPaused(!$0) }
-            )) {
-                Text("Syncing to Slack").font(.system(size: 12))
-            }
-            .toggleStyle(.switch)
-
-            if let c = model.config {
-                Picker("Detail", selection: Binding(
-                    get: { c.granularity },
-                    set: { model.setGranularity($0) }
-                )) {
-                    Text("Off").tag("off")
-                    Text("Presence").tag("presence")
-                    Text("Count").tag("count")
-                    Text("Activity").tag("activity")
-                }
-                .font(.system(size: 12))
-
-                Picker("If a status is already set", selection: Binding(
-                    get: { c.statusPolicy },
-                    set: { model.setPolicy($0) }
-                )) {
-                    Text("Respect it").tag("respect")
-                    Text("Overwrite").tag("overwrite")
-                }
-                .font(.system(size: 12))
-
-                Toggle(isOn: Binding(
-                    get: { c.repoPrefix },
-                    set: { model.setRepoPrefix($0) }
-                )) {
-                    Text("Lead with repo name").font(.system(size: 12))
-                }
-                .toggleStyle(.switch)
-                .help("Show “repo: activity” (e.g. b3iq: editing README.md) in activity mode")
-            }
-        }
-    }
+    // MARK: - Footer: settings menu + quit
 
     private var footer: some View {
         HStack {
-            Button("Config…") { model.openConfigFile() }
-                .buttonStyle(.plain)
-                .font(.system(size: 12))
+            Menu {
+                if let c = model.config {
+                    Picker("Slack Detail", selection: Binding(
+                        get: { c.granularity },
+                        set: { model.setGranularity($0) }
+                    )) {
+                        Text("Off").tag("off")
+                        Text("Presence").tag("presence")
+                        Text("Count").tag("count")
+                        Text("Activity").tag("activity")
+                    }
+                    Picker("When My Status Is Set", selection: Binding(
+                        get: { c.statusPolicy },
+                        set: { model.setPolicy($0) }
+                    )) {
+                        Text("Leave It").tag("respect")
+                        Text("Replace It, Then Restore").tag("overwrite")
+                    }
+                    Toggle("Lead With Repo Name", isOn: Binding(
+                        get: { c.repoPrefix },
+                        set: { model.setRepoPrefix($0) }
+                    ))
+                    Divider()
+                }
+                Toggle("Notify When an Agent Needs Me", isOn: $model.notifyOnNeedsYou)
+                Divider()
+                Button("Open Config File…") { model.openConfigFile() }
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Settings")
+            .accessibilityLabel("Settings")
+
             Spacer()
+
             Button("Quit") { model.quit() }
                 .buttonStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+                .keyboardShortcut("q")
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
-    private func banner(_ text: String, systemImage: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: systemImage).foregroundStyle(.orange)
-            Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
-        }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
-    }
-
-    private func color(for state: String) -> Color {
-        switch state {
-        case "working": return .green
-        case "waiting": return .orange
-        default: return .gray
-        }
+    private static func clock(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = Calendar.current.isDateInToday(date) ? .none : .short
+        f.doesRelativeDateFormatting = true
+        return f.string(from: date)
     }
 }

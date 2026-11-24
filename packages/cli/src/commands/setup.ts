@@ -122,9 +122,55 @@ export function resolveRelayUrl(input: string): string {
 
 export interface SetupOptions {
   relayUrl?: string;
+  /** Install or refresh agent hooks only: no prompts, no pairing, config untouched. */
+  hooksOnly?: boolean;
+}
+
+/** `agentblip setup --hooks-only`: (re)install Claude Code and Codex hooks, nothing else. */
+export function installHooksOnly(): void {
+  console.log(bold("agentblip setup --hooks-only"));
+  try {
+    const result = installClaudeHooks();
+    console.log(
+      `  claude code: ${result.changed ? green("hooks installed") : dim("already installed")}` +
+        (result.backupPath ? dim(` (backup: ${result.backupPath})`) : ""),
+    );
+  } catch (err) {
+    console.log(`  claude code: ${red(`could not install hooks: ${errorMessage(err)}`)}`);
+  }
+  if (!fs.existsSync(path.dirname(codexConfigPath())) && !process.env.CODEX_HOME) {
+    console.log(`  codex: ${dim("not installed here (no ~/.codex), skipped")}`);
+    return;
+  }
+  try {
+    const result = installCodexHooks();
+    console.log(
+      `  codex: ${result.changed ? green(`hooks installed in ${result.hooksPath}`) : dim("hooks already installed")}` +
+        (result.backupPath ? dim(` (backup: ${result.backupPath})`) : ""),
+    );
+    if (result.changed) {
+      console.log(`  ${yellow("open Codex and run /hooks to trust agentblip's hooks (Codex skips untrusted hooks)")}`);
+    }
+  } catch (err) {
+    console.log(`  codex: ${red(`could not update hooks.json: ${errorMessage(err)}`)}`);
+  }
+  try {
+    const notify = installCodexNotify();
+    if (notify === "manual") {
+      console.log(`  codex notify: ${dim("config.toml already sets notify; left as is (fallback only)")}`);
+    } else {
+      console.log(`  codex notify: ${notify === "installed" ? green("installed") : dim("already installed")}`);
+    }
+  } catch (err) {
+    console.log(`  codex notify: ${red(`could not update config.toml: ${errorMessage(err)}`)}`);
+  }
 }
 
 export async function runSetup(opts: SetupOptions = {}): Promise<void> {
+  if (opts.hooksOnly) {
+    installHooksOnly();
+    return;
+  }
   console.log(bold("agentblip setup"));
   console.log(dim("your Slack status, synced with your local AI agent sessions\n"));
 

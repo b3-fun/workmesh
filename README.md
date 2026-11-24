@@ -42,8 +42,8 @@ agentblip setup           # walks through Slack connect + hook install
 agentblip start --detach  # daemon runs in the background
 ```
 
-That's it. Claude Code sessions appear automatically via hooks; Codex via its notify
-hook plus a session watcher. Anything else can report itself with one HTTP request
+That's it. Claude Code and Codex sessions appear automatically via their hooks (Codex
+also keeps its notify hook and a session watcher as fallbacks). Anything else can report itself with one HTTP request
 (see [Integrations](#integrations)). When every agent finishes, your status clears.
 
 ## How it works
@@ -263,12 +263,21 @@ call it — a Makefile target, a CI step, or an agent step inside a workflow.
 (Ultracode `Workflow` runs don't need this — the built-in workflow watcher already
 reports them automatically.)
 
-### Codex — notify + watcher
+### Codex — hooks, with notify + watcher as fallbacks
 
-`agentblip setup` adds a `notify` hook to your Codex config (`agentblip hook codex` is
-the entrypoint), which reports turn completions. Because notify alone can't see when a
-turn *starts*, the daemon also watches Codex session logs to mark sessions working in
-real time.
+`agentblip setup` merges agentblip into `~/.codex/hooks.json` (`$CODEX_HOME` respected)
+for `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`,
+`PostToolUse`, `Stop` and `SessionEnd`; `agentblip hook codex-hooks` is the entrypoint.
+Other tools' entries are kept, and the original file is backed up once. Codex maps like
+Claude Code: `apply_patch` shows as "editing <file>", shell calls as "running
+commands", and a question or an approval prompt as waiting on you.
+
+Codex runs a new user hook only after you trust it: open Codex and run `/hooks` once
+after setup.
+
+The older `notify` hook (`agentblip hook codex`) stays installed for Codex builds
+without hooks, and the daemon still watches Codex session logs to mark sessions
+working.
 
 ### Anything else — one HTTP request
 
@@ -295,21 +304,64 @@ Send `{"kind": "end"}` with the same `source` + `sessionId` when it finishes. Fu
 schema, event semantics, staleness rules, and adapter-writing guide:
 [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
+## Hub forward (team board)
+
+Slack shows *that* you have agents running. A hub shows your whole team's agent
+sessions on one live board: who is running what, in which repo and branch, which ones
+wait on a person, and each tool call as one line. agentblip is the relay: the daemon
+forwards a small set of metadata to a hub you pair with, next to (never instead of)
+the Slack status. [Bullpen](https://bullpen.b3os.org) is the first hub.
+
+```bash
+agentblip hub connect https://bullpen.b3os.org   # shows a code, opens the browser to approve
+agentblip hub status                             # paired? last send, queued, dropped, shared sessions
+agentblip hub include ~/work/shared-notes        # also share this folder
+agentblip hub exclude ~/work/acme-private        # never share this, whatever its remote
+agentblip hub disconnect
+```
+
+**What is shared.** At pairing the hub sends a rule, e.g. "repos whose `origin`
+contains `github.com/your-org/`". A session is shared once its working directory is
+in such a repo (worktrees count as their main repo), or once it touches a file in one.
+Sessions anywhere else send nothing. A session started outside a shared repo (an
+orchestrator in `~/Documents`) shares its state, prompts (as "sent a message", no
+text), file events in shared repos, and shell commands that name a path inside one.
+
+**What leaves your machine.** Only: session state and agentblip's own activity label,
+tool names, repo-relative paths inside shared repos, `owner/name` and branch, the
+program and one subcommand of a shell command for a fixed allow list (`cargo test`,
+`git commit`, `gh pr`), issue ids for the configured keys (`B3-7166`), and PR links on
+shared repos. Never prompt text, assistant text, tool input or output, file contents,
+command arguments, environment variables or absolute paths. Every request is built
+from strict schemas, so a field outside that list can't be sent.
+
+The hook passes richer local-only detail (tool input, prompt) to the daemon over
+loopback so it can make those decisions; that detail is never stored on a session, never
+formatted into your Slack status, and never sent to the agentblip relay.
+
+Delivery: batched every second, a full heartbeat every 30 s, up to 5,000 events held
+while the hub is unreachable, `Retry-After` honored. If the hub revokes the device
+(401) forwarding stops and `agentblip hub status` tells you to pair again.
+
 ## CLI reference
 
 | Command | Does |
 |---|---|
-| `agentblip setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt |
+| `agentblip setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt; `--hooks-only` just installs or refreshes the Claude Code and Codex hooks |
 | `agentblip start [--detach]` | Run the daemon, foreground or in the background |
 | `agentblip stop` | Stop the background daemon |
 | `agentblip status [--json]` | Show daemon state, live sessions, and the current status |
 | `agentblip emit` | Send a session event by hand (testing, scripts) |
 | `agentblip report` | Report a fan-out of concurrent agents (`--agents N --phase X`, `--done`) so "N agents working" is accurate |
-| `agentblip hook <source>` | stdin→event adapter wired into agent hooks (e.g. `agentblip hook claude-code`) |
+| `agentblip hook <source>` | stdin→event adapter wired into agent hooks (`claude-code`, `codex-hooks`, `codex` for notify) |
 | `agentblip pause [--for 30m\|1h\|tomorrow]` | Pause Slack updates without stopping the daemon; `--for` snoozes and resumes on its own (`tomorrow` = 9 AM) |
 | `agentblip resume` | Resume Slack updates |
 | `agentblip unlink` | Revoke this device's token and clear the status |
-| `agentblip doctor [--json]` | Diagnose config, daemon, hooks, and connectivity |
+| `agentblip hub connect <url>` | Pair this machine with a team hub (device code; `--no-open`, `--machine <name>`) |
+| `agentblip hub status [--json]` | Pairing, project, last send, queued/dropped events, shared sessions |
+| `agentblip hub include <dir>` / `exclude <dir>` | Share a folder too / never share a folder |
+| `agentblip hub disconnect` | Stop forwarding and remove the hub token |
+| `agentblip doctor [--json]` | Diagnose config, daemon, hooks, hub forward, and connectivity |
 
 ## Menu bar app (macOS)
 

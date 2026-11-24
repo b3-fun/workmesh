@@ -47,6 +47,7 @@ program
     "--relay-url <url>",
     "relay to pair with (self-hosters: your own Worker URL)",
   )
+  .option("--hooks-only", "only install or refresh Claude Code and Codex hooks (no prompts, config untouched)")
   .action(wrap(runSetup));
 
 program

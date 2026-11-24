@@ -11,7 +11,7 @@
 - **Repo**: github.com/seangeng/agentblip (open source, MIT)
 - **npm**: `agentblip` (CLI)
 - **Status**: building
-- **Last updated**: 2026-11-23
+- **Last updated**: 2026-11-24
 
 ---
 
@@ -67,8 +67,9 @@ Any tool (curl) ───┼─────────────────�
 │   │   └── src/               # events (zod wire contracts), aggregate, format, redact
 │   └── cli/                   # `agentblip` npm CLI (daemon + adapters + sinks)
 │       └── src/
-│           ├── commands/      # setup, start, status, emit, hook, pause, unlink, doctor
-│           ├── adapters/      # claude-code (hooks), codex (notify+watcher), workflow (ultracode journal watcher)
+│           ├── commands/      # setup, start, status, emit, hook, pause, unlink, doctor, hub
+│           ├── adapters/      # claude-code (hooks), codex (hooks.json + notify + watcher), workflow (ultracode journal watcher), detail (local-only hook facts)
+│           ├── hub/           # hub forward: git (.git reader), rules (SPEC §3.3 reductions), forwarder (batching/retry)
 │           └── sinks/         # relay, slack-direct, console
 ├── apps/
 │   └── menubar/               # native SwiftUI macOS menu bar app (thin daemon client)
@@ -94,9 +95,30 @@ Any tool (curl) ───┼─────────────────�
 - `POST /pause` — empty body pauses until resumed; `{for: "30m"|"1h"|"tomorrow"}` or `{until}` snoozes, the pusher's sweep tick auto-resumes (`lib/snooze.ts`); `/state.pausedUntil`
 - `POST /sessions/dismiss {key}` — drops a session (`SessionStore.remove`); it returns with its next event
 - `GET /config` — token-free `safeConfig` view · `POST /config` — live-tune `granularity`/`statusPolicy`/`showProject`/`repoPrefix` (validated by `liveConfigPatchSchema`, applied via `pusher.applyConfig()`, persisted). Used by the menu bar app.
+- `GET /hub` — hub forwarder status (`{enabled:false}` when not paired) · `POST /hub/reload` — re-read the config's `hub` section and restart the forwarder (used by `agentblip hub connect|disconnect|include|exclude`)
 - `/state` sessions are `SessionView`s: `stateSince`, `background`, `cwd`, `name` (local only), `subagents` + `foldedInto` (fan-out folding). Keep it additive: the menu bar app and Sean's desk clock (~/dev/studio-pixbar) both read it.
 
-Wire contracts: `packages/core/src/events.ts` (zod schemas, shared CLI ↔ Worker).
+Wire contracts: `packages/core/src/events.ts` (zod schemas, shared CLI ↔ Worker). Hub wire format: `packages/core/src/hub.ts`.
+
+## Hub forward (Bullpen)
+
+A second output beside the Slack pusher: the daemon forwards session metadata to a team hub (contract: Bullpen
+`SPEC.md` §3 in `b3-fun/bullpen`; hub at https://bullpen.b3os.org).
+
+- Hook mappers fill a local-only `SessionEvent.detail` (tool, absolute path, raw command, raw prompt, truncated shell
+  output, ok). It goes hook → daemon on loopback only; `SessionStore` never copies it, so Slack and the agentblip relay
+  never see it (tested in `test/detail.test.ts`).
+- `HubForwarder` (`packages/cli/src/hub/forwarder.ts`) runs when config has `hub`. `observe()` is sync and cheap;
+  network runs on its own 1 s timer. Inclusion: path → git root + origin (read from `.git`, no subprocess, worktrees →
+  main repo), shared when origin contains an `include.remotes` entry or sits under an include dir; `hub exclude` dirs
+  beat everything. Sessions in an unshared cwd follow SPEC rule 4. Labels are reduced to agentblip's fixed vocabulary;
+  `cmd` is program + one subcommand from an allow list; issues/PRs are extracted locally.
+- Every record is validated against strict schemas that mirror the hub's own validation; a bad optional field is
+  dropped rather than costing the batch a 400. Full heartbeat every 30 s, 5,000-event buffer, stable ids, backoff,
+  `Retry-After`, halt on 401.
+- Pairing: `agentblip hub connect <url>` (device code). Token + project rule live in `config.json` (0600) under `hub`;
+  a malformed `hub` section reads as unpaired instead of breaking the Slack config.
+- Codex: `agentblip setup` merges `~/.codex/hooks.json`; `hook codex-hooks` maps it. Codex needs `/hooks` trust once.
 
 ## KV Schema (binding: STORE)
 
@@ -129,6 +151,9 @@ Wire contracts: `packages/core/src/events.ts` (zod schemas, shared CLI ↔ Worke
 
 | 2026-11-23 | Claude Code `idle_prompt` is "needs my input" only when the turn ended by asking: the hook reads the transcript tail (64 KB → 1 MB) for the last assistant text (question mark, ask phrases, "## Needs your OK" headings, negation-aware) or an unanswered AskUserQuestion/ExitPlanMode; otherwise idle/"done"; background work → working/background; unreadable → waiting | The idle reminder fires for every unanswered turn, so Slack/menu bar/desk clock said "waiting on me" for turns waiting on a colleague. ~1 ms on 400 MB transcripts |
 | 2026-11-23 | Daemon liveness probe over `~/.claude/sessions/<pid>.json` every 15s (`daemon/claude-liveness.ts`): reap a session seen alive then gone > 2 min; `SessionStore.touch` working sessions Claude reports busy/shell; annotate session names | Crashed sessions never send SessionEnd. Never reaps a session it never saw alive (older Claude Code, other config dirs). `touch` is separate from `updatedAt` so a probe can't make apply() drop a real hook event as out-of-order |
+| 2026-11-24 | Hub forward (0.6.0): local-only `detail` on SessionEvent + `HubForwarder` beside the pusher; relay schemas mirror the hub's validation | Bullpen needs per-tool-call metadata, but the agentblip relay's privacy-by-construction must hold. Detail never reaches a session, Slack or the relay; the forwarder reduces it to allow-listed metadata, and strict schemas make extra fields unsendable |
+| 2026-11-24 | Codex lifecycle hooks via `~/.codex/hooks.json` (merge, never overwrite), notify + watcher kept as fallbacks | Codex 0.16x has Claude-Code-style hooks; payload fields verified against the JSON schemas embedded in the codex binary. Gives Codex tool-level activity and a real waiting state (`PermissionRequest`, `request_user_input`) |
+| 2026-11-24 | Git resolution reads `.git` files directly (HEAD, commondir, config) with a 5 s cache | The forwarder sits in the daemon's request path; spawning `git` per event would block it |
 | 2026-11-23 | Menu bar 0.2: grouped live list, SF Symbol template icon (orange only for needs-you), row actions, snooze; all new data via `/state` fields and daemon endpoints | Keeps the thin-client rule; roadmap in apps/menubar/README.md |
 
 ## Cloudflare Resources
@@ -155,6 +180,7 @@ Wire contracts: `packages/core/src/events.ts` (zod schemas, shared CLI ↔ Worke
 - [x] core: events/aggregate/format/redact/slack + 19 tests
 - [x] Worker relay: pairing (provisional records, delivered-grace, code normalization), Slack OAuth, status API, rate limits — 52 tests
 - [x] CLI: daemon (bearer-secret loopback API), claude-code + codex adapters, relay/slack/console sinks, 10 commands — 99 tests
+- [x] 0.6.0 (branch `hub-forward`, not merged/published): hub forward + `hub` commands + Codex hooks — CLI 307 tests, core 53, worker 62
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain
 - [x] GitHub github.com/seangeng/agentblip public, CI + push-to-deploy green (secrets set)
 - [x] E2E smoke: daemon lifecycle + live relay pairing/auth verified

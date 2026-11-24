@@ -107,6 +107,7 @@ while snoozed.
 | `background` | boolean | no | With `working`: only waiting on its own background work. Cleared by the next working event without it |
 | `cwd` | string, ≤1024 chars | no | Full working directory, local only (menu bar "Reveal in Finder") |
 | `name` | string, ≤120 chars | no | Human session name, local only |
+| `detail` | object | no | Local-only hook facts for the hub forwarder: `hookEvent`, `tool`, `filePath` (absolute), `filePaths`, `command`, `prompt`, `toolResponseText`, `ok`. Never stored on the session, never in the Slack status, never sent to the relay; the hub forwarder reduces it to metadata (see the README's "Hub forward"). A malformed `detail` is dropped, the event is kept |
 | `ts` | positive int | no | Epoch **milliseconds**; defaults to receipt time |
 
 `GET /state`'s snapshot reports both `working` (number of working *sessions*) and

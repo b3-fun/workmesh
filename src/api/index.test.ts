@@ -125,7 +125,7 @@ describe("GET /health", () => {
     const env = makeEnv(createKv().kv);
     const res = await api.request("/health", {}, env);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, service: "agentblip" });
+    expect(await res.json()).toEqual({ ok: true, service: "workmesh" });
   });
 });
 

@@ -104,7 +104,7 @@ async function slackFailureResponse(
 
 export const api = new Hono<{ Bindings: Env }>();
 
-api.get("/health", (c) => c.json({ ok: true, service: "agentblip" }));
+api.get("/health", (c) => c.json({ ok: true, service: "workmesh" }));
 
 api.post("/pair/start", async (c) => {
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";

@@ -4,14 +4,14 @@ import { Link } from "react-router";
 import { Blip } from "../components/Blip";
 import { CodeBlock } from "../components/CodeBlock";
 import { SlackStatusDemo } from "../components/SlackStatusDemo";
-import { GITHUB_URL, SiteFooter, SiteHeader } from "../components/SiteChrome";
+import { GITHUB_URL, NPM_URL, SiteFooter, SiteHeader } from "../components/SiteChrome";
 
-const TITLE = "agentblip — your Slack status, synced with your AI agents";
+const TITLE = "Workmesh — your coding agents, in Slack and on your team's board";
 const DESCRIPTION =
-  "agentblip watches your local Claude Code and Codex sessions and keeps your Slack status honest — “claude agent working”, “3 agents working”. Local-first, MIT.";
+  "Workmesh watches your local Claude Code and Codex sessions: your Slack status stays honest (“3 agents working”) and your team sees every agent on one live board. Local-first, MIT.";
 const URL = "https://agentblip.com/";
-const MENUBAR_ZIP =
-  "https://github.com/b3-fun/agentblip/releases/latest/download/agentblip-menubar-macos.zip";
+// The releases page, not a direct asset: it always lists the current menu bar build.
+const MENUBAR_RELEASES = `${GITHUB_URL}/releases/latest`;
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -22,7 +22,7 @@ export function meta(_: Route.MetaArgs) {
     { property: "og:description", content: DESCRIPTION },
     { property: "og:url", content: URL },
     { property: "og:image", content: "https://agentblip.com/og.png" },
-    { property: "og:site_name", content: "agentblip" },
+    { property: "og:site_name", content: "Workmesh" },
     { name: "twitter:card", content: "summary_large_image" },
     { name: "twitter:title", content: TITLE },
     { name: "twitter:description", content: DESCRIPTION },
@@ -34,12 +34,12 @@ export function meta(_: Route.MetaArgs) {
 const JSON_LD = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  name: "agentblip",
+  name: "Workmesh",
   description: DESCRIPTION,
   url: URL,
   applicationCategory: "DeveloperApplication",
   operatingSystem: "macOS, Linux, Windows",
-  downloadUrl: "https://www.npmjs.com/package/agentblip",
+  downloadUrl: NPM_URL,
   license: "https://opensource.org/license/mit",
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
   author: { "@type": "Person", name: "Sean Geng" },
@@ -137,20 +137,21 @@ export default function Index(_: Route.ComponentProps) {
           <div className="min-w-0">
             <p className="mb-5 flex items-center gap-2 font-mono text-xs tracking-wide text-phosphor-400">
               <Blip />
-              local-first slack presence for AI agents
+              local-first presence for your team's AI agents
             </p>
             <h1 className="font-mono text-4xl leading-[1.12] font-semibold tracking-tight text-balance sm:text-5xl">
-              Your Slack status,{" "}
-              <span className="text-phosphor-400">synced</span> with your AI
-              agents.
+              Your AI agents,{" "}
+              <span className="text-phosphor-400">live</span> in Slack and on
+              your team's board.
               <span
                 aria-hidden="true"
                 className="ml-2 inline-block h-[0.85em] w-[0.45em] translate-y-[0.1em] animate-blink bg-phosphor-500"
               />
             </h1>
             <p className="mt-6 max-w-xl text-base leading-relaxed text-fg-muted sm:text-lg">
-              agentblip watches your local Claude Code and Codex sessions and
-              keeps your team in the loop —{" "}
+              Workmesh watches your local Claude Code and Codex sessions and
+              keeps your team in the loop. Your Slack status says what they're
+              doing —{" "}
               <span className="font-mono text-sm text-fg">
                 “claude agent working”
               </span>
@@ -161,15 +162,18 @@ export default function Index(_: Route.ComponentProps) {
               ,{" "}
               <span className="font-mono text-sm text-fg">
                 “claude: finalizing CI/CD”
-              </span>
-              . No more “still running?” pings.
+              </span>{" "}
+              — and the team board shows everyone's agents, the repo each one
+              is in, and which ones wait on a person. No more “still running?”
+              pings.
             </p>
 
             <div className="mt-9 max-w-xl">
               <CodeBlock
                 commands={[
-                  { cmd: "npm install -g agentblip" },
-                  { cmd: "agentblip setup", note: "# pairs Slack in your browser" },
+                  { cmd: "npm install -g @b3os/workmesh" },
+                  { cmd: "workmesh setup", note: "# pairs Slack, installs agent hooks" },
+                  { cmd: "workmesh hub connect <url>", note: "# joins your team's board" },
                 ]}
               />
               <p className="mt-3 font-mono text-xs text-fg-faint">
@@ -203,8 +207,9 @@ export default function Index(_: Route.ComponentProps) {
               How it works
             </h2>
             <p className="mt-3 max-w-2xl text-fg-muted">
-              One tiny daemon on your machine. Your session data never leaves
-              it — only the finished status text does.
+              One tiny daemon on your machine. Slack only ever gets the
+              finished status text; your team's board gets only what you
+              choose to share.
             </p>
             <ol className="mt-10 grid gap-5 md:grid-cols-3">
               {STEPS.map((s) => (
@@ -266,7 +271,7 @@ export default function Index(_: Route.ComponentProps) {
                   <GranularityRow
                     level="off"
                     levelClass="text-fg-faint"
-                    note="Nothing. agentblip never touches your status."
+                    note="Nothing. Workmesh never touches your status."
                   >
                     <span className="text-fg-faint">— status never set</span>
                   </GranularityRow>
@@ -307,6 +312,56 @@ export default function Index(_: Route.ComponentProps) {
           </div>
         </section>
 
+        {/* ── team board ───────────────────────────────────── */}
+        <section id="team-board" className="border-t border-ink-800 scroll-mt-8">
+          <div className="mx-auto w-full max-w-6xl px-6 py-20">
+            <h2 className="font-mono text-2xl font-semibold tracking-tight sm:text-3xl">
+              <span aria-hidden="true" className="text-phosphor-600">
+                ##{" "}
+              </span>
+              One board for the whole team
+            </h2>
+            <p className="mt-3 max-w-2xl text-fg-muted">
+              Pair your machine with your team's hub and every teammate's
+              sessions show up on one live board: who is running what, in
+              which repo and branch, each tool call as one line, and which
+              agents are waiting on a person. Only sessions in repos your team
+              shares are sent, and you pick how much.
+            </p>
+            <div className="mt-10 grid gap-6 lg:grid-cols-2 lg:items-start">
+              <div className="rounded-xl border border-ink-800 bg-ink-900/60 p-6">
+                <h3 className="font-mono text-lg font-medium text-fg">
+                  metadata
+                </h3>
+                <p className="mt-2 text-sm leading-relaxed text-fg-muted">
+                  Session state, tool names, repo-relative paths, branch, the
+                  program and one subcommand of a shell command, issue ids and
+                  PR links.
+                </p>
+              </div>
+              <div className="rounded-xl border border-ink-800 bg-ink-900/60 p-6">
+                <h3 className="font-mono text-lg font-medium text-fg">
+                  conversation
+                </h3>
+                <p className="mt-2 text-sm leading-relaxed text-fg-muted">
+                  Also your prompts, the agent's replies and a one-line
+                  description of each tool call. Keys, tokens and home paths
+                  are redacted on your machine before anything is queued.
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 max-w-xl">
+              <CodeBlock
+                title="team board"
+                commands={[
+                  { cmd: "workmesh hub connect <url>", note: "# approve in the browser" },
+                  { cmd: "workmesh hub share metadata", note: "# or conversation" },
+                ]}
+              />
+            </div>
+          </div>
+        </section>
+
         {/* ── menu bar app ─────────────────────────────────── */}
         <section id="menu-bar" className="border-t border-ink-800">
           <div className="mx-auto w-full max-w-6xl px-6 py-20">
@@ -334,7 +389,8 @@ export default function Index(_: Route.ComponentProps) {
                   Grab the app, unzip, and open it. macOS 13 or later.
                 </p>
                 <a
-                  href={MENUBAR_ZIP}
+                  href={MENUBAR_RELEASES}
+                  rel="noreferrer"
                   className="mt-5 inline-flex items-center gap-2 rounded-lg border border-phosphor-600 bg-phosphor-500/10 px-4 py-2.5 font-mono text-sm text-phosphor-300 transition-colors hover:bg-phosphor-500/20"
                 >
                   <Blip />
@@ -348,8 +404,8 @@ export default function Index(_: Route.ComponentProps) {
                   <CodeBlock
                     title="first launch"
                     commands={[
-                      { cmd: "xattr -dr com.apple.quarantine agentblip.app" },
-                      { cmd: "open agentblip.app" },
+                      { cmd: "xattr -dr com.apple.quarantine Workmesh.app" },
+                      { cmd: "open Workmesh.app" },
                     ]}
                   />
                 </div>
@@ -362,20 +418,20 @@ export default function Index(_: Route.ComponentProps) {
                 </h3>
                 <p className="mt-2 text-sm leading-relaxed text-fg-muted">
                   It's a small SwiftUI package in the repo. Two commands and you
-                  have your own <code className="text-fg">agentblip.app</code>.
+                  have your own <code className="text-fg">Workmesh.app</code>.
                 </p>
                 <div className="mt-5">
                   <CodeBlock
                     title="apps/menubar"
                     commands={[
                       { cmd: "cd apps/menubar" },
-                      { cmd: "./scripts/make-app.sh", note: "# → dist/agentblip.app" },
+                      { cmd: "./scripts/make-app.sh", note: "# → dist/Workmesh.app" },
                     ]}
                   />
                 </div>
                 <p className="mt-4 font-mono text-xs text-fg-faint">
                   needs the{" "}
-                  <span className="text-fg-muted">agentblip</span> CLI running ·{" "}
+                  <span className="text-fg-muted">workmesh</span> CLI running ·{" "}
                   <a
                     href={`${GITHUB_URL}/tree/main/apps/menubar`}
                     rel="noreferrer"
@@ -405,8 +461,9 @@ export default function Index(_: Route.ComponentProps) {
                 one thing — the final status text it sets on Slack. Tokens are
                 AES-GCM encrypted at rest, and the whole thing is MIT and
                 self-hostable. And it won&rsquo;t fight your existing status:
-                agentblip checks first and never overwrites a status it
-                didn&rsquo;t set.
+                Workmesh checks first and never overwrites a status it
+                didn&rsquo;t set. The team board is separate: it gets only what
+                you choose to share, redacted on your machine.
               </p>
             </div>
             <div className="flex shrink-0 flex-col gap-3 font-mono text-sm">

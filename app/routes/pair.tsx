@@ -1,9 +1,9 @@
 import type { Route } from "./+types/pair";
 import { SiteFooter, SiteHeader } from "../components/SiteChrome";
 
-const TITLE = "Connect your Slack workspace to agentblip — device pairing";
+const TITLE = "Connect your Slack workspace to Workmesh — device pairing";
 const DESCRIPTION =
-  "Enter the 8-character code from agentblip setup to connect your Slack workspace, then head back to your terminal — the CLI finishes pairing automatically.";
+  "Enter the 8-character code from workmesh setup to connect your Slack workspace, then head back to your terminal — the CLI finishes pairing automatically.";
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -36,11 +36,11 @@ export function loader({ request }: Route.LoaderArgs) {
 const ERROR_COPY: Record<string, { heading: string; body: string }> = {
   expired: {
     heading: "that code expired",
-    body: "Pairing codes only live for 15 minutes. Run agentblip setup again in your terminal to get a fresh one, then come back here.",
+    body: "Pairing codes only live for 15 minutes. Run workmesh setup again in your terminal to get a fresh one, then come back here.",
   },
   state: {
     heading: "couldn't verify the handshake",
-    body: "The OAuth state didn't match — this can happen if the page sat open too long or the link was reused. Run agentblip setup again and retry.",
+    body: "The OAuth state didn't match — this can happen if the page sat open too long or the link was reused. Run workmesh setup again and retry.",
   },
   slack: {
     heading: "slack didn't complete the connection",
@@ -115,7 +115,7 @@ export default function Pair({ loaderData }: Route.ComponentProps) {
             <p className="mt-3 text-fg-muted">
               Enter the code shown by{" "}
               <code className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-sm text-fg">
-                agentblip setup
+                workmesh setup
               </code>{" "}
               to connect your Slack workspace.
             </p>
@@ -192,8 +192,8 @@ export default function Pair({ loaderData }: Route.ComponentProps) {
               <code className="font-mono text-xs">users.profile:write</code> (set
               your status) and{" "}
               <code className="font-mono text-xs">users.profile:read</code> (check
-              the current status so agentblip never overwrites one it didn't set)
-              — the only permissions agentblip asks for.
+              the current status so Workmesh never overwrites one it didn't set)
+              — the only permissions Workmesh asks for.
             </p>
           </section>
         )}

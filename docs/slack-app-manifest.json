@@ -1,7 +1,7 @@
 {
   "display_information": {
-    "name": "agentblip",
-    "description": "Your Slack status, synced with your local AI agent sessions.",
+    "name": "Workmesh",
+    "description": "Your Slack status, synced with your coding agents.",
     "background_color": "#1a1d21"
   },
   "oauth_config": {

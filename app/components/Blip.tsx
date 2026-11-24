@@ -1,4 +1,4 @@
-/** The agentblip mark: a phosphor presence dot with a radar-ping ring. */
+/** The Workmesh mark: a phosphor presence dot with a radar-ping ring. */
 export function Blip({
   color = "phosphor",
   className = "",

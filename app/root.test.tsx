@@ -21,16 +21,16 @@ function render(error: unknown): string {
 describe("root ErrorBoundary", () => {
   it("renders a document <title> for 404s", () => {
     const html = render(routeErrorResponse(404, "Not Found"));
-    expect(html).toContain("<title>404 — no blip here — agentblip</title>");
+    expect(html).toContain("<title>404 — no blip here — Workmesh</title>");
   });
 
   it("renders a document <title> for other route errors", () => {
     const html = render(routeErrorResponse(500, "Internal Server Error"));
-    expect(html).toContain("<title>500 — agentblip</title>");
+    expect(html).toContain("<title>500 — Workmesh</title>");
   });
 
   it("renders a document <title> for unexpected errors", () => {
     const html = render(new Error("boom"));
-    expect(html).toContain("<title>signal lost — agentblip</title>");
+    expect(html).toContain("<title>signal lost — Workmesh</title>");
   });
 });

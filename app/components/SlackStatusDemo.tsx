@@ -28,7 +28,7 @@ export function SlackStatusDemo() {
   const status = STATUSES[i % STATUSES.length] ?? STATUSES[0];
 
   return (
-    <figure className="relative" aria-label="Example Slack status set by agentblip">
+    <figure className="relative" aria-label="Example Slack status set by Workmesh">
       {/* radar backdrop: concentric rings + rotating sweep */}
       <div
         aria-hidden="true"

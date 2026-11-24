@@ -1,8 +1,8 @@
 import { Link } from "react-router";
 import { Blip } from "./Blip";
 
-export const GITHUB_URL = "https://github.com/b3-fun/agentblip";
-export const NPM_URL = "https://www.npmjs.com/package/agentblip";
+export const GITHUB_URL = "https://github.com/b3-fun/workmesh";
+export const NPM_URL = "https://www.npmjs.com/package/@b3os/workmesh";
 
 export function SiteHeader() {
   return (
@@ -12,7 +12,7 @@ export function SiteHeader() {
         className="flex items-center gap-2.5 font-mono text-sm font-semibold tracking-tight text-fg"
       >
         <Blip />
-        agentblip
+        Workmesh
       </Link>
       <nav
         aria-label="Main"
@@ -23,6 +23,12 @@ export function SiteHeader() {
           className="hidden transition-colors hover:text-fg sm:inline"
         >
           how it works
+        </a>
+        <a
+          href="/#team-board"
+          className="hidden transition-colors hover:text-fg sm:inline"
+        >
+          team board
         </a>
         <a
           href="/#menu-bar"
@@ -51,7 +57,7 @@ export function SiteFooter() {
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-10 font-mono text-xs text-fg-muted sm:flex-row sm:items-center sm:justify-between">
         <p className="flex items-center gap-2.5">
           <Blip />
-          agentblip
+          Workmesh
           <span className="text-fg-faint">
             · MIT · built by{" "}
             <a

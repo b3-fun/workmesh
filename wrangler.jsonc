@@ -1,5 +1,7 @@
 {
-  // agentblip — Slack status sync for local AI agent sessions
+  // Workmesh: the Slack status relay + agentblip.com site. The Worker name,
+  // routes and KV id keep the pre-rename values: renaming them would orphan
+  // the live site and its device records.
   // Self-hosting: create your own KV namespace (`wrangler kv namespace create STORE`),
   // swap the id below, set the secrets listed at the bottom, and `npm run deploy`.
   "$schema": "node_modules/wrangler/config-schema.json",

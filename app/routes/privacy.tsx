@@ -1,9 +1,9 @@
 import type { Route } from "./+types/privacy";
 import { GITHUB_URL, SiteFooter, SiteHeader } from "../components/SiteChrome";
 
-const TITLE = "Privacy — what the agentblip relay can and cannot see";
+const TITLE = "Privacy — what the Workmesh relay can and cannot see";
 const DESCRIPTION =
-  "agentblip is local-first: the relay only sees the final status text it sets on Slack. Tokens are AES-GCM encrypted, the code is MIT, and you can self-host it.";
+  "Workmesh is local-first: the Slack relay only sees the final status text it sets on Slack. Tokens are AES-GCM encrypted, the code is MIT, and you can self-host it.";
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -43,7 +43,7 @@ export default function Privacy(_: Route.ComponentProps) {
           Privacy
         </h1>
         <p className="mt-4 leading-relaxed text-fg-muted">
-          agentblip is local-first by construction. Your agent sessions are
+          Workmesh is local-first by construction. Your agent sessions are
           watched, aggregated, and formatted into a status entirely on your
           machine, by a daemon bound to{" "}
           <code className="font-mono text-sm text-fg">127.0.0.1:4519</code>.
@@ -85,7 +85,7 @@ export default function Privacy(_: Route.ComponentProps) {
 
         <H2>Why it can read your status</H2>
         <p className="mt-4 leading-relaxed text-fg-muted">
-          agentblip requests the{" "}
+          Workmesh requests the{" "}
           <code className="font-mono text-sm text-fg">users.profile:read</code>{" "}
           Slack scope for exactly one reason: before each update, your daemon
           checks what your status currently is so it never overwrites one you
@@ -120,6 +120,24 @@ export default function Privacy(_: Route.ComponentProps) {
           </li>
         </ul>
 
+        <H2>The team board is separate</H2>
+        <p className="mt-4 leading-relaxed text-fg-muted">
+          If you pair with your team&rsquo;s hub (
+          <code className="font-mono text-sm text-fg">workmesh hub connect</code>
+          ), your daemon also sends that hub what you choose to share, from
+          the repos your team shares: session metadata, or the conversation
+          too, redacted on your machine first. That traffic goes to the hub
+          your team runs, never through this relay. The{" "}
+          <a
+            href={`${GITHUB_URL}#team-board`}
+            rel="noreferrer"
+            className="text-phosphor-400 underline-offset-4 hover:underline"
+          >
+            README
+          </a>{" "}
+          lists every field.
+        </p>
+
         <H2>No analytics</H2>
         <p className="mt-4 leading-relaxed text-fg-muted">
           The API has no analytics, no tracking pixels, and no third-party
@@ -128,14 +146,14 @@ export default function Privacy(_: Route.ComponentProps) {
 
         <H2>Leaving</H2>
         <p className="mt-4 leading-relaxed text-fg-muted">
-          Run <code className="font-mono text-sm text-fg">agentblip unlink</code>{" "}
+          Run <code className="font-mono text-sm text-fg">workmesh unlink</code>{" "}
           to revoke your device record and clear your status. Statuses also
           carry a rolling 5-minute expiration, so anything stale clears itself.
         </p>
 
         <H2>Don't trust us? Don't use us</H2>
         <p className="mt-4 leading-relaxed text-fg-muted">
-          agentblip is MIT-licensed and the relay is a small Cloudflare Worker
+          Workmesh is MIT-licensed and the relay is a small Cloudflare Worker
           you can{" "}
           <a
             href={GITHUB_URL}

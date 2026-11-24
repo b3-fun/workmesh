@@ -421,8 +421,16 @@ async function run() {
       let token = cache[cacheKey];
       const prefix = `f${i}`;
       const send = async (body: unknown) => {
-        for (;;) {
-          const r = await post("/relay/ingest", body, { authorization: `Bearer ${token}` });
+        for (let failures = 0; ; ) {
+          let r: Awaited<ReturnType<typeof post>>;
+          try {
+            r = await post("/relay/ingest", body, { authorization: `Bearer ${token}` });
+          } catch {
+            // Hub unreachable: keep the batch and retry, as the real relay does (dedupe makes resends safe).
+            if (failures++ === 0) log(`${p.machine}: hub unreachable, retrying`);
+            await sleep(Math.min(10_000, 1000 * failures));
+            continue;
+          }
           if (r.status === 401) {
             log(`${p.machine}: token rejected, pairing again`);
             token = await pair(p);

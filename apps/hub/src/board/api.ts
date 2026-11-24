@@ -3,19 +3,15 @@ import type { BoardState, Device, HubEvent, PairInfo, Person } from "../shared/t
 export class SignedOut extends Error {}
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      ...init,
-      credentials: "same-origin",
-      headers: { accept: "application/json", ...(init?.body ? { "content-type": "application/json" } : {}) },
-    });
-  } catch (err) {
-    // An expired Access session redirects cross-origin, which fetch reports as a network error.
-    if (navigator.onLine) throw new SignedOut();
-    throw err;
-  }
-  if (res.status === 401) throw new SignedOut();
+  // An expired Access session answers with a redirect to the login page. With redirect: "manual" that arrives as an
+  // opaque redirect instead of a CORS failure, so it can't be mistaken for the hub being down (a network error).
+  const res = await fetch(path, {
+    ...init,
+    credentials: "same-origin",
+    redirect: "manual",
+    headers: { accept: "application/json", ...(init?.body ? { "content-type": "application/json" } : {}) },
+  });
+  if (res.type === "opaqueredirect" || res.status === 401) throw new SignedOut();
   const body = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (!res.ok) throw new ApiError(res.status, body.error ?? `HTTP ${res.status}`);
   return body;

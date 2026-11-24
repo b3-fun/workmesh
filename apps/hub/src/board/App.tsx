@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { displayName } from "../shared/types";
 import { ConnectDialog } from "./components/ConnectDialog";
 import { EmptyState } from "./components/EmptyState";
@@ -34,6 +34,11 @@ function Board() {
   const [connectOpen, setConnectOpen] = useState(false);
   const now = useNow();
   const view = useMemo(() => (model ? derive(model, now) : null), [model, now]);
+
+  const waitingCount = view?.waiting.length ?? 0;
+  useEffect(() => {
+    document.title = waitingCount > 0 ? `${waitingCount} waiting · Bullpen` : "Bullpen";
+  }, [waitingCount]);
 
   const nameOf = useCallback(
     (email: string) => model?.people.find((p) => p.email === email)?.name ?? displayName(email),
@@ -77,7 +82,7 @@ function Board() {
       {!view.hasDevices ? (
         <EmptyState />
       ) : (
-        <main className="grid min-h-0 flex-1 max-lg:divide-y max-lg:divide-line lg:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)_minmax(20rem,25rem)]">
+        <main className="grid min-h-0 flex-1 max-lg:divide-y max-lg:divide-line lg:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)_minmax(20rem,26.5rem)]">
           <div className="flex min-h-0 flex-col lg:border-r lg:border-line">
             <Waiting sessions={view.waiting} meEmail={model.me.email} selected={selected} onSelect={select} />
           </div>

@@ -219,3 +219,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - 5-dimension adversarial review: 39 agents, 33 confirmed findings → all fixed (see Decisions)
 - Deployed to agentblip.com (KV cb8fd24c…, secrets set; SLACK_CLIENT_SECRET is a placeholder until the Slack app exists)
 - Next: Slack app creds, npm publish, real-world dogfood with Claude Code hooks
+
+## Roadmap
+
+`ROADMAP.md` is the project roadmap (Crewblip: agentblip + the Bullpen hub, becoming one system). Update it in the same PR as any work that changes an item's status, and log product decisions there.

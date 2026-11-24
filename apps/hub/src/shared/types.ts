@@ -3,7 +3,8 @@
 // Type-only imports from the protocol, so the board bundle never pulls in zod.
 import type { HubEventKind, HubProjectRule, HubSessionState, HubShareLevel } from "@workmesh/protocol";
 
-export const PUBLIC_URL = "https://bullpen.b3os.org";
+/** The hub's address. `bullpen.b3os.org` (its first name) also serves it, so relays paired there keep working. */
+export const PUBLIC_URL = "https://workmesh.b3os.org";
 
 /** A device with no ingest for this long shows its sessions as offline. */
 export const OFFLINE_AFTER_MS = 2 * 60_000;

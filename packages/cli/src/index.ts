@@ -129,7 +129,7 @@ program
 
 const hub = program
   .command("hub")
-  .description("Show your agent sessions on a team hub (Bullpen), from repos you share: metadata, or the conversation too");
+  .description("Show your agent sessions on a team hub (the Workmesh board), from repos you share: metadata, or the conversation too");
 
 hub
   .command("connect")

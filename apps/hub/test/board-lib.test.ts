@@ -5,13 +5,13 @@ import type { HubEvent } from "../src/shared/types";
 
 describe("markdown subset", () => {
   it("parses code spans, bold, italics and links, leaving underscores in names alone", () => {
-    expect(parseInline("Run `pnpm test` in **bullpen** and see [PR 41](https://github.com/b3-fun/bullpen/pull/41); keep test_helpers.py and *that*")).toEqual([
+    expect(parseInline("Run `pnpm test` in **workmesh** and see [PR 41](https://github.com/b3-fun/workmesh/pull/41); keep test_helpers.py and *that*")).toEqual([
       { t: "text", v: "Run " },
       { t: "code", v: "pnpm test" },
       { t: "text", v: " in " },
-      { t: "strong", c: [{ t: "text", v: "bullpen" }] },
+      { t: "strong", c: [{ t: "text", v: "workmesh" }] },
       { t: "text", v: " and see " },
-      { t: "link", href: "https://github.com/b3-fun/bullpen/pull/41", c: [{ t: "text", v: "PR 41" }] },
+      { t: "link", href: "https://github.com/b3-fun/workmesh/pull/41", c: [{ t: "text", v: "PR 41" }] },
       { t: "text", v: "; keep test_helpers.py and " },
       { t: "em", c: [{ t: "text", v: "that" }] },
     ]);
@@ -27,9 +27,9 @@ describe("markdown subset", () => {
   });
 
   it("autolinks bare URLs without trailing punctuation", () => {
-    expect(parseInline("see https://bullpen.b3os.org/pair?code=ABCD-1234.")).toEqual([
+    expect(parseInline("see https://workmesh.b3os.org/pair?code=ABCD-1234.")).toEqual([
       { t: "text", v: "see " },
-      { t: "link", href: "https://bullpen.b3os.org/pair?code=ABCD-1234", c: [{ t: "text", v: "https://bullpen.b3os.org/pair?code=ABCD-1234" }] },
+      { t: "link", href: "https://workmesh.b3os.org/pair?code=ABCD-1234", c: [{ t: "text", v: "https://workmesh.b3os.org/pair?code=ABCD-1234" }] },
       { t: "text", v: "." },
     ]);
   });

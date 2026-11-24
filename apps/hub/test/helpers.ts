@@ -1,7 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import worker from "../src/worker/index";
 
-export const HOST = "https://bullpen.b3os.org";
+export const HOST = "https://workmesh.b3os.org";
 
 /** Local-dev env: Access skipped, the dev user (or X-Dev-User-Email) is the viewer. */
 export const devEnv = { ...env, ENVIRONMENT: "development", DEV_USER_EMAIL: "sean@npclabs.org" } as Env;

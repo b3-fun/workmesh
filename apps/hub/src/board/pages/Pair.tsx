@@ -35,7 +35,7 @@ function AuthCard({ children }: { children: ReactNode }) {
         </DsAuthCard>
         <p className="mt-5 flex flex-wrap items-center justify-center gap-2 text-caption text-ink-3">
           <a href="/" className="inline-flex min-h-11 items-center hover:text-ink">
-            bullpen.b3os.org
+            {location.host}
           </a>
         </p>
         <div className="mt-1 flex justify-center">

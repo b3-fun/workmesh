@@ -184,7 +184,7 @@ function LaneSection({ lane }: { lane: Lane }) {
   );
 }
 
-const DISMISSED = "bullpen-digest-dismissed";
+const DISMISSED = "workmesh-digest-dismissed";
 
 /** "Since you looked": what finished while the viewer was away (SPEC.md §11), said once as panel content. */
 function SinceYouLooked() {

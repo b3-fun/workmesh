@@ -51,12 +51,12 @@ describe("ingest validation", () => {
     const ts = Date.now() + 0.6;
     const res = await ingest(
       token,
-      batch({ events: [event({ id: "pr-1", ts, tool: "Bash", path: undefined, cmd: "gh pr create", pr: "https://github.com/b3-fun/bullpen/pull/7" })] }),
+      batch({ events: [event({ id: "pr-1", ts, tool: "Bash", path: undefined, cmd: "gh pr create", pr: "https://github.com/b3-fun/workmesh/pull/7" })] }),
     );
     expect(res.status).toBe(200);
     await runInDurableObject(projectStub(), (_i, st) => {
       const row = st.storage.sql.exec("SELECT ts, cmd, pr FROM events WHERE device_id = ? AND id = 'pr-1'", deviceId).one();
-      expect(row).toEqual({ ts: Math.round(ts), cmd: "gh pr create", pr: "https://github.com/b3-fun/bullpen/pull/7" });
+      expect(row).toEqual({ ts: Math.round(ts), cmd: "gh pr create", pr: "https://github.com/b3-fun/workmesh/pull/7" });
     });
   });
 

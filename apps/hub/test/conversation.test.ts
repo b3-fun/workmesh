@@ -77,14 +77,14 @@ describe("conversation devices", () => {
         share: "conversation",
         events: [
           prompt({ id: "s1", text: `use ${secrets.join(" and ")} please` }),
-          message({ id: "s2", text: "clone https://sean:hunter2pass@github.com/b3-fun/bullpen and\n-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----" }),
+          message({ id: "s2", text: "clone https://sean:hunter2pass@github.com/b3-fun/workmesh and\n-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----" }),
           event({ id: "s3", desc: "curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwx'" }),
         ],
       }),
     );
     const all = JSON.stringify(await rows("SELECT text, descr FROM events WHERE device_id = ?", deviceId));
     for (const s of [...secrets, "hunter2pass", "AAAA", "abcdefghijklmnopqrstuvwx"]) expect(all).not.toContain(s);
-    expect(all).toContain("https://[redacted]@github.com/b3-fun/bullpen");
+    expect(all).toContain("https://[redacted]@github.com/b3-fun/workmesh");
     expect(scrubSecrets("task-runner and risk-assessment-report-for-the-team stay")).toBe(
       "task-runner and risk-assessment-report-for-the-team stay",
     );

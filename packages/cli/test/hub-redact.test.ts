@@ -34,7 +34,7 @@ describe("redactSecrets: true positives (SPEC §9 list)", () => {
     ["AWS secret env", `AWS_SECRET_ACCESS_KEY=${SECRETS.awsSecret} aws s3 ls`, SECRETS.awsSecret],
     ["npm token", `//registry.npmjs.org/:_authToken=${SECRETS.npm}`, SECRETS.npm],
     ["Linear key", `linear auth ${SECRETS.linear}`, SECRETS.linear],
-    ["Bullpen token", `Authorization: Bearer ${SECRETS.bullpen}`, SECRETS.bullpen],
+    ["hub device token", `Authorization: Bearer ${SECRETS.hubToken}`, SECRETS.hubToken],
     ["relay device token", `{"deviceToken":"${SECRETS.relayDevice}"}`, SECRETS.relayDevice],
     ["Google API key", `?key=${SECRETS.google}`, SECRETS.google],
     ["Hugging Face token", `HF_TOKEN=${SECRETS.hf}`, SECRETS.hf],
@@ -110,7 +110,7 @@ describe("redactSecrets: no mangling of ordinary text", () => {
     // repo paths, URLs, ids
     "Edited packages/cli/src/hub/forwarder.ts:120 and src/worker/schema.ts.",
     "PR: https://github.com/b3-fun/b3os-beta/pull/42 (Linear B3-7166, https://linear.app/npclabs/issue/B3-7166/relay).",
-    "ssh git@github.com:b3-fun/bullpen.git and https://bullpen.b3os.org/relay/ingest",
+    "ssh git@github.com:b3-fun/workmesh.git and https://workmesh.b3os.org/relay/ingest",
     "Commit af2476c, full sha 1d8775e4b2e9d0c1f3a5b7d9e1f3a5b7c9d1e3f5, digest sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.",
     "Session 550e8400-e29b-41d4-a716-446655440000 and version 2b7bdad8-6a5b-48ba-92bc-5cfc129dd7da.",
     "sessionId: 01a20de9-e2dc-7af1-8740-767b47aeac91",

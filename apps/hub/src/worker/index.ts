@@ -172,7 +172,7 @@ app.get("/api/sessions/:hubKey/events", async (c) => {
 app.get("/api/stream", async (c) => {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") return jsonError(c, 426, "expected a websocket");
   return project(c.env).fetch(
-    new Request(new URL("/api/stream", c.req.url), { headers: { Upgrade: "websocket", "X-Bullpen-Viewer": c.var.email } }),
+    new Request(new URL("/api/stream", c.req.url), { headers: { Upgrade: "websocket", "X-Workmesh-Viewer": c.var.email } }),
   );
 });
 

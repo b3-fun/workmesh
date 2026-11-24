@@ -94,8 +94,8 @@ describe("OpenRouter provider", () => {
     expect(c.url).toBe(OPENROUTER_URL);
     const h = new Headers(c.init.headers);
     expect(h.get("authorization")).toBe("Bearer or-test");
-    expect(h.get("http-referer")).toBe("https://bullpen.b3os.org");
-    expect(h.get("x-title")).toBe("Bullpen");
+    expect(h.get("http-referer")).toBe("https://workmesh.b3os.org");
+    expect(h.get("x-title")).toBe("Workmesh");
     expect(c.body.model).toBe(DEFAULT_SUMMARY_MODEL);
     expect(c.body.models).toEqual([DEFAULT_SUMMARY_MODEL, "openai/gpt-6-luna"]);
     expect(c.body.response_format).toEqual({ type: "json_schema", json_schema: { name: "summary", strict: true, schema: req.schema } });
@@ -202,9 +202,9 @@ describe("Workers AI provider", () => {
 describe("prompts and output", () => {
   const s: SessionInfo = {
     person: "Sean",
-    name: "bullpen-hub",
+    name: "workmesh-hub",
     source: "claude-code",
-    repo: "b3-fun/bullpen",
+    repo: "b3-fun/workmesh",
     branch: "main",
     state: "working",
     activity: "editing project.ts",

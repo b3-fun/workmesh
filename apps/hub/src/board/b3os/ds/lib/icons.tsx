@@ -1,4 +1,4 @@
-// Bullpen shim for b3os-beta apps/web/src/ds/lib/icons.tsx: the same names, only the icons the vendored files import,
+// Workmesh shim for b3os-beta apps/web/src/ds/lib/icons.tsx: the same names, only the icons the vendored files import,
 // from the vendored nucleo-ui-outline-18 1.4.0 files (vendor/nucleo-ui-outline-18; licensed to Sean, no key involved).
 export {
   IconAlertWarningOutline18,

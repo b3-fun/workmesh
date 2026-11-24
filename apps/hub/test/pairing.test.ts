@@ -10,7 +10,7 @@ describe("pairing", () => {
     expect(p.code).toMatch(/^[A-Z]{4}-\d{4}$/);
     expect(p.deviceId).toMatch(/^dev_[0-9A-Z]{26}$/);
     expect(p.pollSecret).toMatch(/^[0-9a-f]{32}$/);
-    expect(p.verifyUrl).toBe(`https://bullpen.b3os.org/pair?code=${p.code}`);
+    expect(p.verifyUrl).toBe(`https://workmesh.b3os.org/pair?code=${p.code}`);
     expect(p.expiresInSec).toBe(600);
   });
 

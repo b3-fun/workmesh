@@ -36,7 +36,7 @@ export const SECRETS = {
   awsSecret: j(fakeChars(20, 14), "/", fakeChars(19, 15)),
   npm: j("np", "m_", fakeChars(36, 16)),
   linear: j("lin", "_api_", fakeChars(40, 17)),
-  bullpen: j("bp", "_", hex(64, 18)),
+  hubToken: j("bp", "_", hex(64, 18)),
   relayDevice: j("ab", "_", hex(64, 19)),
   google: j("AI", "za", "Sy", fakeChars(33, 20)),
   hf: j("hf", "_", fakeChars(34, 21)),

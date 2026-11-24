@@ -912,7 +912,7 @@ export class Project extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     // The Worker sets this after Access; nothing outside the Worker reaches the Durable Object.
-    const viewer = request.headers.get("x-bullpen-viewer")?.slice(0, 200);
+    const viewer = request.headers.get("x-workmesh-viewer")?.slice(0, 200);
     this.ctx.acceptWebSocket(server, viewer ? [viewer] : []);
     server.send(JSON.stringify({ type: "hello", serverNow: Date.now() } satisfies StreamMessage));
     return new Response(null, { status: 101, webSocket: client });

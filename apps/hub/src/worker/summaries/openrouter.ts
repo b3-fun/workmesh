@@ -1,3 +1,4 @@
+import { PUBLIC_URL } from "../../shared/types";
 import type { CompletionRequest, CompletionResult, SummaryProvider } from "./provider";
 
 export const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -71,8 +72,8 @@ export function openRouterProvider(opts: OpenRouterOptions): SummaryProvider {
       headers: {
         authorization: `Bearer ${opts.apiKey}`,
         "content-type": "application/json",
-        "HTTP-Referer": "https://bullpen.b3os.org",
-        "X-Title": "Bullpen",
+        "HTTP-Referer": PUBLIC_URL,
+        "X-Title": "Workmesh",
       },
       body: JSON.stringify({
         model,

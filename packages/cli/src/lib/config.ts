@@ -23,7 +23,7 @@ const templatesSchema = z
   .partial();
 
 /**
- * Hub forward (Bullpen): pairing result plus local include/exclude dirs.
+ * Hub forward (team hub): pairing result plus local include/exclude dirs.
  * Holds a device token, so it lives in the 0600 config file only.
  */
 export const hubConfigSchema = z.object({

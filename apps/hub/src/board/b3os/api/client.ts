@@ -1,5 +1,5 @@
-// Bullpen shim for b3os-beta apps/web/src/api/client.ts: the error type and its words, which the vendored console
-// files (app/ui/primitives.tsx, app/ui/AuthCard.tsx) import. Bullpen's hub answers `{ error }` JSON; the request id is
+// Workmesh shim for b3os-beta apps/web/src/api/client.ts: the error type and its words, which the vendored console
+// files (app/ui/primitives.tsx, app/ui/AuthCard.tsx) import. Workmesh's hub answers `{ error }` JSON; the request id is
 // Cloudflare's cf-ray, which every response through the edge carries.
 
 export class ApiError extends Error {

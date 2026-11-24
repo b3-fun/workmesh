@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 /**
- * Transcript tailing for conversation sharing (Bullpen SPEC §9). The hub
+ * Transcript tailing for conversation sharing (docs/SPEC.md §9). The hub
  * forwarder keeps one TranscriptTail per shared session and reads only the
  * complete lines appended since its saved byte offset, at most
  * MAX_READ_BYTES per read, asynchronously (never on the hook response path).

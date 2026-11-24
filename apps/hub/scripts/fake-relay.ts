@@ -32,7 +32,7 @@ const CACHE = ".wrangler/fake-relay.json";
 const SPEED = opts.fast ? 0.35 : 1;
 const log = (...a: unknown[]) => opts.quiet || console.log(...a);
 
-type Repo = "b3-fun/b3os-beta" | "b3-fun/b3iq" | "b3-fun/bullpen";
+type Repo = "b3-fun/b3os-beta" | "b3-fun/b3iq" | "b3-fun/workmesh";
 
 /** What the fake relay sends, typed by the wire protocol it shares with the real relay. */
 interface Upsert extends HubSessionUpsert {
@@ -86,7 +86,7 @@ const cc = tools(false);
 const cx = tools(true);
 
 const SCRIPTS: Record<string, Step[][]> = {
-  "bullpen-hub": [
+  "workmesh-hub": [
     [
       P("The board needs summaries. Use a small model to write a one-line \"now\" for each session and a summary per turn, off the ingest path. Workers AI until we have a key."),
       cc.todo(),
@@ -347,7 +347,7 @@ const PEOPLE: Person[] = [
     machine: "fake-sean-studio",
     share: "conversation",
     sims: [
-      sim("claude-code:0b7d44e1", "bullpen-hub", "b3-fun/bullpen", "main", ["B3-7166"], "working", { startedMin: 52 }),
+      sim("claude-code:0b7d44e1", "workmesh-hub", "b3-fun/workmesh", "main", ["B3-7166"], "working", { startedMin: 52 }),
       sim("claude-code:5f1c9e2a", "documents-07", "b3-fun/b3os-beta", "feat/n2-bringup", ["B3-7012"], "working", { agents: 6, phase: "build", startedMin: 94 }),
       sim("codex:019a6c3f", "n2-docs", "b3-fun/b3os-beta", "docs/n2", ["B3-7015"], "waiting", { pinned: true, startedMin: 20 }),
       sim("claude-code:7e2a0c91", "fleet-agent", "b3-fun/b3iq", "fleet/oncall-shadow", ["B3-7140"], "idle", { pinned: true, startedMin: 70 }),
@@ -369,7 +369,7 @@ const PEOPLE: Person[] = [
     share: "conversation",
     sims: [
       sim("claude-code:3a8e1d55", "admin-tables", "b3-fun/b3iq", "feat/admin-tables", ["B3-7120", "B3-7121"], "working", { startedMin: 66 }),
-      sim("codex:019a7b22", "board-dark-mode", "b3-fun/bullpen", "feat/board-dark", ["B3-7166"], "working", { background: true, startedMin: 12 }),
+      sim("codex:019a7b22", "board-dark-mode", "b3-fun/workmesh", "feat/board-dark", ["B3-7166"], "working", { background: true, startedMin: 12 }),
       sim("claude-code:e61f0a4b", "chat-v0", "b3-fun/b3iq", "feat/chat-v0", ["B3-7052"], "ended", { pinned: true, startedMin: 120 }),
     ],
   },

@@ -32,10 +32,10 @@ const PROJECT = {
 
 describe("hub command helpers", () => {
   it("accepts https hub URLs and local http only", () => {
-    expect(resolveHubUrl("https://bullpen.b3os.org/")).toBe("https://bullpen.b3os.org");
+    expect(resolveHubUrl("https://workmesh.b3os.org/")).toBe("https://workmesh.b3os.org");
     expect(resolveHubUrl("http://127.0.0.1:8787")).toBe("http://127.0.0.1:8787");
-    expect(() => resolveHubUrl("http://bullpen.b3os.org")).toThrow(/https/);
-    expect(() => resolveHubUrl("https://u:p@bullpen.b3os.org")).toThrow(/credentials/);
+    expect(() => resolveHubUrl("http://workmesh.b3os.org")).toThrow(/https/);
+    expect(() => resolveHubUrl("https://u:p@workmesh.b3os.org")).toThrow(/credentials/);
     expect(() => resolveHubUrl("nope")).toThrow(/invalid hub URL/);
   });
 
@@ -140,13 +140,13 @@ describe("hub config", () => {
   it("round-trips a hub section and keeps the token out of safeConfig", () => {
     const file = path.join(dir, "config.json");
     const config = loadConfig(file);
-    config.hub = { url: "https://bullpen.b3os.org", deviceId: "dev_x", deviceToken: TOKEN, project: PROJECT, includeDirs: [], excludeDirs: [] };
+    config.hub = { url: "https://workmesh.b3os.org", deviceId: "dev_x", deviceToken: TOKEN, project: PROJECT, includeDirs: [], excludeDirs: [] };
     saveConfig(config, file);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(loadConfig(file).hub?.deviceToken).toBe(TOKEN);
     const safe = JSON.stringify(safeConfig(loadConfig(file)));
     expect(safe).not.toContain(TOKEN);
-    expect(safeConfig(loadConfig(file)).hub).toEqual({ url: "https://bullpen.b3os.org", project: { id: "b3", name: "B3" }, share: "conversation" });
+    expect(safeConfig(loadConfig(file)).hub).toEqual({ url: "https://workmesh.b3os.org", project: { id: "b3", name: "B3" }, share: "conversation" });
   });
 
   it("a malformed hub section reads as not paired and keeps the Slack config valid", () => {

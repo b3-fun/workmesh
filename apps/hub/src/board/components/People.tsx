@@ -16,12 +16,16 @@ function SessionRow({
   onSelect: (hubKey: string) => void;
 }) {
   const dim = s.offline || s.state === "ended";
+  const waiting = s.state === "waiting" && !dim;
   const activity = s.offline ? "offline" : s.state === "ended" ? "ended" : (s.activity ?? s.state);
+  // The summary leads; the relay's live label stays as a trace beside the branch (SPEC.md §12).
+  const lead = waiting ? (s.waitingReason ?? s.nowLine ?? activity) : (s.nowLine ?? activity);
+  const trace = lead !== activity ? activity : null;
   return (
     <Row
       onActivate={() => onSelect(s.hubKey)}
       pressed={selected}
-      label={`${s.name ?? s.key}, ${activity}`}
+      label={`${s.name ?? s.key}, ${lead}`}
       className={cx(
         "relative grid grid-cols-[7px_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 rounded-md px-3 py-2 transition-colors",
         selected ? "bg-accent-soft" : "hover:bg-hover",
@@ -40,20 +44,23 @@ function SessionRow({
         {s.phase && <span className="truncate font-mono text-[11px] text-faint">{s.phase}</span>}
       </span>
       <Age ts={s.state === "ended" ? (s.endedAt ?? s.lastEventAt) : (s.lastEventAt ?? s.updatedAt)} className="text-[11.5px] text-faint" />
-      <span className="col-start-2 col-end-4 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        <span className={cx("min-w-0 truncate text-[13px]", s.state === "waiting" && !dim ? "text-warn-text" : "text-text")}>
-          {activity}
-          {s.background && !dim && <span className="text-faint"> · background</span>}
-        </span>
-        {s.branch && (
-          <span className="max-w-[16rem] truncate font-mono text-[11.5px] text-faint" title={s.branch}>
-            {s.branch}
-          </span>
-        )}
-        {s.issues.map((id) => (
-          <IssueChip key={id} id={id} />
-        ))}
+      <span className={cx("col-start-2 col-end-4 line-clamp-2 min-w-0 text-[13px] leading-[1.45]", waiting ? "text-warn-text" : "text-text")}>
+        {lead}
+        {s.background && !dim && <span className="text-faint"> · background</span>}
       </span>
+      {(trace || s.branch || s.issues.length > 0) && (
+        <span className="col-start-2 col-end-4 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pt-0.5">
+          {trace && <span className="max-w-[14rem] truncate font-mono text-[11.5px] text-muted">{trace}</span>}
+          {s.branch && (
+            <span className="max-w-[16rem] truncate font-mono text-[11.5px] text-faint" title={s.branch}>
+              {s.branch}
+            </span>
+          )}
+          {s.issues.map((id) => (
+            <IssueChip key={id} id={id} />
+          ))}
+        </span>
+      )}
     </Row>
   );
 }
@@ -65,6 +72,11 @@ function LaneHeader({ lane }: { lane: Lane }) {
       <div className="flex min-w-0 items-baseline gap-2">
         <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-fg">{lane.person.name}</h3>
         {lane.isMe && <span className="text-[12px] text-faint">you</span>}
+        {lane.activityOnly && (
+          <span className="text-[12px] text-faint" title="Shares tool activity only: no prompts or messages">
+            activity only
+          </span>
+        )}
         {!lane.online && (
           <span className="truncate text-[12px] text-faint">
             offline{lane.lastSeenAt ? <span className="tnum font-mono"> · {age(now - lane.lastSeenAt)}</span> : null}

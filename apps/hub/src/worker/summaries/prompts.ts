@@ -21,14 +21,14 @@ Every field:
 - State only what the activity shows. With only tool names, paths and commands, describe those plainly.
 
 Fields:
-- now: what the session is doing at this moment, at most 90 characters. A finished session says what it finished.
+- now: what the session is doing at this moment, at most 12 words (90 characters). A finished session says what it finished.
   Good: "Publishing agentblip 0.6.0; waiting on Sean's security key"
   Good: "Fixing the flaky boot test in b3os-sandboxes"
   Good: "Done: payout export merged as PR #2550"
   Bad: "The agent is working on some code changes"
-- turn: the last turn in one or two short sentences, at most 220 characters: what the person asked, what was done, how it ended or what blocks it.
+- turn: the last turn in one or two short sentences, at most 30 words (220 characters): what the person asked, what was done, how it ended or what blocks it. Skip file paths unless they matter.
   Good: "Sean asked to ship the hub forwarder. Added Codex hooks and tests; 307 pass and the branch is pushed, not merged."
-- waiting: what the session needs from its person right now, at most 80 characters.
+- waiting: what the session needs from its person right now, at most 10 words (80 characters).
   Good: "Approve the migration plan for the offtake table"
   Good: "Tap the security key for npm publish"`;
 
@@ -152,10 +152,10 @@ function sessionHeader(s: SessionInfo, now: number): string {
 
 export function sessionSchema(need: SessionNeed): Record<string, unknown> {
   const properties: Record<string, unknown> = {
-    now: { type: "string", description: "What the session is doing now, at most 90 characters." },
+    now: { type: "string", description: "What the session is doing now, at most 12 words." },
   };
-  if (need.turn) properties.turn = { type: "string", description: "The last turn, at most 220 characters." };
-  if (need.waiting) properties.waiting = { type: "string", description: "What it needs from its person, at most 80 characters." };
+  if (need.turn) properties.turn = { type: "string", description: "The last turn, at most 30 words." };
+  if (need.waiting) properties.waiting = { type: "string", description: "What it needs from its person, at most 10 words." };
   return { type: "object", properties, required: Object.keys(properties), additionalProperties: false };
 }
 
@@ -199,7 +199,9 @@ export function cleanLine(raw: unknown, max: number): string | null {
     .replace(/`+/g, "")
     .replace(/\*\*|__/g, "")
     .replace(/^[#>*\-\s]+/, "")
-    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    // JSON debris some models leave at the edges: quotes, a trailing comma or brace.
+    .replace(/^["'“”‘’]+/, "")
+    .replace(/["'“”‘’,{}\s]+$/, "")
     .trim();
   if (!s) return null;
   if (s.length > max) {

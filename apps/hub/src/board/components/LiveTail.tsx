@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { HubEvent } from "../../shared/types";
+import { turnDuration } from "../lib/transcript";
 import { eventKey } from "../store";
 import { clock } from "../time";
 import type { SessionView } from "../view";
@@ -23,10 +24,25 @@ function prNumber(url: string): string {
   return `#${url.split("/").pop()}`;
 }
 
+const firstLine = (t: string) => t.replace(/[`*_#>]+/g, "").replace(/\s+/g, " ").trim();
+
 function What({ e }: { e: HubEvent }) {
   switch (e.kind) {
     case "prompt":
-      return <span className="text-accent">prompt</span>;
+      return (
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="shrink-0 text-accent">prompt</span>
+          {e.text && <span className="min-w-0 truncate font-sans text-[12.5px] text-text">{firstLine(e.text)}</span>}
+        </span>
+      );
+    case "message":
+      return <span className="min-w-0 truncate font-sans text-[12.5px] text-muted">{firstLine(e.text ?? "")}</span>;
+    case "turn":
+      return (
+        <span className="min-w-0 truncate text-faint">
+          turn ended{e.durationMs != null ? ` · ${turnDuration(e.durationMs)}` : ""}
+        </span>
+      );
     case "start":
       return <span className="text-faint">session started</span>;
     case "end":
@@ -38,8 +54,10 @@ function What({ e }: { e: HubEvent }) {
     case "tool":
       return (
         <span className="flex min-w-0 items-baseline gap-2">
-          {e.tool && <span className="shrink-0 text-fg">{e.tool}</span>}
-          {e.path ? (
+          {e.tool && <span className="shrink-0 text-fg">{e.tool.startsWith("mcp__") ? e.tool.split("__")[1] : e.tool}</span>}
+          {e.desc && !e.path && !e.cmd ? (
+            <span className="min-w-0 truncate font-sans text-[12.5px] text-muted">{e.desc}</span>
+          ) : e.path ? (
             <PathText path={e.path} />
           ) : e.cmd ? (
             <span className="min-w-0 truncate text-text">{e.cmd}</span>

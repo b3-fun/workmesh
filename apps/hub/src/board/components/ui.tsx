@@ -121,6 +121,8 @@ const iconProps = {
   strokeLinecap: "round" as const,
   strokeLinejoin: "round" as const,
   "aria-hidden": true,
+  // Icon-only buttons pass px-0, which can lose to the base px-3; never let the icon be squeezed.
+  style: { flexShrink: 0 },
 };
 
 export const IconCopy = () => (

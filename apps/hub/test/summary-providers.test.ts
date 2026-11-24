@@ -254,6 +254,9 @@ describe("prompts and output", () => {
   it("cleans output into one capped plain line", () => {
     expect(cleanLine('  "**Fixing** the `vm.rs` boot test"\n', 90)).toBe("Fixing the vm.rs boot test");
     expect(cleanLine("- Editing test_helpers.py", 90)).toBe("Editing test_helpers.py");
+    expect(cleanLine('Running tests to verify fixes after an initial failure.",', 220)).toBe(
+      "Running tests to verify fixes after an initial failure.",
+    );
     const long = cleanLine("Publishing agentblip 0.6.0 to npm and then waiting on Sean's security key before the release goes out", 60)!;
     expect(long.length).toBeLessThanOrEqual(60);
     expect(long.endsWith("…")).toBe(true);

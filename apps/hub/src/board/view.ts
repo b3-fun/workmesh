@@ -1,10 +1,12 @@
-import { displayName, isOffline, type Device, type Person, type Session } from "../shared/types";
+import { displayName, isOffline, type Device, type Person, type Session, type ShareLevel } from "../shared/types";
 import type { Model } from "./store";
 
 export interface SessionView extends Session {
   offline: boolean;
   person: string;
   machine: string | null;
+  /** The device's sharing level (null: a relay from before v0.2, metadata). */
+  share: ShareLevel | null;
 }
 
 export interface RepoGroup {
@@ -22,6 +24,8 @@ export interface Lane {
   dormant: SessionView[];
   working: number;
   waiting: number;
+  /** Every machine this person connected shares activity only (SPEC.md §8). */
+  activityOnly: boolean;
 }
 
 export interface BoardView {
@@ -51,6 +55,7 @@ export function derive(model: Model, now: number): BoardView {
       offline: s.state !== "ended" && isOffline(device, now),
       person: nameOf.get(s.email) ?? displayName(s.email),
       machine: device.machine,
+      share: device.share ?? null,
     };
   }
   const all = Object.values(sessions);
@@ -110,6 +115,7 @@ export function derive(model: Model, now: number): BoardView {
       dormant,
       working,
       waiting: waitingCount,
+      activityOnly: devices.length > 0 && devices.every((d) => d.share !== "conversation"),
     });
   }
 

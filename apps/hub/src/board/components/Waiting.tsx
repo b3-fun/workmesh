@@ -46,7 +46,10 @@ export function Waiting({
                     </span>
                     <WaitedFor since={s.stateSince} />
                   </span>
-                  <span className="text-[13px] text-text">{s.activity ?? "Needs input"}</span>
+                  <span className="text-[13px] leading-[1.45] text-text">{s.waitingReason ?? s.activity ?? "Needs input"}</span>
+                  {s.waitingReason && s.activity && s.activity !== s.waitingReason && (
+                    <span className="truncate font-mono text-[11.5px] text-muted">{s.activity}</span>
+                  )}
                   <span className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11.5px] text-faint">
                     <span title={s.repo ?? undefined}>{repoName(s.repo)}</span>
                     {s.branch && <span className="max-w-[12rem] truncate">{s.branch}</span>}

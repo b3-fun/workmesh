@@ -31,7 +31,7 @@ export const api = {
   me: () => req<Person>("/api/me"),
   sessionEvents: (hubKey: string, before?: number) =>
     req<{ events: HubEvent[] }>(
-      `/api/sessions/${encodeURIComponent(hubKey)}/events?limit=200${before ? `&before=${before}` : ""}`,
+      `/api/sessions/${encodeURIComponent(hubKey)}/events?limit=500${before ? `&before=${before}` : ""}`,
     ),
   pairInfo: (code: string) => req<PairInfo>(`/api/pair/${encodeURIComponent(code)}`),
   approve: (code: string) =>

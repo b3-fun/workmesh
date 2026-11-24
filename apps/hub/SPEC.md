@@ -22,8 +22,9 @@ If this file and the code disagree, fix one of them in the same change.
 
 - Cloudflare account: NPC Labs `4300a93c2dcb252fa91df03f18e8e44c`. Pin `account_id` in `wrangler.jsonc`. Never deploy
   to another account.
-- Worker name `bullpen`, host `https://bullpen.sean-430.workers.dev`.
-- Cloudflare Access (team domain `npclabs.cloudflareaccess.com`) is already configured:
+- Worker name `bullpen`, host `https://bullpen.b3os.org` (Workers custom domain on the NPC Labs zone `b3os.org`).
+  `workers_dev` and `preview_urls` are off, so the only way in is the Access-protected custom domain.
+- Cloudflare Access (team domain `npclabs.cloudflareaccess.com`) is already configured on `bullpen.b3os.org`:
   - App "Bullpen board" on the whole host: allow emails at `npclabs.org`. AUD tag
     `a3f9a834dccc7096ab27aa4f3470df3b5bd14618c40e641e92b751b696b70f63`.
   - App "Bullpen relay" on `/relay/*`: bypass (no Access login). The Worker authenticates these requests with device
@@ -55,7 +56,7 @@ All relay endpoints live under `/relay/*`, JSON bodies, max 256 KB per request.
 ### 3.1 Pairing (device-code flow, same shape as agentblip's Slack pairing)
 
 `POST /relay/pair/start` `{ "machine": "seans-mac-studio", "client": "agentblip/0.6.0" }`
-→ `{ "code": "ABCD-1234", "deviceId": "dev_<ulid>", "pollSecret": "<32 hex>", "verifyUrl": "https://bullpen.sean-430.workers.dev/pair?code=ABCD-1234", "expiresInSec": 600 }`
+→ `{ "code": "ABCD-1234", "deviceId": "dev_<ulid>", "pollSecret": "<32 hex>", "verifyUrl": "https://bullpen.b3os.org/pair?code=ABCD-1234", "expiresInSec": 600 }`
 
 The person opens `verifyUrl` (Access login), sees "Connect *seans-mac-studio* to B3 as *Sean*?", and approves:
 `POST /api/pair/approve { "code": "ABCD-1234" }` (Access-authenticated).
@@ -63,7 +64,12 @@ The person opens `verifyUrl` (Access login), sees "Connect *seans-mac-studio* to
 `POST /relay/pair/poll` `{ "deviceId", "pollSecret" }`
 → `{ "status": "pending" | "complete" | "expired", "deviceToken"?: "bp_…", "person"?: { "email", "name" }, "project"?: { "id": "b3", "name": "B3", "include": {…}, "issueKeys": [...] } }`
 `deviceToken` is returned exactly once, on the first `complete` poll. Codes expire after 10 minutes. Rate limit pair
-starts to 10 per IP per hour.
+starts to 10 per IP per hour (`429` with `Retry-After`).
+
+Errors: poll with an unknown `deviceId` or a wrong `pollSecret` → `401`. Approve: unknown code `404`, already approved
+by someone else `409`, expired `410`. A code approved in time delivers its token on the next poll. The approve page
+reads the pairing with `GET /api/pair/:code` → `{ code, machine, client, status: "pending" | "approved" | "expired",
+expiresAt, approvedBy }`.
 
 ### 3.2 Ingest
 
@@ -118,6 +124,18 @@ Responses: `200 { "ok": true, "accepted": <events stored> }`; `400` schema error
 and logs why); `401` unknown or revoked token (the relay stops forwarding and tells the person to re-pair); `413`
 over 256 KB; `429` with `Retry-After`.
 
+Hub-side validation (a second guard on §3.3; any failure rejects the whole request with `400` and the failing field
+paths, never the values):
+- Unknown fields are dropped, so nothing outside these tables is stored. Optional fields may be omitted or `null`.
+- `repo` is `owner/name`. `path` is repo-relative: no leading `/`, `\`, `~` or drive letter, and no `..` segment.
+- `cmd` matches `^[a-z0-9][a-z0-9._-]{0,30}( [a-z][a-z0-9:-]{0,24})?$` (a program and at most one subcommand).
+- `issues` entries look like `B3-7166`; `pr` is `https://github.com/<owner>/<repo>/pull/<n>`; `tool` is `[A-Za-z0-9_.:-]+`.
+- At most 1,000 sessions and 500 events per request.
+
+Order of checks: `413`, then `401` for a missing or malformed token, then `400`, then `401` for an unknown or revoked
+token. `429` after 300 requests per device per minute. On `full: true`, the device's sessions that are missing from
+`sessions` and not already ended are marked `ended`.
+
 ### 3.3 What may leave a machine (relay rules, enforced in agentblip)
 
 The relay sends **only** the fields above. Never: prompt text, assistant text, tool input or output, file contents,
@@ -159,14 +177,24 @@ up to 5,000 events in memory and resend (dedupe makes resends safe); beyond that
   agents, phase, orchestrator, repo, branch, issues_json, started_at, updated_at, state_since, ended_at)`,
   `events(device_id, id, hub_key, ts, kind, tool, label, path, cmd, repo, branch, issues_json, pr, ok,
   PRIMARY KEY(device_id, id))`.
-- Retention: events 7 days (an alarm prunes hourly); ended sessions drop off the board after 12 h; a device with no
-  ingest for 2 min shows its sessions as `offline`.
-- Board API (Access): `GET /api/me`, `GET /api/state` (people, devices, sessions, last 300 events),
-  `GET /api/sessions/:hubKey/events?before=<ts>&limit=200`, `GET /api/stream` (WebSocket: server pushes
-  `{type:"session", session}`, `{type:"events", events}`, `{type:"device", device}`), `POST /api/pair/approve`,
-  `GET /api/devices` (mine), `POST /api/devices/:id/revoke` (mine only).
+  As built, `sessions` also has `last_event_at` and `seen_at` (hub clock, last ingest that carried the session), and
+  `events` has `email` (owner, from the token) and `received_at`. A `pair_starts(ip_hash, ts)` table backs the
+  pair-start limit; IPs are stored only as SHA-256.
+- Retention: events 7 days (an alarm prunes hourly); ended sessions drop off the board after 12 h, and so do sessions
+  no ingest has carried for 12 h; a device with no ingest for 2 min shows its sessions as `offline` (the board
+  computes this from `devices.lastSeenAt`). Sessions unseen for 7 days and pairings older than a day are deleted.
+- Board API (Access): `GET /api/me`, `GET /api/state` (project, me, people, devices, sessions, last 300 events newest
+  first, `serverNow`), `GET /api/sessions/:hubKey/events?before=<ts>&limit=200` (`limit` ≤ 500),
+  `GET /api/stream` (WebSocket: server pushes `{type:"hello", serverNow}` on connect, then
+  `{type:"session", session}`, `{type:"events", events}`, `{type:"device", device}`; the client may send `ping` and
+  gets `pong`), `GET /api/pair/:code`, `POST /api/pair/approve`, `GET /api/devices` (mine),
+  `POST /api/devices/:id/revoke` (mine only; also ends that device's open sessions). Non-GET `/api/*` requests with
+  a foreign `Origin` get `403`.
 - Every ingest updates `devices.last_seen_at`, upserts sessions (owner from the token), inserts events (dedupe),
   and broadcasts the changes to connected boards.
+- Local dev: with `DEV_USER_EMAIL` set (and `ENVIRONMENT` not `production`) the Worker skips Access and the viewer is
+  `DEV_USER_EMAIL`, or the `X-Dev-User-Email` header so the fake relay can approve as Sean, An and Gio. If
+  `DEV_USER_EMAIL` is set while `ENVIRONMENT` is `production`, every `/api/*` request gets `500`.
 
 ## 5. Board (v0)
 
@@ -201,5 +229,5 @@ dot). Radix primitives for dialogs and menus; no native `alert`/`confirm`. Works
 
 ## 7. Done means
 
-An opens `https://bullpen.sean-430.workers.dev`, signs in with Access, and sees every B3 session Sean is running, each
+An opens `https://bullpen.b3os.org`, signs in with Access, and sees every B3 session Sean is running, each
 tool call within 5 seconds, with nothing from non-B3 repos and no prompt or file text anywhere in the hub's storage.

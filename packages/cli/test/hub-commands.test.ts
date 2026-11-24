@@ -60,10 +60,10 @@ describe("sharing level helpers (SPEC §8)", () => {
     expect(() => parseShareLevel("everything")).toThrow(/conversation or metadata/);
   });
 
-  it("suggests this machine's earlier choice, else the project's default, else metadata", () => {
+  it("suggests this machine's earlier choice, else the project's default, else conversation (max sharing)", () => {
     expect(suggestedShare({ ...PROJECT, defaultShare: "conversation" })).toBe("conversation");
     expect(suggestedShare({ ...PROJECT, defaultShare: "conversation" }, "metadata")).toBe("metadata");
-    expect(suggestedShare(PROJECT)).toBe("metadata");
+    expect(suggestedShare(PROJECT)).toBe("conversation");
   });
 
   it("states plainly what each level sends", () => {
@@ -214,8 +214,8 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
       await runHubExclude(path.join(tmp, "secret"));
       expect(loadConfig(file).hub).toMatchObject({ includeDirs: [path.join(tmp, "notes")], excludeDirs: [path.join(tmp, "secret")] });
 
-      // No --share and no terminal: nobody can say yes, so metadata.
-      expect(loadConfig(file).hub?.share).toBe("metadata");
+      // No --share and no terminal: the default is max sharing (Sean, 11-24).
+      expect(loadConfig(file).hub?.share).toBe("conversation");
 
       await runHubDisconnect();
       expect(loadConfig(file).hub).toBeUndefined();

@@ -244,22 +244,40 @@ describe("conversation level", () => {
 });
 
 describe("share-from-now and §3.3 rule 4", () => {
-  it("an orchestrator outside shared repos stays metadata-only, even at the conversation level", async () => {
+  it("an orchestrator outside shared repos shares its conversation from the moment it touches a shared repo (max sharing)", async () => {
     const h = harness();
     const t = transcript("o1");
-    h.claude("o1", docs, t, { hook_event_name: "UserPromptSubmit", prompt: "ORCH_PROMPT plan across repos" });
+    // Before the session is shared: nothing of it may leave.
+    h.claude("o1", docs, t, { hook_event_name: "UserPromptSubmit", prompt: "PRE_SHARE_PROMPT personal stuff" });
+    append(t, cl.text("PRE_SHARE_TEXT about salience", "o-0", NOW - 5));
+    // It touches a B3 file: shared from here on.
     h.claude("o1", docs, t, { hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: path.join(beta, "SPEC.md") } });
-    append(t, cl.text("ORCH_TEXT read the spec; now salience", "o-a", NOW));
-    h.claude("o1", docs, t, { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: `ls ${beta}`, description: "ORCH_DESC list" } });
+    append(t, cl.text("ORCH_TEXT read the spec", "o-a", NOW));
+    h.claude("o1", docs, t, { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls -la", description: "ORCH_DESC list" } });
     h.claude("o1", docs, t, { hook_event_name: "UserPromptSubmit", prompt: "ORCH_PROMPT two" });
     h.claude("o1", docs, t, { hook_event_name: "Stop" });
     h.advance(10_000);
     await h.send();
     const evs = h.events("claude-code:o1");
-    expect(evs.length).toBeGreaterThan(0); // shared through the B3 file
     const all = h.raw.join("\n");
-    expect(all).not.toContain("ORCH_");
-    expect(evs.some((e) => e.kind === "message" || e.kind === "turn")).toBe(false);
+    expect(evs.length).toBeGreaterThan(0);
+    expect(all).not.toContain("PRE_SHARE_");
+    expect(all).toContain("ORCH_PROMPT two");
+    expect(all).toContain("ORCH_DESC list");
+    expect(evs.some((e) => e.kind === "message" && String(e.text ?? "").includes("ORCH_TEXT"))).toBe(true);
+    expect(all).not.toContain("/Users/");
+  });
+
+  it("an orchestrator at the metadata level still sends no text", async () => {
+    const h = harness({ share: "metadata" });
+    const t = transcript("o2");
+    h.claude("o2", docs, t, { hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: path.join(beta, "SPEC.md") } });
+    h.claude("o2", docs, t, { hook_event_name: "UserPromptSubmit", prompt: "ORCH_PROMPT meta" });
+    append(t, cl.text("ORCH_TEXT meta", "o2-a", NOW));
+    h.claude("o2", docs, t, { hook_event_name: "Stop" });
+    h.advance(10_000);
+    await h.send();
+    expect(h.raw.join("\n")).not.toContain("ORCH_");
   });
 
   it("a session whose cwd moves into a shared repo sends only text written after that", async () => {

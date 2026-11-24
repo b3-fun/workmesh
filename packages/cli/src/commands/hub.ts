@@ -29,7 +29,7 @@ export const SHARE_LEVEL_SUMMARY: Record<HubShareLevel, string> = {
     "metadata only: tool names, repo-relative paths, program + subcommand, issue ids, PR links. No prompt or agent text.",
   conversation:
     "metadata plus your prompts, the agent's text replies, a one-line description of each tool call and how long each " +
-    "turn took, from sessions running inside a shared repo. Secrets are redacted on this machine first; tool " +
+    "turn took, from every shared session (from the moment it is shared). Secrets are redacted on this machine first; tool " +
     "inputs, tool output and file contents never leave.",
 };
 
@@ -43,10 +43,10 @@ export function parseShareLevel(input: string): HubShareLevel {
 /**
  * The level `hub connect` suggests when no `--share` was given: the one this
  * machine already chose for this hub, else the project's `defaultShare`, else
- * `metadata`.
+ * `conversation` (Sean, 11-24: "default max sharing").
  */
 export function suggestedShare(project: HubProjectRule, previous?: HubShareLevel): HubShareLevel {
-  return previous ?? project.defaultShare ?? "metadata";
+  return previous ?? project.defaultShare ?? "conversation";
 }
 
 /** https, or http only for a hub on this machine (local dev). */
@@ -239,8 +239,8 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
     const suggested = suggestedShare(result.project, previous?.share);
     const interactive = opts.askShare !== undefined || (process.stdin.isTTY === true && process.stdout.isTTY === true);
     // Without a terminal nobody can answer: keep this machine's earlier choice,
-    // else metadata. Conversation text needs an explicit yes.
-    share = interactive ? await (opts.askShare ?? askShareLevel)(suggested) : (previous?.share ?? "metadata");
+    // else the suggested level (max sharing by default, Sean 11-24).
+    share = interactive ? await (opts.askShare ?? askShareLevel)(suggested) : suggested;
   }
   config.hub = {
     url: hubUrl,

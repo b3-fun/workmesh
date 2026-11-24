@@ -586,7 +586,7 @@ export class HubForwarder {
       }
       // A file outside every shared repo: in a shared cwd, say only that a
       // tool ran (label already reduced to "editing files"); otherwise drop.
-      return cwdShared ? { ...tool, label: ctx.label } : undefined;
+      return cwdShared || this.conversationShared(t) ? { ...tool, label: ctx.label } : undefined;
     }
 
     if (d.command !== undefined) {
@@ -603,10 +603,14 @@ export class HubForwarder {
       // Rule 4 drops shell events in an unshared cwd that mention no shared
       // root; a PR on a shared repo is itself shared data (rule 7), so it goes.
       if (prShared) return { ...tool, ...extras, repo: pr?.repo };
+      // Conversation level: the shell call still shows (desc, program +
+      // subcommand), with no repo since it names no shared root.
+      if (this.conversationShared(t)) return { ...tool, ...extras };
       return undefined;
     }
 
-    return cwdShared ? { ...tool, repo: t.cwdTarget?.repo, branch: t.cwdTarget?.branch } : undefined;
+    if (cwdShared) return { ...tool, repo: t.cwdTarget?.repo, branch: t.cwdTarget?.branch };
+    return this.conversationShared(t) ? { ...tool, repo: t.lastTarget?.repo, branch: t.lastTarget?.branch } : undefined;
   }
 
   private enqueue(raw: Omit<HubActivityEvent, "id">): void {
@@ -643,13 +647,14 @@ export class HubForwarder {
   // --- conversation (SPEC §8-9) --------------------------------------------------
 
   /**
-   * Conversation text flows only at the conversation level, for a shared
-   * session whose cwd is itself shared. A session shared through rule 4
-   * (cwd outside every shared repo, e.g. an orchestrator in ~/Documents)
-   * stays metadata-only: its prompts and replies are about other work too.
+   * Conversation text flows at the conversation level for every shared
+   * session, from the moment it became shared (SPEC §8). That includes a
+   * session shared through rule 4 (cwd outside every shared repo, e.g. an
+   * orchestrator in ~/Documents that touched a shared repo): Sean, 11-24,
+   * "set sharing to max ... default max sharing".
    */
   private conversationShared(t: Tracked): boolean {
-    return this.share === "conversation" && t.shared && t.cwdTarget !== undefined;
+    return this.share === "conversation" && t.shared;
   }
 
   /** A tool description the hub may see: redacted, one line, ≤ 200 chars. */

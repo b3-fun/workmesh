@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   displayName,
   type BoardState,
@@ -127,7 +127,10 @@ export function useBoard() {
   const [model, dispatch] = useReducer(reducer, null);
   const [conn, setConn] = useState<Conn>("connecting");
   const [signedOut, setSignedOut] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+  /** The last snapshot read's failure, while it stands (cleared by the next read that lands). */
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [retrying, setRetrying] = useState(false);
+  const retryRef = useRef<() => Promise<void>>(async () => undefined);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -150,12 +153,12 @@ export function useBoard() {
         setServerOffset(s.serverNow - Date.now());
         dispatch({ type: "snapshot", state: s });
         for (const m of replay) dispatch({ type: "msg", msg: m });
-        setLoadError(false);
+        setLoadError(null);
       } catch (err) {
         if (err instanceof SignedOut) {
           setSignedOut(true);
           stop();
-        } else setLoadError(true);
+        } else setLoadError(err);
       } finally {
         if (buffer === replay) buffer = null;
       }
@@ -214,6 +217,7 @@ export function useBoard() {
     window.addEventListener("online", wake);
     document.addEventListener("visibilitychange", wake);
 
+    retryRef.current = refetch;
     void refetch();
     connect();
     return () => {
@@ -230,5 +234,11 @@ export function useBoard() {
     return events.length;
   };
 
-  return { model, conn, signedOut, loadError, loadHistory };
+  /** Retry: read the snapshot again now, busy while it runs. */
+  const retry = useCallback(() => {
+    setRetrying(true);
+    void retryRef.current().finally(() => setRetrying(false));
+  }, []);
+
+  return { model, conn, signedOut, loadError, retry, retrying, loadHistory };
 }

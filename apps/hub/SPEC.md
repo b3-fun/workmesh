@@ -213,9 +213,7 @@ Top bar: project name, counts (agents working, waiting on people, people online)
 with the one command to run). `/pair?code=…` is the approve page. Empty state explains how to connect the first
 machine.
 
-Design: the B3 brand used in `docs/research.html`: Manrope for text, Geist Mono for machine data, zinc neutrals,
-`#306AFF` as the only signal colour, light and dark themes, calm motion (rows ease in, no pulsing except the live
-dot). Radix primitives for dialogs and menus; no native `alert`/`confirm`. Works at 1280 px and at 400 px.
+Design (v0.1): the B3 brand used in `docs/research.html`. Superseded by §13: the board is a B3OS console surface.
 
 ## 6. Relay (agentblip) changes
 
@@ -366,5 +364,49 @@ As built (v0.2):
 - A now line written before the session's current working or waiting state began (a new turn whose refresh hasn't
   landed) is not shown; the relay's activity label stands in until it does. The relay's label also stays as a small
   trace under the summary.
-- The digest strip's dismissal is remembered per browser for that digest. "Earlier" loads 500 events per page and
-  hides once the session's start is loaded. The footer reads "Summaries by …" or "Summaries off".
+- "Earlier" loads 500 events per page and hides once the session's start is loaded. (The layout, the digest and the
+  footer changed in §13.)
+
+
+---
+
+# v0.3: the board as a B3OS console surface (Sean, 2026-11-24)
+
+Sean: remove "Summaries by … via OpenRouter", "make it look more like b3os … utilizing that same matching style and
+design principles", "copy it exactly, extracting components".
+
+## 13. Board v0.3
+
+- **Built from the console's components, not redrawn.** `src/board/b3os/` is a verbatim copy, at the same paths, of
+  b3os-beta `apps/web/src/` at `65e00f860` (the foundation kit, signature pixel pieces, primitives, the console's
+  `primitives.tsx`, `AuthCard`, `ThemeSwitch`, `Icon`, and its stylesheets and tokens), plus four marked shims; its
+  README lists what came over and how to refresh it. The design rules are the console's
+  (`apps/web/docs/design-rules.md` at that commit).
+- **Shell:** the console's `app-shell`: sidebar (wordmark and "Bullpen" chip, Connect a machine as the glossy create
+  button, nav with the sliding pill and a pixel grid that plays on the hovered row: Board, Machines, then People, one
+  row per person narrowing the board), Dark mode switch, account card; the page on the raised stage with its footer
+  (the live connection's status on the left). Under 1024 px a sticky top bar and the sidebar in a drawer. Light by
+  default (the console's theme bootstrap, `b3os-theme`, `?theme=dark`).
+- **Routes:** `/` the board (`?person=<email>` narrows it), `/sessions/:hubKey` a session's conversation, `/machines`
+  your machines, `/pair` the approve page.
+- **Board** (Home's frame): `PageHeaderView` "Board"; the Attention line ("2 sessions waiting on a person", quiet
+  "Nobody is waiting"); a `FigureStrip` (agents working, sessions open, people online); then, side by side from
+  1280 px, the sessions waiting on a person and each person's sessions as `RowCard`s (the agent's real mark: Anthropic
+  for Claude Code, OpenAI for Codex; state as a kit `Status`; the now line or waiting reason, repo, branch, issues as
+  the meta line; age or wait as the value; copy the session id on hover) beside "Since you looked" (the digest, said
+  once as panel content, dismissible) and Activity (the live tail). Ended and offline sessions fold under each person.
+- **Session page:** a console detail page: back to Board, the agent's mark on the tile, the session's name and
+  `Status`, the now line (or waiting reason) as its line, person and machine, repo, branch, issue and PR links as its
+  meta line, copy id; then the transcript (§12) in a 760 px column on the console's tokens, `Working` (the pixel
+  loader) while the agent works, a `Note` for activity-only sessions. It lands on the newest item and follows it.
+- **Machines:** `RowCard`s for your machines (connected or offline, client, sharing level), Revoke through the shared
+  `ConfirmDialog`; Connect a machine opens a `ResponsiveDialog` (a drawer on a phone) with the command on the dark code
+  island and one `Note` on what is shared.
+- **Approve page:** the console's CLI sign-in card (`Device.tsx`): `AuthHead`, the code large, the facts (machine,
+  client, what it shares), Approve and Cancel; the animated check when connected; `AuthNote` with Retry when a lookup
+  fails.
+- **States:** a skeleton built from the page's own parts on the first read only (`PageReveal`); a failed board read
+  says so once in the Attention slot with Retry, the figures showing dashes; failed history or machine reads show an
+  `InlineError` with the request id (`cf-ray`) and Retry; empty states offer one way to start.
+- **Removed:** the footer naming the summary model (nothing in the UI names a model or vendor), the digest banner, left
+  and top accent bars.

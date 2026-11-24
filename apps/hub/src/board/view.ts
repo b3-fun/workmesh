@@ -1,4 +1,5 @@
 import { displayName, isOffline, type Device, type Person, type Session, type ShareLevel } from "../shared/types";
+import type { StatusLook } from "./b3os/ds/kit/status";
 import type { Model } from "./store";
 
 export interface SessionView extends Session {
@@ -48,6 +49,29 @@ export function currentNow(s: Pick<Session, "nowLine" | "nowAt" | "state" | "sta
   if (!s.nowLine) return null;
   if ((s.state === "working" || s.state === "waiting") && (s.nowAt ?? 0) < s.stateSince - 2_000) return null;
   return s.nowLine;
+}
+
+/** A session's state as the kit's Status draws it: a pixel grid while it works, a dot otherwise. */
+export function sessionLook(s: Pick<SessionView, "state" | "offline">): StatusLook {
+  if (s.offline) return { tone: "unknown", word: "Offline" };
+  switch (s.state) {
+    case "working":
+      return { tone: "live", running: true, word: "Working" };
+    case "waiting":
+      return { tone: "warn", word: "Waiting" };
+    case "idle":
+      return { tone: "off", word: "Idle" };
+    case "ended":
+      return { tone: "off", word: "Ended" };
+  }
+}
+
+/** What a row or a header says the session is doing: the waiting reason, the now line, or the relay's label. */
+export function leadText(s: SessionView): string {
+  const dim = s.offline || s.state === "ended";
+  const label = s.offline ? "Offline" : s.state === "ended" ? "Ended" : (s.activity ?? s.state);
+  if (s.state === "waiting" && !dim) return s.waitingReason ?? currentNow(s) ?? label;
+  return currentNow(s) ?? label;
 }
 
 export function repoName(repo: string | null): string {

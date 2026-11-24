@@ -1,7 +1,7 @@
 import { sessionEventSchema } from "@agentblip/core";
 import type { SessionEvent } from "@agentblip/core";
 import { mapHookInput } from "../adapters/claude-code";
-import { mapNotifyArg } from "../adapters/codex";
+import { mapCodexHookInput, mapNotifyArg } from "../adapters/codex";
 import { fitEventBody } from "../adapters/detail";
 import { loadConfigSafe } from "../lib/config";
 import { ensureDaemon, postEvent } from "../lib/daemon-client";
@@ -42,6 +42,12 @@ export async function runHook(source: string, payload?: string): Promise<void> {
       const raw = await readStdin(STDIN_TIMEOUT_MS);
       if (!raw.trim()) return;
       event = mapHookInput(JSON.parse(raw) as unknown);
+    } else if (source === "codex-hooks") {
+      // Codex lifecycle hooks: JSON on stdin. Print nothing — Codex adds a
+      // SessionStart/UserPromptSubmit hook's stdout to the model's context.
+      const raw = await readStdin(STDIN_TIMEOUT_MS);
+      if (!raw.trim()) return;
+      event = mapCodexHookInput(JSON.parse(raw) as unknown);
     } else if (source === "codex") {
       const raw = payload ?? (await readStdin(STDIN_TIMEOUT_MS));
       if (!raw.trim()) return;

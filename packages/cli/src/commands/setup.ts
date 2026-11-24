@@ -4,7 +4,9 @@ import { spawn } from "node:child_process";
 import { pairPollResponseSchema, pairStartResponseSchema } from "@agentblip/core";
 import {
   codexConfigPath,
+  codexHooksPath,
   codexNotifyLine,
+  installCodexHooks,
   installCodexNotify,
 } from "../adapters/codex";
 import { claudeSettingsPath, installClaudeHooks } from "../adapters/claude-code";
@@ -212,11 +214,26 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   }
 
   const wantCodex = await confirm(
-    `Install Codex notify hook (${codexConfigPath()})?`,
+    `Install Codex hooks (${codexHooksPath()}, plus the notify fallback in ${codexConfigPath()})?`,
     fs.existsSync(path.dirname(codexConfigPath())),
   );
   config.adapters.codex.enabled = wantCodex;
   if (wantCodex) {
+    try {
+      const result = installCodexHooks();
+      console.log(
+        result.changed
+          ? `  ${green("codex hooks installed")}${result.backupPath ? dim(` (backup: ${result.backupPath})`) : ""}`
+          : `  ${dim("codex hooks already installed")}`,
+      );
+      if (result.changed) {
+        console.log(
+          `  ${yellow("Codex runs a new hook only after you trust it: open Codex and run /hooks to review and trust agentblip's")}`,
+        );
+      }
+    } catch (err) {
+      console.log(`  ${red(`could not update hooks.json: ${errorMessage(err)}`)}`);
+    }
     try {
       const result = installCodexNotify();
       if (result === "installed") console.log(`  ${green("notify hook installed")}`);

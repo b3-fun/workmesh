@@ -86,7 +86,7 @@ program
 program
   .command("hook")
   .description("Adapter entrypoint for agent hooks — never fails the host session")
-  .argument("<source>", "claude-code | codex | custom")
+  .argument("<source>", "claude-code | codex-hooks | codex (notify) | custom")
   .argument("[payload]", "JSON payload (Codex notify passes it as an argument)")
   .action(runHook); // handles its own errors and always exits 0
 

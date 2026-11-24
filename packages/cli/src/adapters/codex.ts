@@ -4,7 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { watch } from "chokidar";
 import { z } from "zod";
-import type { SessionEvent } from "@agentblip/core";
+import { DETAIL_LIMITS } from "@agentblip/core";
+import type { SessionEvent, SessionEventDetail } from "@agentblip/core";
+import { absolutePath, clip, compactDetail, responseOk, responseText } from "./detail";
 
 const MAX_ACTIVITY_LEN = 60;
 
@@ -154,4 +156,337 @@ export function createCodexWatcher(
     log(`codex watcher error: ${err instanceof Error ? err.message : String(err)}`);
   });
   return { close: () => watcher.close() };
+}
+
+// --- Codex hooks (~/.codex/hooks.json) ---------------------------------------
+//
+// Codex 0.16x runs Claude-Code-style lifecycle hooks: same hooks.json shape,
+// JSON on stdin. Input fields verified against the JSON schemas embedded in
+// the codex 0.164 binary (pre-tool-use.command.input etc.): every event has
+// session_id, cwd, hook_event_name, transcript_path (nullable), model;
+// PreToolUse/PostToolUse add turn_id, tool_name, tool_use_id, tool_input
+// (untyped) and PostToolUse tool_response (untyped); UserPromptSubmit adds
+// prompt. Codex runs a user hook only after the person trusts it (/hooks).
+// The notify hook above stays installed as a fallback for older Codex builds.
+
+/** Absolute hook invocation, quoted for spaces (see codexNotifyLine). */
+export function codexHookCommand(): string {
+  return `"${process.execPath}" "${fileURLToPath(import.meta.url)}" hook codex-hooks`;
+}
+
+/** $CODEX_HOME/hooks.json (default ~/.codex/hooks.json). */
+export function codexHooksPath(): string {
+  const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  return path.join(home, "hooks.json");
+}
+
+/**
+ * Events agentblip installs. PermissionRequest is beyond Claude Code's set:
+ * it is Codex's "blocked on an approval" signal, which maps to waiting.
+ */
+export const CODEX_HOOK_EVENTS: readonly string[] = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "PreToolUse",
+  "PermissionRequest",
+  "PostToolUse",
+  "Stop",
+  "SessionEnd",
+];
+
+/** SessionEnd hooks may run at most 3 s in Codex; the rest get 5 s like other tools' hooks. */
+function codexHookTimeout(event: string): number {
+  return event === "SessionEnd" ? 3 : 5;
+}
+
+const codexHookInputSchema = z.looseObject({
+  hook_event_name: z.string(),
+  session_id: z.string().min(1),
+  cwd: z.string().optional(),
+  tool_name: z.string().optional(),
+  tool_input: z.unknown().optional(),
+  tool_response: z.unknown().optional(),
+  prompt: z.string().optional(),
+});
+
+/** Codex's names for a shell call: docs say "matched as Bash"; the rest are wire names seen across versions. */
+const CODEX_SHELL_TOOLS = new Set([
+  "Bash",
+  "shell",
+  "shell_command",
+  "local_shell",
+  "exec_command",
+  "unified_exec",
+  "container.exec",
+  "write_stdin",
+]);
+const CODEX_PATCH_TOOLS = new Set(["apply_patch", "Edit", "Write"]);
+/** Codex asks the person a question and blocks on the answer. */
+const CODEX_ASKS_USER_TOOLS = new Set(["request_user_input"]);
+
+/** Files an apply_patch body touches ("*** Update File: src/a.rs", "*** Move to: …"). */
+export function parsePatchFiles(patch: string): string[] {
+  const files: string[] = [];
+  for (const m of patch.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+?)\s*$/gm)) {
+    const file = m[1]!;
+    if (!files.includes(file)) files.push(file);
+  }
+  return files;
+}
+
+function patchText(toolInput: unknown): string | undefined {
+  if (typeof toolInput === "string") return toolInput;
+  if (toolInput && typeof toolInput === "object") {
+    const r = toolInput as Record<string, unknown>;
+    for (const key of ["command", "input", "patch"]) {
+      if (typeof r[key] === "string") return r[key];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The shell command a Codex tool call runs. `command` may be a string or an
+ * argv array (["bash", "-lc", "…"]); unified exec uses `cmd`. A `workdir`
+ * other than the session cwd is kept as a leading `cd <dir> &&` so the hub
+ * forwarder can tell which repo the command ran in.
+ */
+export function codexShellCommand(toolInput: unknown, cwd: string | undefined): string | undefined {
+  if (!toolInput || typeof toolInput !== "object") return undefined;
+  const r = toolInput as Record<string, unknown>;
+  const raw = r.command ?? r.cmd;
+  let command: string | undefined;
+  if (typeof raw === "string") command = raw;
+  else if (Array.isArray(raw) && raw.every((a) => typeof a === "string")) {
+    const argv = raw as string[];
+    const shell = argv[0] ? path.basename(argv[0]) : "";
+    command =
+      ["bash", "zsh", "sh"].includes(shell) && (argv[1] === "-lc" || argv[1] === "-c") && argv[2]
+        ? argv[2]
+        : argv.join(" ");
+  }
+  if (!command) return undefined;
+  const workdir = typeof r.workdir === "string" ? r.workdir : undefined;
+  if (workdir && path.isAbsolute(workdir) && workdir !== cwd) {
+    command = `cd ${workdir} && ${command}`;
+  }
+  return command;
+}
+
+/** Codex shell output often reads "Exit code: 1\nWall time: …\nOutput: …". */
+function codexResponseOk(resp: unknown): boolean | undefined {
+  if (typeof resp === "string") {
+    const exit = /^Exit code: (-?\d+)/m.exec(resp);
+    if (exit) return exit[1] === "0";
+    if (resp.trimStart().startsWith("{")) {
+      try {
+        return codexResponseOk(JSON.parse(resp) as unknown);
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+  if (resp && typeof resp === "object" && !Array.isArray(resp)) {
+    const meta = (resp as Record<string, unknown>).metadata;
+    if (meta && typeof meta === "object" && typeof (meta as Record<string, unknown>).exit_code === "number") {
+      return (meta as Record<string, unknown>).exit_code === 0;
+    }
+  }
+  return responseOk(resp);
+}
+
+function codexToolLabel(toolName: string | undefined, files: string[]): string | undefined {
+  if (!toolName) return undefined;
+  if (CODEX_PATCH_TOOLS.has(toolName)) {
+    return files[0] ? `editing ${path.basename(files[0])}` : "editing files";
+  }
+  if (CODEX_SHELL_TOOLS.has(toolName)) return "running commands";
+  switch (toolName) {
+    case "request_user_input":
+      return "thinking"; // PostToolUse: the person answered
+    case "update_plan":
+      return "planning";
+    case "spawn_agent":
+    case "Agent":
+      return "delegating to subagents";
+    case "web_search":
+    case "WebSearch":
+      return "browsing the web";
+    default:
+      return `using ${toolName}`;
+  }
+}
+
+/** Local-only facts about one Codex tool call (see SessionEventDetail). */
+export function codexToolDetail(
+  hookEvent: string,
+  toolName: string | undefined,
+  toolInput: unknown,
+  cwd: string | undefined,
+  toolResponse?: unknown,
+): { detail: SessionEventDetail | undefined; files: string[] } {
+  if (!toolName) return { detail: compactDetail({ hookEvent }), files: [] };
+  const isPatch = CODEX_PATCH_TOOLS.has(toolName);
+  const isShell = CODEX_SHELL_TOOLS.has(toolName);
+  const patch = isPatch ? patchText(toolInput) : undefined;
+  const files = patch
+    ? parsePatchFiles(patch)
+    : toolInput && typeof toolInput === "object"
+      ? [(toolInput as Record<string, unknown>).file_path, (toolInput as Record<string, unknown>).path].filter(
+          (p): p is string => typeof p === "string" && p.length > 0,
+        )
+      : [];
+  const abs = files
+    .map((f) => absolutePath(f, cwd))
+    .filter((f): f is string => f !== undefined)
+    .slice(0, DETAIL_LIMITS.filePaths);
+  const post = hookEvent === "PostToolUse";
+  return {
+    files,
+    detail: compactDetail({
+      hookEvent,
+      tool: toolName.slice(0, DETAIL_LIMITS.tool),
+      filePath: abs[0],
+      filePaths: abs.length > 1 ? abs : undefined,
+      command: isShell ? clip(codexShellCommand(toolInput, cwd), DETAIL_LIMITS.command) : undefined,
+      toolResponseText: post && isShell ? responseText(toolResponse) : undefined,
+      ok: post ? codexResponseOk(toolResponse) : undefined,
+    }),
+  };
+}
+
+/** Maps Codex hook stdin JSON to a wire SessionEvent, or null to ignore. */
+export function mapCodexHookInput(json: unknown, fallbackNow = Date.now()): SessionEvent | null {
+  const parsed = codexHookInputSchema.safeParse(json);
+  if (!parsed.success) return null;
+  const input = parsed.data;
+  const project = input.cwd ? path.basename(input.cwd).slice(0, 120) : undefined;
+  const base = {
+    source: "codex",
+    sessionId: input.session_id.slice(0, 128),
+    project: project || undefined,
+    cwd: input.cwd && input.cwd.length <= 1024 ? input.cwd : undefined,
+    ts: fallbackNow,
+  };
+  const event = input.hook_event_name;
+  switch (event) {
+    case "SessionStart":
+      return { ...base, kind: "start" };
+    case "UserPromptSubmit":
+      return {
+        ...base,
+        kind: "working",
+        activity: "thinking",
+        detail: compactDetail({ hookEvent: event, prompt: clip(input.prompt, DETAIL_LIMITS.prompt) }),
+      };
+    case "PreToolUse":
+    case "PostToolUse": {
+      const { detail, files } = codexToolDetail(
+        event,
+        input.tool_name,
+        input.tool_input,
+        input.cwd,
+        input.tool_response,
+      );
+      if (event === "PreToolUse" && input.tool_name && CODEX_ASKS_USER_TOOLS.has(input.tool_name)) {
+        return { ...base, kind: "waiting", activity: "needs my input", detail };
+      }
+      return {
+        ...base,
+        kind: "working",
+        activity: codexToolLabel(input.tool_name, files)?.slice(0, 200),
+        detail,
+      };
+    }
+    case "PermissionRequest": {
+      const { detail } = codexToolDetail(event, input.tool_name, input.tool_input, input.cwd);
+      return { ...base, kind: "waiting", activity: "needs my input", detail };
+    }
+    case "Stop":
+      return { ...base, kind: "idle" };
+    case "SessionEnd":
+      return { ...base, kind: "end" };
+    default:
+      return null;
+  }
+}
+
+function hookListHasAgentblip(entries: unknown): boolean {
+  if (!Array.isArray(entries)) return false;
+  return entries.some((entry) => {
+    const hooks = (entry as { hooks?: unknown } | null)?.hooks;
+    return (
+      Array.isArray(hooks) &&
+      hooks.some((hook) => {
+        const command = (hook as { command?: unknown } | null)?.command;
+        return typeof command === "string" && command.includes("agentblip") && command.includes("codex-hooks");
+      })
+    );
+  });
+}
+
+export interface CodexHooksInstallResult {
+  changed: boolean;
+  hooksPath: string;
+  backupPath?: string;
+}
+
+/**
+ * Merges agentblip's entries into Codex's hooks.json. Never overwrites: other
+ * tools' entries and unknown keys are kept, events that already carry an
+ * agentblip codex-hooks command are skipped, and the original file is backed
+ * up once. Throws (changing nothing) when the file isn't a JSON object.
+ */
+export function installCodexHooks(hooksPath = codexHooksPath()): CodexHooksInstallResult {
+  let doc: Record<string, unknown> = {};
+  let original: string | undefined;
+  if (fs.existsSync(hooksPath)) {
+    original = fs.readFileSync(hooksPath, "utf8");
+    if (original.trim()) {
+      const parsed = JSON.parse(original) as unknown;
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        throw new Error(`unexpected shape in ${hooksPath} — expected a JSON object`);
+      }
+      doc = parsed as Record<string, unknown>;
+    }
+  }
+  const existing = doc.hooks;
+  if (existing !== undefined && (typeof existing !== "object" || existing === null || Array.isArray(existing))) {
+    throw new Error(`unexpected "hooks" in ${hooksPath} — expected an object`);
+  }
+  const hooks = (existing as Record<string, unknown> | undefined) ?? {};
+  doc.hooks = hooks;
+
+  let changed = false;
+  const command = codexHookCommand();
+  for (const event of CODEX_HOOK_EVENTS) {
+    const list = hooks[event];
+    if (hookListHasAgentblip(list)) continue;
+    const entry = { hooks: [{ type: "command", command, timeout: codexHookTimeout(event) }] };
+    if (Array.isArray(list)) list.push(entry);
+    else if (list === undefined) hooks[event] = [entry];
+    else continue; // unmanageable shape — leave it alone
+    changed = true;
+  }
+
+  let backupPath: string | undefined;
+  if (changed) {
+    if (original !== undefined) {
+      backupPath = `${hooksPath}.agentblip-backup`;
+      if (!fs.existsSync(backupPath)) fs.writeFileSync(backupPath, original);
+    }
+    fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
+    fs.writeFileSync(hooksPath, `${JSON.stringify(doc, null, 2)}\n`);
+  }
+  return { changed, hooksPath, backupPath };
+}
+
+export function areCodexHooksInstalled(hooksPath = codexHooksPath()): boolean {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(hooksPath, "utf8")) as { hooks?: Record<string, unknown> };
+    return CODEX_HOOK_EVENTS.every((event) => hookListHasAgentblip(parsed.hooks?.[event]));
+  } catch {
+    return false;
+  }
 }

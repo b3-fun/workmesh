@@ -3,7 +3,12 @@ import {
   areClaudeHooksInstalled,
   claudeSettingsPath,
 } from "../adapters/claude-code";
-import { codexConfigPath, isCodexNotifyInstalled } from "../adapters/codex";
+import {
+  areCodexHooksInstalled,
+  codexConfigPath,
+  codexHooksPath,
+  isCodexNotifyInstalled,
+} from "../adapters/codex";
 import { loadConfig, loadConfigSafe } from "../lib/config";
 import type { Config } from "../lib/config";
 import { getHealth, sinkConfigured } from "../lib/daemon-client";
@@ -140,6 +145,11 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     areClaudeHooksInstalled()
       ? ok("claude code hooks", claudeSettingsPath())
       : warn("claude code hooks", "not installed — run `agentblip setup`"),
+  );
+  checks.push(
+    areCodexHooksInstalled()
+      ? ok("codex hooks", `${codexHooksPath()} (trust them in Codex with /hooks)`)
+      : warn("codex hooks", "not installed — run `agentblip setup`"),
   );
   checks.push(
     isCodexNotifyInstalled()

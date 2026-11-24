@@ -377,6 +377,11 @@ design principles", "copy it exactly, extracting components".
 
 ## 13. Board v0.3
 
+- **Name:** the system (relay, hub and board) is **Workmesh** (Sean, 2026-11-24, tying in with B3IQ's Workcell). Every
+  user-visible "Bullpen" on the board reads "Workmesh"; the connect dialog shows `npm i -g @b3os/workmesh` and
+  `workmesh hub connect <this host>`. The host stays `bullpen.b3os.org`, and code identifiers, the repo and the Worker
+  keep their names until the move to `workmesh.b3os.org` and `b3-fun/workmesh`.
+
 - **Built from the console's components, not redrawn.** `src/board/b3os/` is a verbatim copy, at the same paths, of
   b3os-beta `apps/web/src/` at `65e00f860` (the foundation kit, signature pixel pieces, primitives, the console's
   `primitives.tsx`, `AuthCard`, `ThemeSwitch`, `Icon`, and its stylesheets and tokens), plus four marked shims; its

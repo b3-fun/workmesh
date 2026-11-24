@@ -228,11 +228,12 @@ export function useBoard() {
     };
   }, []);
 
-  const loadHistory = async (hubKey: string, before?: number) => {
+  // Stable, so a page that reads history on mount reads it once.
+  const loadHistory = useCallback(async (hubKey: string, before?: number) => {
     const { events } = await api.sessionEvents(hubKey, before);
     dispatch({ type: "history", events });
     return events.length;
-  };
+  }, []);
 
   /** Retry: read the snapshot again now, busy while it runs. */
   const retry = useCallback(() => {

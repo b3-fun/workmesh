@@ -1,7 +1,7 @@
 // The sidebar, from the console's (b3os-beta apps/web/src/app/shell/Sidebar.tsx @ 65e00f860): the wordmark and its
 // chip, the glossy create button (here: Connect a machine), the nav in labelled groups with the raised active pill that
 // slides between rows and a pixel grid that plays on the row under the pointer, then the Dark mode row and the account
-// card. Bullpen's nav: the board, your machines, and one row per person (the board narrowed to them).
+// card. Workmesh's nav: the board, your machines, and one row per person (the board narrowed to them).
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useSearch } from "wouter";
@@ -82,7 +82,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
     if (pill) placed.current = true;
   }, [pill]);
   return (
-    <nav ref={listRef} aria-label="Bullpen" className="side-nav">
+    <nav ref={listRef} aria-label="Workmesh" className="side-nav">
       {pill ? (
         <span
           className="side-nav__pill"
@@ -137,10 +137,10 @@ export function SidebarContent({ onNavigate, close }: { onNavigate?: () => void;
     <div className="side">
       <div className="side__head">
         {close ? <span className="order-last ml-auto">{close}</span> : null}
-        <Link href="/" className="side__brand" aria-label="Bullpen home" onClick={onNavigate}>
+        <Link href="/" className="side__brand" aria-label="Workmesh home" onClick={onNavigate}>
           <span className="b3os-wordmark h-[18px] text-ink" role="img" aria-label="B3OS" />
         </Link>
-        <span className="b3os-chip">Bullpen</span>
+        <span className="b3os-chip">Workmesh</span>
       </div>
       <button
         type="button"

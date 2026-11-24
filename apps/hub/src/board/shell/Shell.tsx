@@ -71,7 +71,7 @@ function StageFooter() {
         <StatusDot tone={words.tone}>{words.text}</StatusDot>
       </span>
       <nav aria-label="Links" className="stage-foot__links">
-        <a href="https://github.com/seangeng/agentblip" target="_blank" rel="noopener noreferrer">
+        <a href="https://www.npmjs.com/package/@b3os/workmesh" target="_blank" rel="noopener noreferrer">
           Relay
         </a>
         <span className="stage-foot__dot" aria-hidden="true" />
@@ -103,7 +103,7 @@ export function Shell({ children, full = false }: { children: ReactNode; full?: 
         <header className="app-topbar">
           <Link href="/" className="flex min-h-11 min-w-0 items-center gap-2.5" aria-label="Board">
             <span className="b3os-mark h-6 shrink-0 text-ink" role="img" aria-label="B3OS" />
-            <span className="truncate text-small font-medium text-ink-2">{model?.project.name ?? "B3"} / Bullpen</span>
+            <span className="truncate text-small font-medium text-ink-2">{model?.project.name ?? "B3"} / Workmesh</span>
           </Link>
           <span className="flex shrink-0 items-center">
             <button

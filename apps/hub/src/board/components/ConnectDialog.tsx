@@ -3,7 +3,8 @@ import { CopyButton } from "../b3os/ds/kit/copy";
 import { ResponsiveDialog } from "../b3os/ds/kit/dialog";
 import { Button } from "../b3os/app/ui/primitives";
 
-export const connectCommand = () => `agentblip hub connect ${location.origin}`;
+export const INSTALL_COMMAND = "npm i -g @b3os/workmesh";
+export const connectCommand = () => `workmesh hub connect ${location.origin}`;
 
 /** The command on the kit's dark code island, with its copy button. */
 export function Command({ command }: { command: string }) {
@@ -36,15 +37,18 @@ export function ConnectDialog({ open, onClose }: { open: boolean; onClose: () =>
       open={open}
       onClose={onClose}
       title="Connect a machine"
-      description="Run this where your agents run, then approve the code it prints."
+      description="Where your agents run: install the relay, connect it, then approve the code it prints."
       footer={
         <Button variant="neutral" onClick={onClose}>
           Done
         </Button>
       }
     >
-      <div className="grid gap-4">
+      <div className="grid gap-2">
+        <Command command={INSTALL_COMMAND} />
         <Command command={connectCommand()} />
+      </div>
+      <div className="mt-4 grid gap-4">
         <SharingNote />
       </div>
     </ResponsiveDialog>

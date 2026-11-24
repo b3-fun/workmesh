@@ -23,7 +23,7 @@ function normalize(raw: string): string {
 /**
  * The console's auth card (app/ui/AuthCard.tsx), composed from the same parts: the dashed card over its pointer
  * halftone on the dot grid, the body in one EaseHeight, the theme switch under it. Its line under the card names
- * Bullpen's host, not the console's.
+ * the board's host, not the console's.
  */
 function AuthCard({ children }: { children: ReactNode }) {
   return (
@@ -122,7 +122,7 @@ export function PairPage() {
   const now = useNow();
 
   useEffect(() => {
-    document.title = "Connect a machine · Bullpen";
+    document.title = "Connect a machine · Workmesh";
   }, []);
 
   const lookup = useCallback(async (code: string) => {
@@ -183,7 +183,7 @@ export function PairPage() {
         title="This code expired"
         line={
           <>
-            Run <code className="font-mono">agentblip hub connect</code> again for a new code.
+            Run <code className="font-mono">workmesh hub connect</code> again for a new code.
           </>
         }
         titleRef={decided}
@@ -245,7 +245,7 @@ export function PairPage() {
     body = (
       <div className="grid gap-4">
         <AuthNote title={`No pairing for ${look.code}`}>
-          It's unknown or expired. Run <code className="font-mono">agentblip hub connect</code> again for a new code.
+          It's unknown or expired. Run <code className="font-mono">workmesh hub connect</code> again for a new code.
         </AuthNote>
         <Button variant="neutral" onClick={restart}>
           Enter a different code

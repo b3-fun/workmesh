@@ -10,12 +10,12 @@ import { PairPage } from "./pages/Pair";
 import { SessionPage } from "./pages/Session";
 import { Shell } from "./shell/Shell";
 
-/** The browser tab: the page's name, then Bullpen; the board leads with how many wait on a person. */
+/** The browser tab: the page's name, then Workmesh; the board leads with how many wait on a person. */
 function useTitle(name: string) {
   const { view } = useBoardData();
   const waiting = view?.waiting.length ?? 0;
   useEffect(() => {
-    document.title = `${waiting > 0 ? `${waiting} waiting · ` : ""}${name} · Bullpen`;
+    document.title = `${waiting > 0 ? `${waiting} waiting · ` : ""}${name} · Workmesh`;
   }, [name, waiting]);
 }
 

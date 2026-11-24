@@ -1,0 +1,718 @@
+/* =============================================================================
+   The original B3OS design tokens, for the beta (EXTRACT X1, 2026-11-11).
+   from b3-mono apps/b3os-web/app/globals.css and tailwind.config.ts @ f50f3ba3b97e (origin/main, 2026-11-06)
+
+   1. Every custom property of the original's :root and its dark blocks, verbatim (only the selectors change:
+      `:root, [data-theme="light"]` and `.dark, [data-theme="dark"]`, so a theme island flips them too).
+   2. The original's Tailwind 3 theme (colors.ds, the legacy colors, boxShadow, borderRadius, fontSize, lineHeight,
+      letterSpacing, transitionTimingFunction, animation) as Tailwind 4 theme variables, so its class names work
+      unchanged: bg-ds-surface-card, shadow-ds-brand, rounded-ds-md, text-2xs, ease-out-quart. Those, and the
+      original's addComponents as @utility, are in ds-theme.css (src/ds/utilities.css reads them too).
+   3. Its component classes (globals.css @layer components: ds-shell, ds-segmented, label-xs-caps, body-sm and the
+      rest; tailwind.config.ts addComponents: text-h5, text-title-1s, btn-*).
+
+   Where a Tailwind key means one thing in the original and another in the beta, the beta keeps its meaning and the
+   ported files use a namespaced class (NOTES/ds-extraction.md, "Class translation"): rounded-sm/md/lg/xl/2xl/3xl
+   (the beta's radius scale) become rounded-ds-4/xs/8/md/lg/2xl, leading-relaxed becomes leading-ds-relaxed,
+   font-mono (the beta's Geist Mono) becomes font-ds-mono, and text-display and text-h1..h4 (the beta's type
+   scale) become ds-text-display and ds-text-h1..h4.
+   tokens.css points the beta's own tokens at these where both name the same thing (the table in the record).
+   ========================================================================== */
+
+/* borderRadius (tailwind.config.ts) has no CSS variables in the original: these are its values, named so
+   tokens.css can point at them. */
+:root {
+  --ds-radius-1: 1px;
+  --ds-radius-2xs: 2px;
+  --ds-radius-3: 3px;
+  --ds-radius-4: 4px;
+  --ds-radius-5: 5px;
+  --ds-radius-xs: 6px;
+  --ds-radius-7: 7px;
+  --ds-radius-8: 8px;
+  --ds-radius-9: 9px;
+  --ds-radius-sm: 10px;
+  --ds-radius-md: 12px;
+  --ds-radius-14: 14px;
+  --ds-radius-lg: 16px;
+  --ds-radius-18: 18px;
+  --ds-radius-xl: 20px;
+  --ds-radius-22: 22px;
+  --ds-radius-2xl: 24px;
+  --ds-radius-26: 26px;
+  --ds-radius-3xl: 28px;
+  --ds-radius-30: 30px;
+  --ds-radius-4xl: 32px;
+  --ds-radius-34: 34px;
+  --ds-radius-40: 40px;
+  --ds-radius-50: 50px;
+  --ds-radius-pill: 9999px;
+
+  /* Fonts. The original self-hosts Geist (sans), Inter, Inter Display and Open Runde (app/layout.tsx, next/font/local)
+     and has no mono face of its own: font-mono is Tailwind 3's default stack. Geist is the beta's own. Inter Display
+     and Open Runde are the original's files (licensed: owner, 2026-11-11), declared below and served from
+     /assets/fonts/; next/font's fallback for both is a size-adjusted Arial, here plain Arial. Inter (variable) is
+     used by no ported component and falls back to Geist (NOTES/ds-extraction.md, Fonts). */
+  --ds-font-geist: var(--b3-font-sans);
+  --ds-font-inter: var(--b3-font-sans);
+  --ds-font-inter-display: "Inter Display", Arial, sans-serif;
+  --ds-font-open-runde: "Open Runde", Arial, sans-serif;
+  --ds-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* The original's Inter Display (500, 600) and Open Runde (400 to 700): app/layout.tsx's localFont() declarations,
+   next/font's default display (swap). Nothing preloads them: no first screen of the console or site uses them, and a
+   face downloads only when text set in it renders (EXTRACT X2). */
+@font-face {
+  font-family: "Inter Display";
+  src: url("/assets/fonts/InterDisplay-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter Display";
+  src: url("/assets/fonts/InterDisplay-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Open Runde";
+  src: url("/assets/fonts/OpenRunde-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Open Runde";
+  src: url("/assets/fonts/OpenRunde-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Open Runde";
+  src: url("/assets/fonts/OpenRunde-Semibold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Open Runde";
+  src: url("/assets/fonts/OpenRunde-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------- light (and every theme-independent token): globals.css :root, from line 1362 ---------- */
+:root,
+[data-theme="light"] {
+  --radius: 0.5rem;
+  --background: #fafafa;
+
+  /* ── Design System: Component color tokens (from Figma) ── */
+  --ds-brand-50: #e8efff;
+  --ds-brand-100: #d5e2ff;
+  --ds-brand-200: #b3c8ff;
+  --ds-brand-300: #85a3ff;
+  --ds-brand-400: #5672ff;
+  --ds-brand-500: #2f43ff;
+  --ds-brand-600: #0c11ff;
+  --ds-brand-border: #1735b0;
+  --ds-brand-glow: rgba(53, 130, 255, 0.95);
+
+  --ds-red-500: #ef4444;
+  --ds-red-600: #dc2626;
+  --ds-red-border: #991b1b;
+  --ds-red-glow: rgba(239, 68, 68, 0.6);
+
+  --ds-green-500: #22c55e;
+  --ds-green-600: #16a34a;
+  --ds-green-border: #15803d;
+  --ds-green-glow: rgba(34, 197, 94, 0.6);
+
+  --ds-neutral-100: #f4f4f5;
+  --ds-neutral-200: #e4e4e7;
+  --ds-neutral-700: #3f3f46;
+  --ds-neutral-900: #18181b;
+
+  --ds-gray-06: #333333;
+  --ds-black: #171619;
+
+  --ds-text-primary: #18181b;
+  --ds-text-white: #ffffff;
+  --ds-text-brand: #2f43ff;
+  --ds-text-secondary: #3f3f46;
+
+  --ds-alpha-black-5: rgba(23, 22, 25, 0.05);
+  --ds-alpha-black-10: rgba(23, 22, 25, 0.1);
+  --ds-alpha-black-15: rgba(23, 22, 25, 0.15);
+  --ds-alpha-black-25: rgba(23, 22, 25, 0.25);
+  --ds-alpha-black-50: rgba(23, 22, 25, 0.5);
+  --ds-alpha-white-5: rgba(255, 255, 255, 0.05);
+  --ds-alpha-white-15: rgba(255, 255, 255, 0.15);
+  --ds-alpha-white-35: rgba(255, 255, 255, 0.35);
+  --ds-alpha-white-50: rgba(255, 255, 255, 0.5);
+
+  /* Inner highlight applied as the top-left bevel on .ds-shell cards.
+     Defaults to solid white in light mode (a subtle inset sheen) and flips
+     to a faint white-alpha in dark mode so it doesn't read as a bright
+     line on near-black surfaces. */
+  --ds-shell-highlight: white;
+
+  --ds-white-1: #ffffff;
+  --ds-white-2: #f0f0f0;
+
+  --ds-focus-brand: #2450ff;
+
+  /* ── Phase 2: Surface, border, overlay tokens ── */
+  --ds-surface-primary: #fafafa;
+  /* Canvas dot-grid — kept close to the page surface so the grid reads as a
+     faint texture, not a prominent pattern. Dark value is set under .dark. */
+  --ds-canvas-dot: #e4e4e7;
+  --ds-surface-secondary: #f4f4f5;
+  /* ds-surface-card — auto-flipping "white-on-page" surface used by cards,
+     modals, dropdowns. Replaces the common `bg-white dark:bg-ds-neutral-900`
+     pairing so components don't need to manage both modes manually. */
+  --ds-surface-card: #ffffff;
+  /* ds-surface-raised — slightly elevated surface above page (for panels
+     that sit above primary). Flips on dark mode for contrast. */
+  --ds-surface-raised: #ffffff;
+  /* ds-surface-sunken — recessed surface (below page) for inset inputs. */
+  --ds-surface-sunken: #f4f4f5;
+  /* ds-surface-muted — lightest panel tint, for passive/secondary sections
+     inside cards. Dark counterpart is a subtle raise above card. */
+  --ds-surface-muted: #fafafa;
+  /* ds-surface-hover — interactive hover/focus backdrop (nav items, menu
+     rows, etc). Warmer than surface-muted in light mode (a touch of
+     black-alpha to signal affordance) and a touch lighter than card
+     surface in dark mode so rows stay subtly pressed. */
+  --ds-surface-hover: rgba(23, 22, 25, 0.05);
+
+  --ds-text-tertiary: #424242;
+
+  --ds-border: rgba(23, 22, 25, 0.1); /* default border — auto-flips in dark */
+  --ds-border-subtle: rgba(23, 22, 25, 0.05);
+  /* ds-border-default — primary card/input border. Auto-flips to a visible
+     dark-mode border so `border-ds-border-default` works in both themes. */
+  --ds-border-default: #e4e4e7;
+  /* ds-border-muted — softer border (dividers). */
+  --ds-border-muted: rgba(23, 22, 25, 0.08);
+
+  --ds-shadow-card-halo: 0px 1px 1px rgba(255, 255, 255, 0.5);
+  --ds-shadow-debossed: inset 1px 1px 2px rgba(23, 22, 25, 0.1), inset -1px -1px 2px rgba(255, 255, 255, 0.1);
+  --ds-shadow-overlay: 0 25px 50px -12px rgba(23, 22, 25, 0.25);
+
+  --ds-neutral-300: #d4d4d8;
+  --ds-neutral-800: #27272a;
+
+  /* ── Phase 3: Text scale + extended neutrals + cream surface ── */
+  --ds-text-muted: #737373; /* zinc-500 — secondary label text */
+  --ds-text-subtle: #52525b; /* zinc-600 — body text */
+  --ds-text-disabled: #a1a1aa; /* zinc-400 — disabled / placeholder */
+  --ds-text-slate: #565e80; /* marketing slate (legacy b3os-blue-grey) */
+  --ds-text-faint: #b3b3b3; /* legacy b3os-medium-grey */
+
+  --ds-neutral-150: #e5e5e5; /* between 100 and 200 */
+  --ds-neutral-250: #d9d9d9; /* legacy b3os-light-grey */
+
+  --ds-surface-cream: #f3f3f1; /* warm off-white for marketing accents */
+
+  /* Pure-black alpha (UI overlays / shadows from neutral-black sources) */
+  --ds-alpha-shadow-5: rgba(0, 0, 0, 0.05);
+  --ds-alpha-shadow-10: rgba(0, 0, 0, 0.1);
+  --ds-alpha-shadow-15: rgba(0, 0, 0, 0.15);
+  --ds-alpha-shadow-25: rgba(0, 0, 0, 0.25);
+  --ds-alpha-shadow-30: rgba(0, 0, 0, 0.3);
+  --ds-alpha-shadow-50: rgba(0, 0, 0, 0.5);
+
+  /* B3 brand-tinted alpha (17,23,46 ~ brand navy) for elevated cards */
+  --ds-alpha-b3-5: rgba(17, 23, 46, 0.05);
+  --ds-alpha-b3-10: rgba(17, 23, 46, 0.1);
+
+  /* Additional shadow tokens for recurring patterns */
+  --ds-shadow-soft: 0 1px 2px var(--ds-alpha-black-5);
+  --ds-shadow-soft-pressed: 0 1px 2px var(--ds-alpha-black-5), inset 0 -2px 0 var(--ds-alpha-black-5);
+  --ds-shadow-elev-1: 0px 1px 3px 0px var(--ds-alpha-shadow-10), 0px 1px 2px -1px var(--ds-alpha-shadow-10);
+  --ds-shadow-elev-2: 0 4px 6px -2px var(--ds-alpha-shadow-10);
+  --ds-shadow-elev-3:
+    0px 10px 21px var(--ds-alpha-shadow-5), 0px 38px 38px rgba(0, 0, 0, 0.06), 0px 86px 52px rgba(0, 0, 0, 0.04);
+  --ds-shadow-dropdown: 0 10px 24px -20px rgba(15, 23, 42, 0.4);
+  /* Sticky-banner dropdown — heavier drop for floating UI (VersionBanner, LiveListeningBanner) */
+  --ds-shadow-dropdown-strong: 0 10px 24px -20px rgba(15, 23, 42, 0.4);
+  /* Pill chrome — light: soft drop, dark: inner-highlight + drop */
+  --ds-shadow-pill: 0 1px 2px var(--ds-alpha-black-5);
+  /* Raised input inset — light: regular inset, dark: inset + outer drop */
+  --ds-shadow-input-inset-raised: inset 0 1px 3px rgba(0, 0, 0, 0.08);
+  /* Bento / small-card mid elevation */
+  --ds-shadow-elev-soft-mid: 0px 4px 10px -1px rgba(23, 22, 25, 0.1), 0px 2px 4px -2px rgba(17, 23, 46, 0.06);
+  /* Cream surface drop (marketing bento backdrops) */
+  --ds-shadow-cream-card: 0px 29px 33px rgba(39, 44, 48, 0.04);
+  /* Status badge card inner-light (amber/red info panels) */
+  --ds-shadow-status-inner-light: inset 1px 1px 0 rgba(255, 255, 255, 0.5);
+  /* Brand progress bar glow stack (billing usage bar) */
+  --ds-shadow-brand-progress-glow:
+    0 14px 4px rgba(47, 67, 255, 0), 0 9px 4px rgba(47, 67, 255, 0.03), 0 5px 3px rgba(47, 67, 255, 0.11),
+    0 2px 2px rgba(47, 67, 255, 0.18), 0 1px 1px rgba(47, 67, 255, 0.21);
+  /* Progress bar track (outer top-highlight + inner top-shadow) */
+  --ds-shadow-progress-track: 0 1px 0 var(--ds-alpha-white-50), inset 0 1px 0 var(--ds-alpha-black-5);
+  /* Progress fill — inner ring + brand drop */
+  --ds-shadow-progress-fill-ring: 0 0 0 1px rgba(59, 130, 246, 0.08), 0 1px 3px rgba(37, 99, 235, 0.22);
+  /* Raised inset with positive x/y offset (pressed-tab variant) */
+  --ds-shadow-pressed-inset-raised: 1px 1px 3px rgba(0, 0, 0, 0.08);
+  /* Tab row bottom edge (segmented-control bezel) */
+  --ds-shadow-tab-edge: inset 0 -1px 0 var(--ds-alpha-black-5);
+  --ds-shadow-b3-card:
+    1px 8px 5px 0px var(--ds-alpha-b3-5), 0px 3px 3px 0px var(--ds-alpha-b3-10), 0px 1px 2px 0px var(--ds-alpha-b3-10);
+  --ds-shadow-b3-card-subtle: 1px 8px 5px 0px rgba(17, 23, 46, 0.02), 0px 3px 4px 0px rgba(17, 23, 46, 0.02);
+  --ds-shadow-b3-inner-pressed: inset 0px -2px 2px 0px var(--ds-alpha-b3-10);
+  --ds-shadow-inner-bloom: inset 0px 4px 4px -1px rgba(255, 255, 255, 0.2);
+  --ds-alpha-black-75: rgba(23, 22, 25, 0.75);
+
+  /* Floating / lift surfaces */
+  --ds-shadow-float-deep: 0 20px 60px rgba(0, 0, 0, 0.28);
+  --ds-shadow-float-mid: 0 14px 34px -14px rgba(24, 24, 27, 0.3);
+  --ds-shadow-lift: 0 12px 40px -28px rgba(24, 24, 27, 0.45);
+
+  /* Accent glows */
+  --ds-shadow-brand-glow-soft: 0 8px 24px rgba(37, 99, 235, 0.18);
+  --ds-shadow-brand-glow-ring: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 0 12px rgba(36, 80, 255, 0.2);
+  --ds-shadow-error-glow: 0 14px 32px rgba(239, 68, 68, 0.08);
+  --ds-shadow-error-button: 0 10px 24px -16px rgba(239, 68, 68, 0.9);
+  --ds-shadow-success-button: 0 10px 24px -16px rgba(34, 197, 94, 0.9);
+  --ds-shadow-success-ring: 0 0 0 3px rgba(34, 197, 94, 0.18);
+
+  /* Form input insets */
+  --ds-shadow-input-inset: inset 0 1px 3px rgba(0, 0, 0, 0.08);
+  --ds-shadow-input-inset-strong: inset 0 1px 3px rgba(0, 0, 0, 0.15), inset 0 0 1px rgba(0, 0, 0, 0.1);
+
+  /* Neumorphic (retro button + pressed dark-ring variants) */
+  --ds-shadow-neumorphic: -5px -5px 10px rgba(255, 255, 255, 0.4), 5px 5px 20px rgba(23, 22, 25, 0.2);
+  --ds-shadow-black-alt: 0 2px 4px -1px rgba(23, 22, 25, 0.5), 0 0 0 1px #424242;
+  --ds-shadow-pressed-dark: 0 3px 4px -1px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.1);
+
+  --ds-shadow-inset-ring-3: inset 0 0 0 3px;
+  --ds-shadow-white-pressed:
+    0 1px 2px var(--ds-alpha-black-5), inset 0 -2px 0 var(--ds-alpha-black-5), inset 0 0 0 1px var(--ds-neutral-300);
+  --ds-shadow-white-pressed-ring:
+    0 1px 2px var(--ds-alpha-black-5), inset 0 0 0 1px rgba(0, 0, 0, 0.18), inset 0 -2px 0 var(--ds-alpha-black-5);
+
+  /* Elevated hero cards (marketing) — large soft drops */
+  --ds-shadow-hero: 0px 18px 44px -34px rgba(23, 22, 25, 0.32);
+  --ds-shadow-hero-alt: 0px 18px 44px -34px rgba(23, 22, 25, 0.28);
+  --ds-shadow-hero-subtle: 0px 18px 44px -36px rgba(23, 22, 25, 0.22);
+  --ds-shadow-hero-lg: 0px 20px 56px -40px rgba(23, 22, 25, 0.32);
+  --ds-shadow-home-phone-frame: 0 16px 32px -12px rgba(23, 22, 25, 0.12);
+
+  /* Segmented button top-edge highlight (pure-white sharp line) */
+  --ds-shadow-edge-light: 0px 1px 0px 0px #ffffff;
+  --ds-shadow-edge-light-debossed:
+    0px 1px 0px 0px #ffffff, inset 1px 1px 2px 0px rgba(23, 22, 25, 0.1),
+    inset -1px -1px 2px 0px rgba(255, 255, 255, 0.1);
+  --ds-shadow-bottom-press: inset 0px -2px 0px 0px rgba(0, 0, 0, 0.05);
+  /* Combined top highlight + bottom press — inner bevel on small pills/buttons */
+  --ds-shadow-edge-bevel: inset 0px 2px 0px 0px rgba(255, 255, 255, 0.5), inset 0px -2px 0px 0px rgba(23, 22, 25, 0.05);
+  /* Brand button with glossy inner rim (brand chrome + inner-light) */
+  --ds-shadow-brand-glossy:
+    0 0 0 1px var(--ds-brand-border), 0 3px 4px -1px var(--ds-brand-glow), inset 0 1px 0 var(--ds-alpha-white-35);
+  /* White button with glossy inner rim (white chrome + inner-light) */
+  --ds-shadow-white-glossy:
+    0 3px 4px -1px var(--ds-alpha-black-15), 0 0 0 1px var(--ds-alpha-black-10), inset 0 1px 0 var(--ds-alpha-white-35);
+
+  /* Primary button chrome — light mode mirrors the legacy hardcoded
+     Tailwind values; dark mode overrides further down redefine these so
+     button drops/rings remain visible against near-black surfaces. */
+  --ds-shadow-brand: 0 0 0 1px var(--ds-brand-border), 0 3px 4px -1px var(--ds-brand-glow);
+  --ds-shadow-white: 0 3px 4px -1px var(--ds-alpha-black-15), 0 0 0 1px var(--ds-alpha-black-10);
+  --ds-shadow-black: 0 2px 4px -1px var(--ds-alpha-black-50), 0 0 0 1px var(--ds-gray-06);
+
+  /* Inactive step-indicator dot — top inner shadow + bottom hairline
+     highlight. Dark mode flips both into white-alpha so the bevel reads
+     on a near-black pill. */
+  --ds-shadow-step-dot-inactive: inset 0 1px 0 rgba(0, 0, 0, 0.05), 0 1px 0 rgba(255, 255, 255, 0.7);
+
+  /* Generic mid / large drops */
+  --ds-shadow-elev-mid: 0px 8px 12px 0px rgba(0, 0, 0, 0.06), 0px 2px 4px 0px rgba(0, 0, 0, 0.03);
+  --ds-shadow-elev-lg:
+    0px 12px 16px 0px rgba(0, 0, 0, 0.08), 0px 4px 6px 0px rgba(0, 0, 0, 0.03), 0px 2px 2px 0px rgba(0, 0, 0, 0.04);
+
+  /* Semantic status surface/border/text (aligned to Tailwind default scale) */
+  --ds-success-surface: #f0fdf4;
+  --ds-success-border: #bbf7d0;
+  --ds-success-text: #15803d;
+  --ds-success-accent: #16a34a;
+  --ds-warning-surface: #fff7ed;
+  --ds-warning-border: #fed7aa;
+  --ds-warning-text: #c2410c;
+  --ds-error-surface: #fef3f2;
+  --ds-error-border: #fecdca;
+  --ds-error-text: #b42318;
+  --ds-info-surface: #eef0ff;
+  --ds-info-border: #b3c8ff;
+  --ds-info-text: #2f43ff;
+
+  /* Mac-style window control chrome (desktop simulation) */
+  --ds-window-red: #ff5f57;
+  --ds-window-red-hover: #ff4136;
+  --ds-window-red-glyph: #990000;
+  --ds-window-amber: #febc2e;
+  --ds-window-amber-hover: #f0a000;
+  --ds-window-amber-glyph: #995700;
+  --ds-window-green: #28c840;
+  --ds-window-green-hover: #1aab29;
+  --ds-window-green-glyph: #006500;
+
+  /* Neutral zinc pass-throughs (Tailwind stds) for consistency */
+  --ds-zinc-500: #71717a;
+  --ds-zinc-600: #525252;
+  /* Dark code-surface backgrounds */
+  --ds-code-surface: #1e1e1e;
+  --ds-code-surface-raised: #282828;
+
+  /* Animation easing curves (Emil Kowalski recommended) */
+  --ease-out-quad: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --ease-out-quint: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
+  --ease-in-out-quart: cubic-bezier(0.77, 0, 0.175, 1);
+
+  /* Duration scale */
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+  --on-surface-1: #fcfcfc;
+  --on-surface-2: #efefef;
+  --on-surface-3: #e7e9eb;
+  --on-surface: #f6f6f6;
+  --on-surface-dark: #1a1d1f;
+  --on-surface-pure: #ffffff;
+  --on-surface-btn: #ffffff;
+  --on-surface-primary-alt: #ffffff;
+  --border-secondary: #e4e4e7;
+  --stroke: #efefef;
+  --primary: #1a1d1f;
+  --primary-fixed: #1a1d1f;
+  --secondary: #6f767e;
+  --tertiary: #a7acb0;
+  --white-fixed: #fcfcfc;
+  --light: #fcfcfc;
+  --n-8: #f4f4f4;
+  --brand-50: #d5e5fd;
+  --brand-100: #d8f0ff;
+  --brand-200: #8dbaf9;
+  --brand-700: #0948a0;
+  --red-100: #fde6d7;
+  --green-100: #dff9e8;
+  --border-brand: #2a9fff;
+  --yellow-100: #fee6c7;
+  --purple-100: #f5edfa;
+  --purple-300: #ddc3ef;
+  --yellow-50: #fff6eb;
+  --dune: #f0eae3;
+  --green: #32ae60;
+  --red: #f04d1a;
+  --purple: #b981da;
+  --yellow: #fba94b;
+  --brand: #0c68e9;
+  --content-primary: #18181b;
+  --content-secondary: #3f3f46;
+  --content-placeholder: #70707b;
+  --success-50: #f3fee7;
+  --success-200: #d0f8ab;
+  --success-700: #3b7c0f;
+  --warning-50: #fefbe8;
+  --warning-200: #feee95;
+  --warning-700: #a15c07;
+  --error-50: #fef3f2;
+  --error-200: #fecdca;
+  --error-700: #b42318;
+  --brand-tertiary: #0b57c2;
+  --fg-quaternary: #a0a0ab;
+  --toast-surface: #ffffff;
+  --toast-surface-border: rgba(0, 0, 0, 0.08);
+  --toast-surface-shadow-primary: rgba(0, 0, 0, 0.08);
+  --toast-surface-shadow-secondary: rgba(0, 0, 0, 0.04);
+  --toast-title-color: rgba(0, 0, 0, 0.88);
+  --toast-body-color: rgba(0, 0, 0, 0.6);
+  --toast-muted-color: rgba(0, 0, 0, 0.44);
+  --toast-success: #1a7f3f;
+  --toast-loading: #6f767e;
+  --toast-error: #c4320a;
+  --toast-warning: #a15c07;
+  --toast-info: #0c68e9;
+  --toast-action: #0b57c2;
+  --chart-1: #2450ff;
+  --chart-2: #06b6d4;
+  --chart-3: #22c55e;
+  --chart-4: #a855f7;
+  --chart-5: #f59e0b;
+  --chart-background: #ffffff;
+  --chart-foreground: #111827;
+  --chart-foreground-muted: #71717a;
+  --chart-line-primary: var(--chart-1);
+  --chart-line-secondary: var(--chart-2);
+  --chart-crosshair: rgba(36, 80, 255, 0.35);
+  --chart-grid: rgba(15, 23, 42, 0.08);
+  --chart-tooltip-background: rgba(9, 9, 11, 0.92);
+  --chart-tooltip-foreground: #fafafa;
+  --chart-tooltip-muted: rgba(250, 250, 250, 0.72);
+  --chart-marker-background: #ffffff;
+  --chart-marker-border: rgba(36, 80, 255, 0.18);
+  --chart-marker-foreground: #111827;
+  --chart-marker-badge-background: rgba(255, 255, 255, 0.92);
+  --chart-marker-badge-foreground: #111827;
+  --chart-segment-background: rgba(36, 80, 255, 0.08);
+  --chart-segment-line: rgba(36, 80, 255, 0.24);
+  --chart-ring-background: rgba(36, 80, 255, 0.12);
+  --chart-label: #71717a;
+}
+
+/* ---------- dark: globals.css ".dark, :root[data-theme=dark]" (ds-* semantic flips), from line 1740 ---------- */
+.dark,
+[data-theme="dark"] {
+  /* Surfaces — page flips to near-black, cards to zinc-900 */
+  --ds-surface-primary: #09090b; /* page / app shell */
+  /* Muted gray so the dot grid stays a subtle texture on the near-black page —
+     visible, but far softer than React Flow's default. */
+  --ds-canvas-dot: #3d3d46;
+  --ds-surface-secondary: #18181b; /* card-on-page */
+  --ds-surface-cream: #1c1c1a; /* warm dark (marketing) */
+  --ds-surface-card: #18181b; /* primary card surface */
+  --ds-surface-raised: #1f1f23; /* raised above card */
+  --ds-surface-sunken: #09090b; /* recessed below card */
+  --ds-surface-muted: #131316; /* subtle passive panel */
+  --ds-surface-hover: rgba(255, 255, 255, 0.06); /* nav/menu-row hover */
+
+  /* Text — invert so body/heading copy reads white-on-dark */
+  --ds-text-primary: #fafafa;
+  --ds-text-secondary: #d4d4d8; /* zinc-300 */
+  --ds-text-tertiary: #a1a1aa; /* zinc-400 */
+  --ds-text-muted: #a1a1aa; /* zinc-400 — still muted vs primary */
+  --ds-text-subtle: #e4e4e7; /* zinc-200 — body copy */
+  --ds-text-disabled: #52525b; /* zinc-600 */
+  --ds-text-faint: #71717a; /* zinc-500 */
+  --ds-text-slate: #8b97bf; /* desaturated brand-slate */
+  --ds-text-brand: #8b97ff; /* lighter brand-blue for AA contrast */
+
+  /* Borders — flip from black-alpha to white-alpha so they remain visible.
+     Dark borders sit between zinc-800 and zinc-700 for crisp card edges on
+     near-black surfaces; white-alpha variants handle overlay/sunken wells. */
+  --ds-border: rgba(255, 255, 255, 0.12);
+  --ds-border-subtle: rgba(255, 255, 255, 0.06);
+  --ds-border-default: #2d2d33;
+  --ds-border-muted: rgba(255, 255, 255, 0.08);
+
+  /* Dim the .ds-shell inner bevel so near-black cards don't show a bright
+     white top-left line. */
+  --ds-shell-highlight: rgba(255, 255, 255, 0.04);
+
+  /* Status surfaces — dim backgrounds, keep text vivid for contrast */
+  --ds-success-surface: rgba(22, 163, 74, 0.14);
+  --ds-success-border: rgba(22, 163, 74, 0.36);
+  --ds-success-text: #86efac; /* green-300 */
+  --ds-success-accent: #22c55e; /* green-500 */
+  --ds-warning-surface: rgba(234, 88, 12, 0.14);
+  --ds-warning-border: rgba(234, 88, 12, 0.36);
+  --ds-warning-text: #fdba74; /* orange-300 */
+  --ds-error-surface: rgba(220, 38, 38, 0.14);
+  --ds-error-border: rgba(220, 38, 38, 0.36);
+  --ds-error-text: #fca5a5; /* red-300 */
+  --ds-info-surface: rgba(47, 67, 255, 0.18);
+  --ds-info-border: rgba(47, 67, 255, 0.4);
+  --ds-info-text: #a5b4fc; /* indigo-300 */
+
+  /* Shadows — mostly unchanged (they use rgba which works on any bg), but
+     the skeuomorphic rim shadows need more contrast on dark surfaces.
+     Inner-light highlights become subtler so they don't glow too brightly. */
+  --ds-shadow-card-halo: 0px 1px 1px rgba(255, 255, 255, 0.04);
+  --ds-shadow-debossed: inset 1px 1px 2px rgba(0, 0, 0, 0.4), inset -1px -1px 2px rgba(255, 255, 255, 0.04);
+  --ds-shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --ds-shadow-soft-pressed: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+  --ds-shadow-elev-1: 0px 1px 3px 0px rgba(0, 0, 0, 0.45), 0px 1px 2px -1px rgba(0, 0, 0, 0.4);
+  --ds-shadow-elev-2: 0 4px 6px -2px rgba(0, 0, 0, 0.45);
+  --ds-shadow-dropdown: 0 10px 24px -8px rgba(0, 0, 0, 0.6);
+  /* Strong banner drop (sticky floating UI) */
+  --ds-shadow-dropdown-strong: 0 14px 28px -18px rgba(0, 0, 0, 0.85);
+  /* Pill chrome — dark: inner top-highlight + deep drop */
+  --ds-shadow-pill: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 18px -14px rgba(0, 0, 0, 0.8);
+  /* Raised input inset — dark: stronger inset + outer drop */
+  --ds-shadow-input-inset-raised: inset 0 0 4px rgba(0, 0, 0, 0.45), 0 10px 24px -16px rgba(0, 0, 0, 0.9);
+  /* Bento / small-card mid elevation (dark) */
+  --ds-shadow-elev-soft-mid: 0px 4px 10px -1px rgba(0, 0, 0, 0.5), 0px 2px 4px -2px rgba(0, 0, 0, 0.4);
+  /* Cream surface drop (dark — barely visible on dark bg, keep subtle) */
+  --ds-shadow-cream-card: 0px 29px 33px rgba(0, 0, 0, 0.3);
+  /* Status badge card inner-light (subtler rim on dark) */
+  --ds-shadow-status-inner-light: inset 1px 1px 0 rgba(255, 255, 255, 0.05);
+  /* Brand progress bar glow stack (dark — brand lightens, glow intensifies) */
+  --ds-shadow-brand-progress-glow:
+    0 14px 4px rgba(96, 165, 250, 0), 0 9px 4px rgba(96, 165, 250, 0.04), 0 5px 3px rgba(96, 165, 250, 0.14),
+    0 2px 2px rgba(96, 165, 250, 0.22), 0 1px 1px rgba(96, 165, 250, 0.26);
+  /* Progress bar track (dark — no outer highlight, stronger inner shadow) */
+  --ds-shadow-progress-track: inset 0 1px 0 rgba(0, 0, 0, 0.35);
+  /* Progress fill — inner ring + brand drop (dark) */
+  --ds-shadow-progress-fill-ring: 0 0 0 1px rgba(96, 165, 250, 0.08), 0 1px 3px rgba(37, 99, 235, 0.28);
+  /* Raised inset with positive x/y offset (dark) */
+  --ds-shadow-pressed-inset-raised: 1px 1px 3px rgba(0, 0, 0, 0.3);
+  /* Tab row bottom edge (dark) */
+  --ds-shadow-tab-edge: inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+  --ds-shadow-overlay: 0 25px 50px -12px rgba(0, 0, 0, 0.75);
+
+  /* Primary button chrome (dark) — drops darken so they read against
+     near-black surfaces; rings flip to subtle white-alpha so the rim
+     doesn't fade into the page. */
+  --ds-shadow-brand:
+    0 0 0 1px rgba(96, 130, 255, 0.45), 0 3px 8px -1px rgba(0, 0, 0, 0.65), 0 6px 16px -4px rgba(36, 80, 255, 0.45);
+  --ds-shadow-black:
+    0 3px 6px -1px rgba(0, 0, 0, 0.7), 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
+
+  /* White button chrome → in dark, "white" becomes a dim raised surface */
+  --ds-shadow-white: 0 3px 6px -1px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+
+  /* Inactive step-indicator dot (dark) — top inner shadow goes deeper
+     black; the bottom hairline becomes a faint white-alpha so it reads
+     as a soft top-edge highlight on a near-black pill. */
+  --ds-shadow-step-dot-inactive: inset 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 0 rgba(255, 255, 255, 0.04);
+  --ds-shadow-white-pressed:
+    0 1px 2px rgba(0, 0, 0, 0.35), inset 0 -2px 0 rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --ds-shadow-white-pressed-ring:
+    0 1px 2px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.12), inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+  --ds-shadow-white-glossy:
+    0 3px 4px -1px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+  /* Input inset — needs to read as sunken on dark surfaces */
+  --ds-shadow-input-inset: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  --ds-shadow-input-inset-strong: inset 0 1px 3px rgba(0, 0, 0, 0.55), inset 0 0 1px rgba(0, 0, 0, 0.4);
+
+  /* Inner light becomes a subtle top-edge highlight on dark raised surfaces */
+  --ds-shadow-inner-light: inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+
+  /* Combined chrome-on-pill token — top highlight + bottom press */
+  --ds-shadow-edge-bevel: inset 0px 2px 0px 0px rgba(255, 255, 255, 0.04), inset 0px -2px 0px 0px rgba(0, 0, 0, 0.35);
+  --ds-shadow-bottom-press: inset 0px -2px 0px 0px rgba(0, 0, 0, 0.35);
+  --ds-shadow-edge-light: 0px 1px 0px 0px rgba(255, 255, 255, 0.04);
+  --ds-shadow-edge-light-debossed:
+    0px 1px 0px 0px rgba(255, 255, 255, 0.04), inset 1px 1px 2px 0px rgba(0, 0, 0, 0.4),
+    inset -1px -1px 2px 0px rgba(255, 255, 255, 0.04);
+
+  /* B3-tinted cards — dim the brand-navy shadow so it reads on black */
+  --ds-shadow-b3-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 3px 6px rgba(0, 0, 0, 0.35), 0 8px 16px rgba(0, 0, 0, 0.3);
+  --ds-shadow-b3-card-subtle: 0 1px 2px rgba(0, 0, 0, 0.3), 0 3px 4px rgba(0, 0, 0, 0.2);
+
+  /* Hero drops read as deeper vignettes on dark */
+  --ds-shadow-hero: 0px 18px 44px -24px rgba(0, 0, 0, 0.7);
+  --ds-shadow-hero-alt: 0px 18px 44px -24px rgba(0, 0, 0, 0.6);
+  --ds-shadow-hero-subtle: 0px 18px 44px -28px rgba(0, 0, 0, 0.5);
+  --ds-shadow-hero-lg: 0px 20px 56px -28px rgba(0, 0, 0, 0.7);
+
+  /* Float / lift — re-tune so drops remain perceptible */
+  --ds-shadow-float-deep: 0 20px 60px rgba(0, 0, 0, 0.6);
+  --ds-shadow-float-mid: 0 14px 34px -10px rgba(0, 0, 0, 0.55);
+  --ds-shadow-lift: 0 12px 40px -18px rgba(0, 0, 0, 0.7);
+
+  /* Neumorphic — dark variant uses shadow-down-dark + light-up-bright */
+  --ds-shadow-neumorphic: -5px -5px 10px rgba(255, 255, 255, 0.03), 5px 5px 20px rgba(0, 0, 0, 0.5);
+
+  /* Accent glows — slightly brighter so they still read on black */
+  --ds-shadow-brand-glow-soft: 0 8px 24px rgba(47, 67, 255, 0.35);
+  --ds-shadow-brand-glow-ring: 0 0 0 1px rgba(139, 151, 255, 0.3), 0 0 12px rgba(47, 67, 255, 0.4);
+}
+
+/* ---------- dark: globals.css ":root[data-theme=dark]" (legacy theme-* and toast tokens), from line 1888 ---------- */
+.dark,
+[data-theme="dark"] {
+  --background: #09090b;
+  --on-surface-1: #1a1d1f;
+  --on-surface-2: #272b30;
+  --on-surface-3: #313639;
+  --on-surface: #222628;
+  --on-surface-dark: #1a1d1f;
+  --on-surface-pure: #1a1d1f;
+  --on-surface-btn: #131316;
+  --on-surface-primary-alt: #18181b;
+  --border-secondary: #26272b;
+  --stroke: #272b30;
+  --primary: #fcfcfc;
+  --primary-fixed: #1a1d1f;
+  --secondary: #6f767e;
+  --tertiary: #5d6267;
+  --white-fixed: #fcfcfc;
+  --light: #1a1d1f;
+  --n-8: #111315;
+  --brand-50: #031633;
+  --brand-100: #2a323f;
+  --brand-200: #07387c;
+  --brand-700: #67a4f7;
+  --red-100: #6a5550;
+  --green-100: rgba(68, 90, 76, 0.57);
+  --border-brand: #2a9fff;
+  --yellow-100: #957a6c;
+  --purple-100: rgba(113, 88, 126, 0.38);
+  --purple-300: #a375c3;
+  --yellow-50: #82776b;
+  --dune: #272c30;
+  --content-primary: #fafafa;
+  --content-secondary: #d1d1d6;
+  --content-placeholder: #70707b;
+  --utility-brand: #67a4f7;
+  --success-50: #15290a;
+  --success-200: #326212;
+  --success-700: #a6ef67;
+  --warning-50: #542c0d;
+  --warning-200: #854a0e;
+  --warning-700: #fde272;
+  --error-50: #55160c;
+  --error-200: #912018;
+  --error-700: #fda29b;
+  --brand-tertiary: #a0a0ab;
+  --fg-quaternary: #51525c;
+  --toast-surface: #17191d;
+  --toast-surface-border: rgba(255, 255, 255, 0.1);
+  --toast-surface-shadow-primary: rgba(0, 0, 0, 0.32);
+  --toast-surface-shadow-secondary: rgba(0, 0, 0, 0.24);
+  --toast-title-color: rgba(255, 255, 255, 0.96);
+  /* Bumped body/muted opacity from 0.78/0.5 — the tinted upper area of
+     the toast gradient (info/success/warning) washed out the original
+     white alpha so description copy was hard to read (@faith's bug). */
+  --toast-body-color: rgba(255, 255, 255, 0.92);
+  --toast-muted-color: rgba(255, 255, 255, 0.68);
+  --toast-success: #4ade80;
+  --toast-loading: #9ca3af;
+  --toast-error: #fca5a5;
+  --toast-warning: #fbbf24;
+  --toast-info: #60a5fa;
+  --toast-action: #67a4f7;
+}
+
+/* ---------- dark: globals.css ".dark, :root[data-theme=dark]" (chart tokens), from line 1955 ---------- */
+.dark,
+[data-theme="dark"] {
+  --chart-1: #7ea4ff;
+  --chart-2: #67e8f9;
+  --chart-3: #4ade80;
+  --chart-4: #c084fc;
+  --chart-5: #fbbf24;
+  --chart-background: #09090b;
+  --chart-foreground: #e5e7eb;
+  --chart-foreground-muted: #a1a1aa;
+  --chart-line-primary: var(--chart-1);
+  --chart-line-secondary: var(--chart-2);
+  --chart-crosshair: rgba(126, 164, 255, 0.42);
+  --chart-grid: rgba(255, 255, 255, 0.08);
+  --chart-tooltip-background: rgba(24, 24, 27, 0.94);
+  --chart-tooltip-foreground: #fafafa;
+  --chart-tooltip-muted: rgba(250, 250, 250, 0.68);
+  --chart-marker-background: #18181b;
+  --chart-marker-border: rgba(126, 164, 255, 0.26);
+  --chart-marker-foreground: #fafafa;
+  --chart-marker-badge-background: rgba(24, 24, 27, 0.94);
+  --chart-marker-badge-foreground: #fafafa;
+  --chart-segment-background: rgba(126, 164, 255, 0.12);
+  --chart-segment-line: rgba(126, 164, 255, 0.34);
+  --chart-ring-background: rgba(126, 164, 255, 0.16);
+  --chart-label: #a1a1aa;
+}
+
+/* The original's component classes (globals.css @layer components, tailwind.config.ts addComponents) are the ds
+   stylesheet's since X3: src/ds/components.css, placed where Tailwind 3 placed them (NOTES/ds-extraction.md). */

@@ -1,0 +1,41 @@
+/* =============================================================================
+   B3OS beta: Tailwind v4 entry (verified against tailwindcss 4.3.3)
+   Import order: tailwind, then tokens, then the B3OS recipes.
+   ========================================================================== */
+@import "tailwindcss";
+@import "./tokens.css";
+/* The original B3OS tokens and its Tailwind theme (EXTRACT X1); tokens.css points at them. */
+@import "./ds-theme.css";
+@import "./ds.css";
+@import "./recipes.css";
+
+/* The dark variant and the @theme blocks (theme-vars.css: also read by src/ds/utilities.css). */
+@import "./theme-vars.css";
+
+@layer base {
+  html {
+    background: var(--b3-bg);
+    color: var(--b3-ink);
+    font-family: var(--b3-font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection { background: var(--b3-accent-soft); color: var(--b3-ink); }
+  :focus-visible { outline: 2px solid var(--b3-focus); outline-offset: 2px; }
+}
+
+/* iOS zooms inputs under 16px and never zooms back (Sean's mobile floor).
+   Unlayered on purpose: inside @layer base it would lose to every text-* utility. */
+@media (max-width: 767px) {
+  input, select, textarea { font-size: 16px !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

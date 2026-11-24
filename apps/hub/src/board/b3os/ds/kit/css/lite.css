@@ -1,0 +1,96 @@
+/* The kit's lite sheet (perf audit 11-23): the type scale, bones, Reveal and EaseHeight, the working wait, all that a page
+   which only swaps a skeleton draws (sign-in), in the base layer. Every other kit module imports kit.css too, which keeps
+   each of these rules in its place, so a page with both sheets has the original cascade; with this one alone, an area's
+   own rule still wins, as when the whole kit loaded first. kit-logic.test.ts holds each rule here to its copy there. */
+@layer base {
+  /* The type scale (the kit's sheet defines it too). */
+  :root {
+    --kit-text-caption: 12px;
+    --kit-text-small: 13px;
+    --kit-text-ui: 14px;
+    --kit-text-body: 16px;
+    --kit-text-title: 20px;
+    --kit-text-display: 24px;
+  }
+  .kit-bone {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    border-radius: 5px;
+    background-color: var(--ds-neutral-200);
+  }
+  [data-theme="dark"] .kit-bone {
+    background-color: var(--ds-neutral-800);
+  }
+  /* The sheen: a band crossing the bone by a transform, on the compositor; a background-position sheen repainted every
+     bone on every frame (about 100 ms of a phone's load at 4x CPU: perf round 2). */
+  .kit-bone::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 60%;
+    background-image: linear-gradient(90deg, transparent 0%, rgb(255 255 255 / 0.55) 50%, transparent 100%);
+    transform: translateX(-100%);
+    animation: kit-sheen 1.4s ease-in-out infinite;
+  }
+  [data-theme="dark"] .kit-bone::after {
+    background-image: linear-gradient(90deg, transparent 0%, rgb(255 255 255 / 0.06) 50%, transparent 100%);
+  }
+  @keyframes kit-sheen {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(167%);
+    }
+  }
+}
+@layer base {
+  @media (prefers-reduced-motion: reduce) {
+    .kit-bone::after {
+      display: none;
+    }
+  }
+}
+@layer base {
+  .kit-reveal {
+    position: relative;
+    overflow: clip;
+    overflow-clip-margin: 8px;
+    isolation: isolate;
+  }
+  .kit-reveal__ghost {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: -1;
+    pointer-events: none;
+    animation: kit-fade-out 120ms ease-out forwards;
+  }
+  .kit-bone--inline {
+    display: inline-block;
+    height: 12px;
+    vertical-align: middle;
+  }
+  .kit-bone-line {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1lh;
+  }
+  .kit-working {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font: 500 var(--kit-text-small) / 20px var(--b3-font-sans);
+    color: var(--b3-ink-2);
+  }
+  .kit-bone.kit-text-bone {
+    display: inline;
+    color: transparent;
+    border-radius: 4px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    user-select: none;
+  }
+}

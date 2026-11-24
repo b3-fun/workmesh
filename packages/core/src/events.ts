@@ -32,6 +32,9 @@ export const DETAIL_LIMITS = {
   command: 4000,
   prompt: 8000,
   toolResponseText: 8000,
+  transcriptPath: 1024,
+  desc: 1000,
+  lastAssistantMessage: 8000,
 } as const;
 
 /**
@@ -58,6 +61,16 @@ export const sessionEventDetailSchema = z.object({
   toolResponseText: z.string().max(DETAIL_LIMITS.toolResponseText).optional(),
   /** The tool call succeeded, when the agent reports it. */
   ok: z.boolean().optional(),
+  /**
+   * Raw one-line description of a tool call: Bash `description`, Agent/Task
+   * `description`, WebSearch query, WebFetch host, Skill name, "server · tool"
+   * for MCP tools. The hub forwarder redacts it before anything is queued.
+   */
+  desc: z.string().max(DETAIL_LIMITS.desc).optional(),
+  /** Absolute path of the session transcript (Claude Code) or rollout file (Codex). */
+  transcriptPath: z.string().max(DETAIL_LIMITS.transcriptPath).optional(),
+  /** The turn's final assistant text, when a Stop payload carries it (Codex). */
+  lastAssistantMessage: z.string().max(DETAIL_LIMITS.lastAssistantMessage).optional(),
 });
 export type SessionEventDetail = z.infer<typeof sessionEventDetailSchema>;
 
@@ -101,6 +114,18 @@ export const sessionEventSchema = z.object({
   detail: sessionEventDetailSchema.optional(),
 });
 export type SessionEvent = z.infer<typeof sessionEventSchema>;
+
+/**
+ * Shortens text to at most `max` characters, keeping its start (prompts and
+ * messages read from the top). Never splits a surrogate pair.
+ */
+export function truncateHead(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let end = max;
+  const code = text.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+  return text.slice(0, end);
+}
 
 /**
  * Shortens text to at most `max` characters, keeping its start and end (a

@@ -13,3 +13,5 @@
   Co-Authored-By line for the model that wrote them.
 - **UI:** Radix primitives for dialogs, menus and form controls; no native `alert()`/`confirm()`. B3 brand per
   `docs/research.html`.
+
+- **Contributing:** start with `CONTRIBUTING.md` (both repos, Linear, develop, deploy, secrets, privacy).

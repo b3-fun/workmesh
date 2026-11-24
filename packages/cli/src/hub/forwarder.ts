@@ -405,7 +405,12 @@ export class HubForwarder {
     ];
     this.addIssues(t, ids);
 
-    const label = hubLabel(event.activity, new Set(sharedFiles.map((f) => path.basename(f.file))));
+    // Tool names show only when this event is B3 work: the session's cwd is
+    // shared, or the event touched a shared file (SPEC 3.3 rule 4).
+    const toolNames = !!t.cwdTarget || sharedFiles.length > 0;
+    const label = hubLabel(event.activity, new Set(sharedFiles.map((f) => path.basename(f.file))), {
+      toolNames,
+    });
     if (event.activity) t.label = { raw: event.activity, hub: label };
 
     if (!t.shared) return; // rule 3: unshared sessions send nothing
@@ -531,7 +536,8 @@ export class HubForwarder {
       s.orchestrator && this.sessions.get(s.orchestrator)?.shared ? s.orchestrator : undefined;
     let activity: string | undefined;
     if (!ended && s.activity) {
-      activity = t.label?.raw === s.activity ? t.label.hub : hubLabel(s.activity);
+      activity =
+        t.label?.raw === s.activity ? t.label.hub : hubLabel(s.activity, new Set(), { toolNames: !!t.cwdTarget });
     }
     return conform(
       hubSessionUpsertSchema,

@@ -115,7 +115,14 @@ describe("labels and tool names", () => {
     expect(hubLabel("running commands")).toBe("running commands");
     expect(hubLabel("editing vm.rs", new Set(["vm.rs"]))).toBe("editing vm.rs");
     expect(hubLabel("editing .env")).toBe("editing files");
-    expect(hubLabel("using mcp__linear__get_issue")).toBe("using mcp__linear__get_issue");
+    expect(hubLabel("using mcp__linear__get_issue")).toBe("using linear");
+    expect(hubLabel("using mcp__claude-in-chrome__browser_batch")).toBe("using claude-in-chrome");
+    expect(hubLabel("using mcp__plugin_slack_slack__slack_send_message")).toBe("using slack");
+    expect(hubLabel("using WebFetch")).toBe("using WebFetch");
+    // a session outside shared repos, on an event that touched no shared file
+    expect(hubLabel("using mcp__claude-in-chrome__browser_batch", new Set(), { toolNames: false })).toBe("working");
+    expect(hubLabel("editing notes.md", new Set(), { toolNames: false })).toBe("editing files");
+    expect(hubLabel("running commands", new Set(), { toolNames: false })).toBe("running commands");
     expect(hubLabel("I refactored the auth module and rotated the key")).toBeUndefined();
   });
   it("accepts plain tool names only", () => {

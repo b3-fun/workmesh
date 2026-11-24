@@ -240,15 +240,34 @@ export const SAFE_LABELS: ReadonlySet<string> = new Set([
 /**
  * The activity label the hub may see. Fixed labels pass; "editing <file>"
  * keeps the file name only when that file is in a shared repo (else "editing
- * files"); "using <ToolName>" passes for plain tool names. Anything else —
- * Codex notify's assistant text, custom free text — is dropped.
+ * files"); "using <ToolName>" passes for plain tool names, with MCP tools shown
+ * by server ("using mcp__linear__get_issue" → "using linear"). With
+ * `toolNames: false` (a session whose cwd isn't shared, on an event that touched
+ * no shared file) "using <ToolName>" becomes "working", so work outside shared
+ * repos doesn't show through the session's label. Anything else — Codex
+ * notify's assistant text, custom free text — is dropped.
  */
-export function hubLabel(raw: string | undefined, sharedBasenames: ReadonlySet<string> = new Set()): string | undefined {
+export function hubLabel(
+  raw: string | undefined,
+  sharedBasenames: ReadonlySet<string> = new Set(),
+  opts: { toolNames?: boolean } = {},
+): string | undefined {
   if (!raw) return undefined;
   if (SAFE_LABELS.has(raw)) return raw;
   const editing = /^editing (.+)$/.exec(raw);
   if (editing) return sharedBasenames.has(editing[1]!) ? raw.slice(0, 200) : "editing files";
   const using = /^using ([\w.:-]{1,64})$/.exec(raw);
-  if (using) return raw;
+  if (using) {
+    if (opts.toolNames === false) return "working";
+    return `using ${toolDisplayName(using[1]!)}`;
+  }
   return undefined;
+}
+
+/** "mcp__claude-in-chrome__browser_batch" → "claude-in-chrome"; "mcp__plugin_slack_slack__x" → "slack". */
+export function toolDisplayName(tool: string): string {
+  const mcp = /^mcp__(.+?)__/.exec(tool);
+  if (!mcp) return tool;
+  const parts = mcp[1]!.replace(/^plugin_/, "").split("_").filter(Boolean);
+  return parts[parts.length - 1] ?? tool;
 }

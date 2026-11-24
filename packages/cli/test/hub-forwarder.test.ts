@@ -90,6 +90,7 @@ function harness(over: { maxBuffer?: number; url?: string; useRealFetch?: boolea
     url: over.url ?? "https://hub.test",
     token: TOKEN,
     rule: RULE,
+    share: "metadata", // these tests cover the metadata-level rules (SPEC §3.3)
     includeDirs: [notes],
     excludeDirs: [priv],
     listSessions: () => store.list(),
@@ -621,6 +622,7 @@ describe("HubForwarder delivery (mock hub over HTTP)", () => {
       url: base,
       token: TOKEN,
       rule: RULE,
+      share: "metadata",
       listSessions: () => store.list(),
       getSession: (k) => store.get(k),
       batchIntervalMs: 20,

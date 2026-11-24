@@ -79,7 +79,7 @@ describe("installClaudeHooks", () => {
     expect(fs.readFileSync(settingsPath, "utf8")).toBe(afterFirst);
   });
 
-  it("treats a legacy bare-command install as already installed", () => {
+  it("repoints a legacy bare-command install to the absolute command, without duplicating it", () => {
     const legacyHooks: Record<string, unknown> = {};
     for (const event of CLAUDE_HOOK_EVENTS) {
       legacyHooks[event] = [
@@ -90,9 +90,24 @@ describe("installClaudeHooks", () => {
     fs.writeFileSync(settingsPath, original);
 
     const result = installClaudeHooks(settingsPath);
-    expect(result.changed).toBe(false);
-    expect(fs.readFileSync(settingsPath, "utf8")).toBe(original);
+    expect(result.changed).toBe(true);
+    const after = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
+    for (const event of CLAUDE_HOOK_EVENTS) {
+      expect(after.hooks[event]).toHaveLength(1);
+      expect(after.hooks[event]![0]!.hooks[0]!.command).toBe(claudeHookCommand());
+    }
     expect(areClaudeHooksInstalled(settingsPath)).toBe(true);
+    expect(installClaudeHooks(settingsPath).changed).toBe(false);
+  });
+
+  it("repoints an install under the old package path to the new one (agentblip → @b3os/workmesh)", () => {
+    const old = '"/usr/local/bin/node" "/usr/local/lib/node_modules/agentblip/dist/index.js" hook claude-code';
+    const hooks: Record<string, unknown> = {};
+    for (const event of CLAUDE_HOOK_EVENTS) hooks[event] = [{ hooks: [{ type: "command", command: old }] }];
+    fs.writeFileSync(settingsPath, JSON.stringify({ hooks }, null, 2));
+    expect(installClaudeHooks(settingsPath).changed).toBe(true);
+    const after = fs.readFileSync(settingsPath, "utf8");
+    expect(after).not.toContain("node_modules/agentblip/");
   });
 
   it("backs up the original file exactly once", () => {

@@ -3,7 +3,7 @@
 Your Slack status, synced with your local AI agent sessions. Each Claude Code, Codex, or custom agent session becomes a blip on your team's radar: `claude agent working`, `3 agents working`, `claude: finalizing CI/CD`.
 
 ```sh
-npm install -g agentblip
+npm install -g @b3os/workmesh
 agentblip setup            # pair with Slack, pick a privacy level, install hooks
 agentblip start --detach   # run the sync daemon
 agentblip status           # see live sessions and what your status would say

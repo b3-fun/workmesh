@@ -37,7 +37,7 @@ of lying.
 ## Quick start
 
 ```bash
-npm i -g agentblip
+npm i -g @b3os/workmesh
 agentblip setup           # walks through Slack connect + hook install
 agentblip start --detach  # daemon runs in the background
 ```

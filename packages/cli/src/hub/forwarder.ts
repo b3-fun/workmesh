@@ -327,7 +327,7 @@ export class HubForwarder {
     this.git = opts.git ?? new GitResolver({ now: this.now });
     this.listSessions = opts.listSessions;
     this.getSession = opts.getSession;
-    this.share = opts.share ?? "metadata";
+    this.share = opts.share ?? "conversation";
     this.codexSessionsDir = opts.codexSessionsDir ?? defaultCodexSessionsDir();
     this.turnRecordWaitMs = opts.turnRecordWaitMs ?? 5000;
     this.maxReadBytes = opts.maxReadBytes ?? MAX_READ_BYTES;

@@ -41,7 +41,7 @@ docs/              SELF_HOSTING.md, INTEGRATIONS.md, slack-app-manifest.json
 npm run typecheck   # RR typegen + tsc -b + all workspaces
 npm test            # vitest across workspaces + worker units
 npm run build       # Worker/site build
-npm run build -w agentblip   # CLI build
+npm run build -w @b3os/workmesh   # CLI build
 ```
 
 All four must pass — CI runs exactly these.

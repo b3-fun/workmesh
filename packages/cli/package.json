@@ -1,7 +1,7 @@
 {
-  "name": "agentblip",
+  "name": "@b3os/workmesh",
   "version": "0.7.0",
-  "description": "Your Slack status, synced with your local AI agent sessions — Claude Code, Codex, or any custom agent.",
+  "description": "Workmesh: your team's coding agents (Claude Code, Codex) and the people they work for, on one live board. Also syncs your Slack status. Formerly agentblip.",
   "type": "module",
   "license": "MIT",
   "author": "Sean Geng",
@@ -15,6 +15,7 @@
     "url": "https://github.com/b3-fun/agentblip/issues"
   },
   "bin": {
+    "workmesh": "./dist/index.js",
     "agentblip": "./dist/index.js"
   },
   "files": [
@@ -24,23 +25,26 @@
     "node": ">=20"
   },
   "keywords": [
+    "agents",
+    "ai",
+    "ai-agents",
+    "automation",
+    "claude",
+    "claude-code",
+    "cli",
+    "codex",
+    "coding-agents",
+    "daemon",
+    "developer-tools",
+    "hooks",
+    "multiplayer",
+    "presence",
+    "productivity",
     "slack",
     "slack-status",
     "status",
-    "presence",
-    "claude",
-    "claude-code",
-    "codex",
-    "ai",
-    "ai-agents",
-    "agents",
-    "coding-agents",
-    "developer-tools",
-    "productivity",
-    "cli",
-    "daemon",
-    "automation",
-    "hooks"
+    "team",
+    "workmesh"
   ],
   "scripts": {
     "build": "tsup",
@@ -60,5 +64,8 @@
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

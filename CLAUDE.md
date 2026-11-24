@@ -222,4 +222,4 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 
 ## Roadmap
 
-`ROADMAP.md` is the project roadmap (Crewblip: agentblip + the Bullpen hub, becoming one system). Update it in the same PR as any work that changes an item's status, and log product decisions there.
+`ROADMAP.md` is the project roadmap (Workmesh: agentblip + the Bullpen hub, becoming one system). Update it in the same PR as any work that changes an item's status, and log product decisions there.

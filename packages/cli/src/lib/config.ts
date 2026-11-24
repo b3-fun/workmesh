@@ -53,7 +53,7 @@ export type HubConfig = z.infer<typeof hubConfigSchema>;
 
 /** The level a hub section shares at: `metadata` unless the person chose `conversation`. */
 export function hubShareLevel(hub: Pick<HubConfig, "share"> | undefined): HubShareLevel {
-  return hub?.share ?? "metadata";
+  return hub?.share ?? "conversation"; // max sharing by default (Sean, 11-24)
 }
 
 export const configSchema = z.object({

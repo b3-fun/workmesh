@@ -534,17 +534,42 @@ export function claudeSettingsPath(): string {
   return path.join(os.homedir(), ".claude", "settings.json");
 }
 
+/** Our Claude Code hook command, under either name (agentblip, crewblip) and any install path. */
+export function isOurClaudeHook(command: unknown): command is string {
+  return typeof command === "string" && /agentblip|crewblip|workmesh/.test(command) && command.includes("hook claude-code");
+}
+
+/**
+ * Finds our hook in an event's entry list. When it points somewhere else (an
+ * older install path, the agentblip → @b3os/workmesh move), it is repointed
+ * to `command` in place. Returns whether ours was found and whether it changed.
+ */
+function refreshOurHook(entries: unknown, command: string): { found: boolean; updated: boolean } {
+  let found = false;
+  let updated = false;
+  if (!Array.isArray(entries)) return { found, updated };
+  for (const entry of entries) {
+    const hooks = (entry as { hooks?: unknown } | null)?.hooks;
+    if (!Array.isArray(hooks)) continue;
+    for (const hook of hooks) {
+      const h = hook as { command?: unknown } | null;
+      if (h && isOurClaudeHook(h.command)) {
+        found = true;
+        if (h.command !== command) {
+          (h as { command: string }).command = command;
+          updated = true;
+        }
+      }
+    }
+  }
+  return { found, updated };
+}
+
 function entryListHasAgentblip(entries: unknown): boolean {
   if (!Array.isArray(entries)) return false;
   return entries.some((entry) => {
-    if (typeof entry !== "object" || entry === null) return false;
-    const hooks = (entry as { hooks?: unknown }).hooks;
-    if (!Array.isArray(hooks)) return false;
-    return hooks.some((hook) => {
-      if (typeof hook !== "object" || hook === null) return false;
-      const command = (hook as { command?: unknown }).command;
-      return typeof command === "string" && command.includes("agentblip");
-    });
+    const hooks = (entry as { hooks?: unknown } | null)?.hooks;
+    return Array.isArray(hooks) && hooks.some((hook) => isOurClaudeHook((hook as { command?: unknown } | null)?.command));
   });
 }
 
@@ -582,7 +607,9 @@ export function installClaudeHooks(settingsPath = claudeSettingsPath()): HookIns
   const hookCommand = claudeHookCommand();
   for (const event of CLAUDE_HOOK_EVENTS) {
     const existing = hooks[event];
-    if (entryListHasAgentblip(existing)) continue;
+    const ours = refreshOurHook(existing, hookCommand);
+    if (ours.updated) changed = true;
+    if (ours.found) continue;
     const command = { type: "command", command: hookCommand };
     const entry = (MATCHER_EVENTS as readonly string[]).includes(event)
       ? { matcher: "*", hooks: [command] }

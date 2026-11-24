@@ -82,7 +82,18 @@ export function installCodexNotify(configPath = codexConfigPath()): CodexInstall
   let text = "";
   if (fs.existsSync(configPath)) text = fs.readFileSync(configPath, "utf8");
   if (/^\s*notify\s*=/m.test(text)) {
-    return text.includes("agentblip") ? "already-installed" : "manual";
+    if (!/^\s*notify\s*=.*(agentblip|crewblip|workmesh)/m.test(text)) return "manual";
+    // Only our own line is repointed (an older install path, the bare legacy
+    // command, or the agentblip → @b3os/workmesh move): exactly
+    // ["<node>", "<entry>", "hook", "codex"] or ["agentblip", "hook", "codex"].
+    // Another tool's notify that merely chains to us is left alone.
+    const ours = /^[ \t]*notify[ \t]*=[ \t]*\[[ \t]*"[^"\n]*"[ \t]*,[ \t]*(?:"[^"\n]*"[ \t]*,[ \t]*)?"hook"[ \t]*,[ \t]*"codex"[ \t]*\][ \t]*$/m;
+    const match = ours.exec(text);
+    if (!match || !/agentblip|crewblip|workmesh/.test(match[0])) return "already-installed";
+    const next = text.replace(ours, codexNotifyLine());
+    if (next === text) return "already-installed";
+    fs.writeFileSync(configPath, next);
+    return "installed";
   }
   const block = `# agentblip: surface Codex turns in your Slack status\n${codexNotifyLine()}\n`;
   // `notify` must be top-level TOML: if the file has [table] sections, appending
@@ -100,7 +111,7 @@ export function installCodexNotify(configPath = codexConfigPath()): CodexInstall
 export function isCodexNotifyInstalled(configPath = codexConfigPath()): boolean {
   try {
     const text = fs.readFileSync(configPath, "utf8");
-    return /^\s*notify\s*=.*agentblip/m.test(text);
+    return /^\s*notify\s*=.*(agentblip|crewblip|workmesh)/m.test(text);
   } catch {
     return false;
   }
@@ -466,18 +477,35 @@ function mapCodexEvent(
   }
 }
 
+/** Our Codex hooks.json command, under either name and any install path. */
+export function isOurCodexHook(command: unknown): command is string {
+  return typeof command === "string" && /agentblip|crewblip|workmesh/.test(command) && command.includes("codex-hooks");
+}
+
 function hookListHasAgentblip(entries: unknown): boolean {
   if (!Array.isArray(entries)) return false;
   return entries.some((entry) => {
     const hooks = (entry as { hooks?: unknown } | null)?.hooks;
-    return (
-      Array.isArray(hooks) &&
-      hooks.some((hook) => {
-        const command = (hook as { command?: unknown } | null)?.command;
-        return typeof command === "string" && command.includes("agentblip") && command.includes("codex-hooks");
-      })
-    );
+    return Array.isArray(hooks) && hooks.some((hook) => isOurCodexHook((hook as { command?: unknown } | null)?.command));
   });
+}
+
+/** Repoints our Codex hook commands to `command` in place; true when any changed. */
+function repointCodexHooks(entries: unknown, command: string): boolean {
+  let updated = false;
+  if (!Array.isArray(entries)) return false;
+  for (const entry of entries) {
+    const hooks = (entry as { hooks?: unknown } | null)?.hooks;
+    if (!Array.isArray(hooks)) continue;
+    for (const hook of hooks) {
+      const h = hook as { command?: unknown } | null;
+      if (h && isOurCodexHook(h.command) && h.command !== command) {
+        (h as { command: string }).command = command;
+        updated = true;
+      }
+    }
+  }
+  return updated;
 }
 
 export interface CodexHooksInstallResult {
@@ -516,6 +544,7 @@ export function installCodexHooks(hooksPath = codexHooksPath()): CodexHooksInsta
   const command = codexHookCommand();
   for (const event of CODEX_HOOK_EVENTS) {
     const list = hooks[event];
+    if (repointCodexHooks(list, command)) changed = true;
     if (hookListHasAgentblip(list)) continue;
     const entry = { hooks: [{ type: "command", command, timeout: codexHookTimeout(event) }] };
     if (Array.isArray(list)) list.push(entry);

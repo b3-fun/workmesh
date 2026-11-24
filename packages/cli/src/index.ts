@@ -37,7 +37,7 @@ function wrap<A extends unknown[]>(
 const program = new Command();
 
 program
-  .name("agentblip")
+  .name("workmesh")
   .description("Your Slack status, synced with your local AI agent sessions.")
   .version(pkg.version);
 

@@ -214,11 +214,19 @@ describe("installCodexNotify", () => {
     expect(fs.readFileSync(configPath, "utf8")).toBe(afterFirst);
   });
 
-  it("recognizes the legacy bare-command install as already installed", () => {
+  it("repoints the legacy bare-command install to the absolute command", () => {
     const legacy = 'notify = ["agentblip", "hook", "codex"]\n';
     fs.writeFileSync(configPath, legacy);
-    expect(installCodexNotify(configPath)).toBe("already-installed");
-    expect(fs.readFileSync(configPath, "utf8")).toBe(legacy);
+    expect(installCodexNotify(configPath)).toBe("installed");
+    expect(fs.readFileSync(configPath, "utf8")).toBe(`${codexNotifyLine()}\n`);
     expect(isCodexNotifyInstalled(configPath)).toBe(true);
+    expect(installCodexNotify(configPath)).toBe("already-installed");
+  });
+
+  it("leaves another tool's notify alone even when it chains to agentblip", () => {
+    const other = 'notify = ["/x/Client", "turn-ended", "--previous-notify", "[\\"node\\",\\"/x/agentblip/dist/index.js\\",\\"hook\\",\\"codex\\"]"]\n';
+    fs.writeFileSync(configPath, other);
+    expect(installCodexNotify(configPath)).toBe("already-installed");
+    expect(fs.readFileSync(configPath, "utf8")).toBe(other);
   });
 });

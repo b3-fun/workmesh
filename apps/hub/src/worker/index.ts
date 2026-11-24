@@ -85,6 +85,7 @@ app.post("/relay/pair/start", async (c) => {
     ipHash: await sha256Hex(`pair:${ip}`),
     machine: parsed.data.machine,
     client: parsed.data.client,
+    share: parsed.data.share ?? null,
     origin: new URL(c.req.url).origin,
   });
   return send(c, r);
@@ -168,8 +169,12 @@ app.get("/api/sessions/:hubKey/events", async (c) => {
 
 app.get("/api/stream", async (c) => {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") return jsonError(c, 426, "expected a websocket");
-  return project(c.env).fetch(new Request(new URL("/api/stream", c.req.url), { headers: { Upgrade: "websocket" } }));
+  return project(c.env).fetch(
+    new Request(new URL("/api/stream", c.req.url), { headers: { Upgrade: "websocket", "X-Bullpen-Viewer": c.var.email } }),
+  );
 });
+
+app.get("/api/summaries", async (c) => c.json(await project(c.env).summaryUsage()));
 
 app.get("/api/pair/:code", async (c) => {
   const code = PairCodeSchema.safeParse(c.req.param("code"));

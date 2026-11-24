@@ -3,6 +3,7 @@ import {
   displayName,
   type BoardState,
   type Device,
+  type Digest,
   type HubEvent,
   type Person,
   type Session,
@@ -23,6 +24,9 @@ export interface Model {
   events: HubEvent[];
   /** Keys of rows that arrived while the board was open; only these animate in. */
   fresh: Set<string>;
+  /** Footer: who writes summaries, or null when they are off. */
+  summarizer: string | null;
+  digest: Digest | null;
 }
 
 type Action =
@@ -56,6 +60,9 @@ function reducer(model: Model | null, action: Action): Model | null {
       sessions: Object.fromEntries(s.sessions.map((x) => [x.hubKey, x])),
       events: mergeEvents(model?.events ?? [], s.events),
       fresh: model?.fresh ?? new Set(),
+      summarizer: s.summarizer ?? null,
+      // A digest pushed over the socket outlives a snapshot taken before it was built.
+      digest: s.digest ?? model?.digest ?? null,
     };
   }
   if (!model) return model;
@@ -90,6 +97,24 @@ function reducer(model: Model | null, action: Action): Model | null {
         for (const k of keep) fresh.add(k);
       }
       return { ...model, events: mergeEvents(model.events, msg.events), fresh };
+    }
+    case "turnSummary":
+      return {
+        ...model,
+        events: model.events.map((e) =>
+          e.deviceId === msg.deviceId && e.id === msg.id ? { ...e, summary: msg.summary } : e,
+        ),
+      };
+    case "digest":
+      return { ...model, digest: msg.digest };
+    case "purge": {
+      const strip = (e: HubEvent): HubEvent =>
+        e.deviceId === msg.deviceId ? { ...e, text: null, desc: null, summary: null, truncated: false } : e;
+      const sessions = { ...model.sessions };
+      for (const [k, s] of Object.entries(sessions)) {
+        if (s.deviceId === msg.deviceId) sessions[k] = { ...s, nowLine: null, nowAt: null, waitingReason: null };
+      }
+      return { ...model, events: model.events.map(strip), sessions };
     }
   }
 }

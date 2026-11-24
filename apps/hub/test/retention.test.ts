@@ -25,6 +25,8 @@ describe("retention", () => {
     await runInDurableObject(projectStub(), (_i, st) => {
       st.storage.sql.exec("UPDATE sessions SET seen_at = ? WHERE hub_key = ?", now - 8 * DAY, `${deviceId}:claude-code:old`);
       st.storage.sql.exec("UPDATE pairings SET created_at = ? WHERE code = ?", now - 2 * DAY, pending.code);
+      // The alarm also serves the summary queue; make the hourly prune due.
+      st.storage.sql.exec("UPDATE meta SET v = '0' WHERE k = 'next_prune_at'");
     });
 
     expect(await runDurableObjectAlarm(projectStub())).toBe(true);

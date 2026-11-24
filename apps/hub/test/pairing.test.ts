@@ -32,6 +32,7 @@ describe("pairing", () => {
       name: "B3",
       include: { remotes: ["github.com/b3-fun/"], dirs: [] },
       issueKeys: ["B3"],
+      defaultShare: "conversation",
     });
 
     const second = (await (await poll(p)).json()) as Record<string, unknown>;

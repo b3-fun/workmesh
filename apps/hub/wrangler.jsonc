@@ -19,10 +19,15 @@
     "bindings": [{ "name": "PROJECT", "class_name": "Project" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Project"] }],
+  // Summaries (SPEC.md §11): SUMMARY_MODEL on OpenRouter when the OPENROUTER_API_KEY secret is set, else Workers AI.
+  "ai": { "binding": "AI" },
   "vars": {
     "ENVIRONMENT": "production",
     "ACCESS_TEAM_DOMAIN": "npclabs.cloudflareaccess.com",
-    "ACCESS_AUD": "a3f9a834dccc7096ab27aa4f3470df3b5bd14618c40e641e92b751b696b70f63"
+    "ACCESS_AUD": "a3f9a834dccc7096ab27aa4f3470df3b5bd14618c40e641e92b751b696b70f63",
+    "SUMMARY_DAILY_CAP": "3000",
+    "SUMMARY_MODEL": "anthropic/claude-haiku-5.5",
+    "SUMMARY_MODEL_FALLBACK": "openai/gpt-6-luna"
   },
   "observability": { "enabled": true }
 }

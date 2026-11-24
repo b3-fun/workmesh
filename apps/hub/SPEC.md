@@ -186,7 +186,7 @@ up to 5,000 events in memory and resend (dedupe makes resends safe); beyond that
   no ingest has carried for 12 h; a device with no ingest for 2 min shows its sessions as `offline` (the board
   computes this from `devices.lastSeenAt`). Sessions unseen for 7 days and pairings older than a day are deleted.
 - Board API (Access): `GET /api/me`, `GET /api/state` (project, me, people, devices, sessions, last 300 events newest
-  first, `serverNow`), `GET /api/sessions/:hubKey/events?before=<ts>&limit=200` (`limit` ≤ 500),
+  first, `serverNow`, and since v0.2 `summarizer` and `digest`), `GET /api/sessions/:hubKey/events?before=<ts>&limit=200` (`limit` ≤ 500),
   `GET /api/stream` (WebSocket: server pushes `{type:"hello", serverNow}` on connect, then
   `{type:"session", session}`, `{type:"events", events}`, `{type:"device", device}`; the client may send `ping` and
   gets `pong`), `GET /api/pair/:code`, `POST /api/pair/approve`, `GET /api/devices` (mine),
@@ -253,6 +253,12 @@ such as "Ran 2 shell commands", turn durations).
   `conversation` when the hub's project rule says `defaultShare: "conversation"`, which project `b3` does). Changeable
   any time with `agentblip hub share <level>`. The approve page and the CLI both state plainly what the chosen level
   shares, and the board marks metadata-only people.
+- Hub side: `POST /relay/pair/start` takes an optional `share` (the level the relay will use) so the approve page can
+  name it; `GET /api/pair/:code` returns it as `share` (null when the relay didn't say). The poll's `project` carries
+  `defaultShare`.
+- A device that goes from `conversation` back to `metadata` loses its text on the hub at once: prompt and message
+  text, tool descriptions, turn summaries, now lines and waiting reasons from it are cleared, cached digests are
+  dropped, and boards get `{type:"purge", deviceId}`.
 - Only shared sessions (§3.3 rules 1–4) send anything. A session that becomes shared mid-way sends conversation text
   only from that moment on; nothing written before it was shared is ever sent.
 - Every ingest body carries `share`; the hub stores it per device and drops any text fields from a `metadata` device.
@@ -276,29 +282,63 @@ such as "Ran 2 shell commands", turn durations).
 
 ## 10. Wire additions (still `v: 1`; all optional, old relays keep working)
 
-- Body: `share: "metadata" | "conversation"`.
+- Body: `share: "metadata" | "conversation"`. Absent (relays before v0.2) means `metadata`.
 - `ActivityEvent.kind` adds `message` and `turn`.
 - `ActivityEvent` adds `text` (≤ 4,000; on `prompt` and `message`), `truncated` (bool), `desc` (≤ 200), `durationMs`.
 - The relay splits batches to stay under 256 KB.
+- Hub side: lengths count UTF-16 code units (JS `string.length`). Text over 4,000 and `desc` over 200 are cut and
+  marked `truncated` instead of failing the batch (a redaction can lengthen text after the relay's cap); over 16,000
+  and 1,000 they are schema errors. `text` is kept on `prompt` and `message` only; a `message` without text is
+  dropped. As a second guard behind §9, the hub replaces obvious credentials in `text` and `desc` (the §9 token
+  shapes, JWTs, PEM blocks, `Bearer` values, credentials in URLs) with `[redacted]` before storing them.
+- Storage: `events` gains `text`, `truncated`, `descr` (the wire's `desc`), `duration_ms` and `summary`; `devices`
+  and `pairings` gain `share`; `sessions` gains `now_line`, `now_at`, `waiting_reason` and summary bookkeeping.
+  Board types carry them as `HubEvent.text/truncated/desc/durationMs/summary`, `Session.nowLine/nowAt/waitingReason`
+  and `Device.share`.
 
 ## 11. Summaries (hub)
 
-- Provider: Claude Haiku 5.5 (`claude-haiku-5-5`) through `@anthropic-ai/sdk` when the Worker secret
-  `ANTHROPIC_API_KEY` is set; otherwise Cloudflare Workers AI through an `AI` binding (a current instruct model from
-  the account's catalog that supports JSON output). One interface, chosen at runtime, logged on the board's footer.
+- Provider, chosen at runtime behind one interface (`src/worker/summaries/provider.ts`):
+  1. **OpenRouter** when the Worker secret `OPENROUTER_API_KEY` is set: `POST https://openrouter.ai/api/v1/chat/completions`
+     over plain fetch, headers `HTTP-Referer: https://bullpen.b3os.org` and `X-Title: Bullpen`. Model from the var
+     `SUMMARY_MODEL`, default `anthropic/claude-haiku-5.5` ($0.10 / $0.50 per M tokens in November 2026, structured
+     outputs); `SUMMARY_MODEL_FALLBACK` (comma-separated, default `openai/gpt-6-luna`) becomes OpenRouter's `models`
+     fallback list. Requests use `response_format: json_schema` (strict) with `provider.require_parameters` and
+     `reasoning.effort: "low"`; if no endpoint takes that (400/404), the hub retries once in JSON mode with the schema
+     in the prompt and remembers it for that model. Any parse failure skips the summary. On an outage or rate limit
+     the same request goes once to Workers AI, when bound; a refusal or a cut-off answer is final.
+  2. **Workers AI** through the `AI` binding when no OpenRouter key is set: `@cf/google/gemma-4-26b-a4b-it` (2026,
+     4B active parameters, JSON-schema output, reasoning off, $0.10 / $0.30 per M tokens).
+  The board's footer names it: "Summaries by Claude Haiku 5.5 via OpenRouter" or "Summaries by Gemma 4 26B on
+  Workers AI" (`BoardState.summarizer`; null = off).
 - Outputs, all plain text, stored in the Durable Object and pushed to boards:
   1. **Now line** per session (≤ 90 chars): what the agent is doing right now, e.g. "Publishing agentblip 0.6.0;
-     waiting on Sean's security key". Refreshed when a turn ends, when the state changes, and at most every 30 s
-     while working with new events.
-  2. **Turn summary** (≤ 2 short sentences) when a turn ends: asked → did → result or blocker.
-  3. **Waiting reason** (≤ 80 chars) when a session enters `waiting`: what it needs from its person.
-  4. **Digest** per viewer: "Since you looked" across sessions, built from turn summaries since the viewer's last
-     visit (when > 30 min), cached 10 minutes.
+     waiting on Sean's security key". Refreshed when a turn ends, when the state changes, and while working: at most
+     every 30 s when new prompts or messages arrived, every 2 min when only tool calls did. Pushed as `session`.
+  2. **Turn summary** (≤ 220 chars, one or two sentences) when a turn ends: asked → did → result or blocker. Stored
+     on the `turn` event (`HubEvent.summary`), pushed as `{type:"turnSummary", deviceId, id, hubKey, summary}`.
+  3. **Waiting reason** (≤ 80 chars) when a session enters `waiting`: what it needs from its person. Cleared when a
+     new wait starts (the board shows the activity label until the new reason lands) and never written for a wait
+     that ended while the model ran.
+  4. **Digest** per viewer ("Since you looked", 1–4 lines ≤ 110 chars): a viewer back after more than 30 min away
+     (last `/api/state`, socket close or socket ping) starts a visit; its digest covers turn summaries since they last
+     looked, is built once off the request path, served in `/api/state` for 10 minutes, and pushed to that viewer's
+     sockets as `{type:"digest", digest}`. No turn summaries in the window: no digest.
+- Off the ingest path: ingest only records a job per session (`summary_jobs`, one row per session, triggers merged,
+  due 1.5 s after the trigger so a burst lands together); the Durable Object's alarm, which also runs the hourly
+  prune, runs due jobs (6 at a time). Ingest latency is unchanged.
 - Metadata-only sessions are summarized from tools, paths, commands and issue ids alone.
-- Guards: per-session minimum interval, skip when nothing new, a daily cap per project (default 3,000 calls), and
-  graceful degradation (no summary, never an error on the board) on refusal, rate limit or outage.
-- Transcript text is untrusted input: the system prompt treats it as data to summarize, output is structured JSON,
-  and the board renders it as text only.
+- Guards: per session at least 10 s between calls; skip when nothing is new since the last now line (no newer event,
+  same state); events older than 15 min on arrival (a resent backlog) trigger nothing; a daily cap per project
+  (`SUMMARY_DAILY_CAP`, default 3,000 calls per UTC day), where now-line-only refreshes stop at 90 % so turn
+  summaries, waiting reasons and digests keep working; outages and rate limits retry once a minute later; graceful
+  degradation (no summary, never an error on the board) on refusal, rate limit or outage.
+- Transcript text is untrusted input: it goes inside `<activity>` / `<turns>` tags that the system prompt calls
+  material to describe, never instructions; the output is a JSON object; each field is flattened to one line, stripped
+  of markup and capped before storage; the board renders it as text.
+- Usage per UTC day (calls, failures, skips, tokens, milliseconds, cost when OpenRouter reports it) is kept in
+  `summary_usage` and served at `GET /api/summaries`. Each call logs one JSON line (`msg: "summary"`, kind, provider,
+  ms, tokens or failure reason), never the prompt or the output.
 
 ## 12. Board v0.2
 

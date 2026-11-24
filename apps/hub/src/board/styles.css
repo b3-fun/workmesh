@@ -1,0 +1,193 @@
+@import "tailwindcss";
+@import "@fontsource-variable/manrope";
+@import "@fontsource-variable/geist-mono";
+
+/* B3 brand: zinc neutrals, #306AFF as the only signal colour; green/amber only as fine status traces. */
+:root {
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --sunk: #f4f4f5;
+  --hover: #f4f4f5;
+  --fg: #18181b;
+  --text: #3f3f46;
+  --muted: #71717a;
+  --faint: #a1a1aa;
+  --line: rgb(12 10 9 / 0.08);
+  --line-strong: rgb(12 10 9 / 0.14);
+  --accent: #306aff;
+  --accent-fg: #ffffff;
+  --accent-soft: rgb(48 106 255 / 0.08);
+  --ok: #16a34a;
+  --warn: #d97706;
+  --warn-text: #a35a00;
+  --bad: #e11d48;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.08);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #09090b;
+    --surface: #111113;
+    --sunk: #18181b;
+    --hover: #18181b;
+    --fg: #fafafa;
+    --text: #d4d4d8;
+    --muted: #a1a1aa;
+    --faint: #71717a;
+    --line: rgb(255 255 255 / 0.08);
+    --line-strong: rgb(255 255 255 / 0.14);
+    --accent: #6b93ff;
+    --accent-fg: #09090b;
+    --accent-soft: rgb(107 147 255 / 0.12);
+    --ok: #3cc58a;
+    --warn: #e0a640;
+    --warn-text: #e0a640;
+    --bad: #f87171;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.5);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #09090b;
+  --surface: #111113;
+  --sunk: #18181b;
+  --hover: #18181b;
+  --fg: #fafafa;
+  --text: #d4d4d8;
+  --muted: #a1a1aa;
+  --faint: #71717a;
+  --line: rgb(255 255 255 / 0.08);
+  --line-strong: rgb(255 255 255 / 0.14);
+  --accent: #6b93ff;
+  --accent-fg: #09090b;
+  --accent-soft: rgb(107 147 255 / 0.12);
+  --ok: #3cc58a;
+  --warn: #e0a640;
+  --warn-text: #e0a640;
+  --bad: #f87171;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.5);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunk: var(--sunk);
+  --color-hover: var(--hover);
+  --color-fg: var(--fg);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-warn-text: var(--warn-text);
+  --color-bad: var(--bad);
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --shadow-pop: var(--shadow);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Rows that arrive while you watch ease in; nothing else moves. */
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+.row-in {
+  animation: row-in 320ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@keyframes live-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  80%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+.live-ping {
+  animation: live-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+/* Tailwind v4 positions with the `translate` property, so animate `scale` and `opacity` only. */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    scale: 0.98;
+  }
+}
+.overlay-in {
+  animation: fade-in 160ms ease-out;
+}
+.dialog-in {
+  animation: pop-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+.menu-in {
+  animation: menu-in 140ms ease-out;
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

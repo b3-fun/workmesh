@@ -128,7 +128,9 @@ Hub-side validation (a second guard on §3.3; any failure rejects the whole requ
 paths, never the values):
 - Unknown fields are dropped, so nothing outside these tables is stored. Optional fields may be omitted or `null`.
 - `repo` is `owner/name`. `path` is repo-relative: no leading `/`, `\`, `~` or drive letter, and no `..` segment.
-- `cmd` matches `^[a-z0-9][a-z0-9._-]{0,30}( [a-z][a-z0-9:-]{0,24})?$` (a program and at most one subcommand).
+- `cmd` matches `^[a-z0-9][a-z0-9._-]{0,30}( [a-z][a-z0-9:-]{0,24}){0,2}$`: a program and at most two subcommand
+  words, so `gh pr create` (the example in the `cmd` row) passes and arguments do not.
+- Epoch-ms fields that arrive fractional are rounded, not rejected.
 - `issues` entries look like `B3-7166`; `pr` is `https://github.com/<owner>/<repo>/pull/<n>`; `tool` is `[A-Za-z0-9_.:-]+`.
 - At most 1,000 sessions and 500 events per request.
 

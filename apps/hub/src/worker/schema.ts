@@ -2,7 +2,8 @@ import { z } from "zod";
 
 // Wire format v1 (SPEC.md §3). Unknown fields are stripped, so nothing outside these fields is ever stored.
 
-const epochMs = z.number().int().min(0).max(8.64e15);
+/** Epoch ms; fractional values are rounded rather than rejected. */
+const epochMs = z.number().min(0).max(8.64e15).transform((n) => Math.round(n));
 const opt = <T extends z.ZodType>(t: T) => t.nullish();
 
 /** Repo-relative only: never absolute, never home-relative, never escaping the repo. */
@@ -15,11 +16,11 @@ const relPath = z
   })
   .refine((p) => !p.split(/[\\/]/).includes(".."), { message: "path must stay inside the repo" });
 
-/** Program plus at most one allow-listed subcommand word (SPEC.md §3.3 rule 5). */
+/** Program plus at most two subcommand words, e.g. `cargo test`, `gh pr create` (SPEC.md §3.3 rule 5). */
 const cmd = z
   .string()
   .max(60)
-  .regex(/^[a-z0-9][a-z0-9._-]{0,30}( [a-z][a-z0-9:-]{0,24})?$/, "cmd must be a program and one subcommand");
+  .regex(/^[a-z0-9][a-z0-9._-]{0,30}( [a-z][a-z0-9:-]{0,24}){0,2}$/, "cmd must be a program and its subcommand");
 
 const issueId = z.string().max(24).regex(/^[A-Za-z][A-Za-z0-9]{0,9}-\d{1,6}$/, "not an issue id");
 const issues = z.array(issueId).max(20);

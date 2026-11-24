@@ -1,0 +1,1801 @@
+/* =============================================================================
+   beta.b3os.org stylesheet entry (marketing and dashboard share it).
+   theme.css, tokens.css and recipes.css are copied verbatim from research/b3os-design-assets/.
+   Everything below adds site-specific pieces on top of those recipes, using only their tokens.
+   ========================================================================== */
+@import "./theme.css";
+/* The pixel language's keyframes and their utilities (the site's product rows and call-to-action arrows; console
+   elegance area 8 fix round). */
+@import "../ds/signature/pixel-motion.css";
+
+/* Keep generated and output files out of Tailwind's class scan. */
+@source not "../api/schema.gen.ts";
+@source not "../../.ssr";
+@source not "../../dist";
+@source not "../../screenshots";
+/* The ported B3OS components print their utilities in their own lazy stylesheet (src/ds/utilities.css). */
+@source not "../ds";
+/* Except the few the prerendered site draws (no React and no ds sheet in the browser there): the public marketplace's
+   card and search field, and /status's dots (console elegance area 8). */
+@source "../ds/layout/tile-card.tsx";
+@source "../ds/primitives/input.tsx";
+@source "../ds/layout/status-dot.tsx";
+/* And the pixel pieces the site draws as markup: the product rows' grids and the call-to-action arrows (fix round, R1). */
+@source "../ds/signature/pixel-grid-mark.tsx";
+@source "../ds/signature/pixel-arrow.tsx";
+
+/* Brand masks are served from public/brand/ (same origin, so CSS masks load). */
+:root {
+  --b3os-wordmark-url: url("/brand/b3os-wordmark-flat.svg");
+  --b3os-mark-url: url("/brand/b3os-mark-stacked.svg");
+  --b3iq-lockup-url: url("/brand/b3iq-lockup.svg");
+}
+
+@layer base {
+  body {
+    min-height: 100dvh;
+    background: var(--b3-bg);
+    color: var(--b3-ink);
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  [hidden] {
+    display: none !important;
+  }
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer components {
+  .skip-link {
+    position: absolute;
+    left: 12px;
+    top: -48px;
+    z-index: 100;
+    padding: 10px 14px;
+    border-radius: var(--b3-radius-md);
+    background: var(--b3-surface-inverse);
+    color: var(--b3-ink-inverse);
+    font: 500 14px / 1 var(--b3-font-sans);
+  }
+  .skip-link:focus {
+    top: 12px;
+  }
+  .skip-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  /* Phones: standalone text links and form controls are 44 px tap targets too (Sean's mobile floor). */
+  @media (max-width: 767px) {
+    .b3os-btn--link {
+      min-height: 44px;
+    }
+    input.b3os-input,
+    select.b3os-input {
+      height: 44px;
+    }
+  }
+
+  /* ---------- Marketing header ---------- */
+  /* Transparent over the hero. After 8 px of scroll (client.ts sentinel), a band of the ground at 82 % over a 16 px blur,
+     full strength to the header's foot and fading out 24 px below it, with no border line (b3.fun's header band).
+     Hidden, not only transparent, while off, so a page at the top never pays for the blur. */
+  .site-header__band {
+    position: absolute;
+    inset: 0 0 auto;
+    height: calc(100% + 24px);
+    background: color-mix(in srgb, var(--b3-bg) 82%, transparent);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    -webkit-mask-image: linear-gradient(#000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(#000 calc(100% - 24px), transparent);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity var(--b3-dur-fast) var(--b3-ease-ui),
+      visibility 0s linear var(--b3-dur-fast);
+  }
+  .site-header[data-scrolled] .site-header__band,
+  html[data-menu-open] .site-header__band {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity var(--b3-dur-fast) var(--b3-ease-ui);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .site-header__band,
+    .site-header[data-scrolled] .site-header__band {
+      transition: none;
+    }
+  }
+  /* The trigger's open state is its colour, not a turned chevron (no rotated graphics). */
+  .site-nav__chevron {
+    margin-right: -2px;
+    color: var(--b3-ink-4);
+    transition: color var(--b3-dur-fast) var(--b3-ease-ui);
+  }
+  [data-menu-trigger][aria-expanded="true"],
+  [data-menu-trigger][aria-expanded="true"] .site-nav__chevron {
+    color: var(--b3-ink);
+  }
+
+  /* Products menu: a raised panel under the nav, six rows in two columns and a full-width last row. It is never on
+     screen at load, so its 150 ms entrance never meets the gate's fade rule; under reduced motion it appears at once. */
+  .products-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    width: 560px;
+    padding: 8px;
+    border: 1px solid var(--b3-line);
+    border-radius: var(--b3-radius-lg);
+    background: var(--b3-surface);
+    box-shadow: var(--b3os-shadow-box);
+    opacity: 0;
+    transform: translateY(4px);
+    transition:
+      opacity var(--b3-dur-fast) var(--b3-ease-sheet),
+      transform var(--b3-dur-fast) var(--b3-ease-sheet);
+  }
+  .products-menu[data-open] {
+    opacity: 1;
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .products-menu {
+      transition: none;
+    }
+  }
+  .products-menu__row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 56px;
+    padding: 8px 10px;
+    border-radius: var(--b3-radius-md);
+    transition: background-color var(--b3-dur-fast) var(--b3-ease-ui);
+  }
+  .products-menu__row:hover,
+  .products-menu__row[aria-current="page"] {
+    background: var(--b3-surface-hover);
+  }
+  .products-menu__well {
+    flex: none;
+    padding: 3px;
+    border-radius: 12px;
+  }
+  .products-menu__well .b3os-tile__plate {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    color: var(--b3-ink-2);
+  }
+  .products-menu__more {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 44px;
+    margin-top: 4px;
+    padding: 0 10px;
+    border-top: 1px solid var(--b3-line-soft);
+    font: 500 14px / 1.2 var(--b3-font-sans);
+    color: var(--b3-accent-text);
+  }
+  .products-menu__more:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+  [data-nav-toggle] .nav-icon-close {
+    display: none;
+  }
+  [data-nav-toggle][aria-expanded="true"] .nav-icon-open {
+    display: none;
+  }
+  [data-nav-toggle][aria-expanded="true"] .nav-icon-close {
+    display: contents;
+  }
+  .nav-icon-open,
+  .nav-icon-close {
+    display: contents;
+  }
+  .site-menu {
+    max-height: calc(100dvh - var(--b3-header-h));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-top: 1px solid var(--b3-line-soft);
+    background: var(--b3-bg);
+    animation: site-menu-in var(--b3-dur-slow) var(--b3-ease-sheet) both;
+  }
+  .site-menu__row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 48px;
+    border-bottom: 1px solid var(--b3-line-soft);
+    font: 500 16px / 1.2 var(--b3-font-sans);
+    color: var(--b3-ink-2);
+  }
+  .site-menu__row:active {
+    color: var(--b3-ink);
+  }
+  .site-menu__row--product {
+    min-height: 60px;
+    padding: 8px 0;
+    color: var(--b3-ink);
+  }
+  @keyframes site-menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+  }
+  html[data-menu-open] {
+    overflow: hidden;
+  }
+
+  /* Footer sign-off: full strength on light only (§5.11). */
+  [data-theme="dark"] .site-signoff {
+    opacity: 0.1;
+  }
+
+  /* Contain absolutely positioned descendants (sr-only labels) inside the scroll box, or they widen the page. */
+  .b3os-table-wrap {
+    position: relative;
+  }
+
+  /* Numeric column headers keep the header font; only the cells are mono (recipes.css styles both). */
+  .b3os-table th.num {
+    font-family: var(--b3-font-sans);
+    color: var(--b3-ink-3);
+  }
+
+  /* Benchmark tables on phones: each row stacks (who and value on one line, provenance under them) instead of
+     scrolling sideways past the part that matters. The header row stays for screen readers. */
+  @media (max-width: 767px) {
+    .bench-table,
+    .bench-table tbody {
+      display: block;
+    }
+    .bench-table thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .bench-table tr {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      column-gap: 12px;
+      row-gap: 6px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--b3-line-soft);
+    }
+    .bench-table tr:last-child {
+      border-bottom: 0;
+    }
+    .bench-table tr[data-us] {
+      background: var(--b3-accent-soft);
+    }
+    .bench-table td {
+      display: block;
+      min-width: 0 !important;
+      padding: 0 !important;
+      border-bottom: 0 !important;
+      white-space: normal !important;
+    }
+    .bench-table td:nth-child(3) {
+      grid-column: 1 / -1;
+    }
+  }
+
+  /* ---------- Code panels ---------- */
+  .b3os-code__bar {
+    min-width: 0;
+  }
+  .code-tabs {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .code-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .code-tabs > * {
+    flex: none;
+  }
+  @media (max-width: 639px) {
+    .b3os-code__bar {
+      gap: 8px;
+      padding: 8px;
+    }
+    .code-tabs > * {
+      padding: 0 10px;
+    }
+  }
+  /* Narrow phones: four language tabs and the 44 px copy button share the bar without clipping the last tab, and
+     without the row scrolling (console area 2, gate rule tab-scroll: the site's routine example, "TypeScript, Python,
+     routine.yaml, cURL", was 319 px in 278). */
+  @media (max-width: 399px) {
+    .b3os-code__bar {
+      padding: 6px;
+    }
+    .code-tabs {
+      gap: 2px;
+      padding: 2px;
+    }
+    .code-tabs > * {
+      padding: 0 6px;
+      font-size: 13px;
+    }
+  }
+  /* Marketing pages: the dark material carries the contrast; no float shadow hazing the light page under the panel. */
+  :root[data-marketing] .b3os-code-frame {
+    box-shadow: none;
+  }
+  .b3os-code pre {
+    max-width: 100%;
+  }
+  /* Wrapped panels (CodePanel wrap): a long line breaks and hangs two characters in from that line's own indent
+     (--indent, its leading spaces), so no snippet runs past the right edge and a wrapped JSON value stays under its
+     key; the line number stays on the line's first row. A URL breaks only between its path's pieces (CodePanel
+     urlPieces: <wbr> between nowrap spans), never at the hyphen in its host; a piece wider than the panel scrolls
+     inside the panel. */
+  .b3os-code .b3os-code__line {
+    display: block;
+  }
+  .b3os-code--wrap pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-x: auto;
+  }
+  .b3os-code--wrap .b3os-code__line {
+    padding-left: calc(4ch + 16px + var(--indent, 0ch));
+    text-indent: calc(-4ch - 16px - var(--indent, 0ch));
+  }
+  .b3os-code--wrap .b3os-code__url {
+    white-space: nowrap;
+  }
+  .b3os-code--wrap .ln {
+    text-indent: 0;
+  }
+  /* Phones (console audit 2.9, and the site's 8.2): every panel wraps the same way, so no snippet scrolls sideways under
+     640 px. The site's panels wrap at every width (CodePanel wrap; console elegance area 8 fix round, F1). */
+  @media (max-width: 639px) {
+    .b3os-code pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .b3os-code .b3os-code__line {
+      padding-left: calc(4ch + 16px + var(--indent, 0ch));
+      text-indent: calc(-4ch - 16px - var(--indent, 0ch));
+    }
+    .b3os-code .b3os-code__url {
+      white-space: nowrap;
+    }
+    .b3os-code .ln {
+      text-indent: 0;
+    }
+  }
+  /* A program's output as it printed it (the deploy page's plan): every line as printed and never wrapped, so its
+     columns stay aligned; where the panel is narrower than the longest line it scrolls sideways (the browser gate's
+     box-scroll leaves [data-output] out; deploy page review, 2026-11-16). No line numbers: each keeps its line box
+     (zero wide, unseen), so a blank line of the output keeps its height. */
+  .b3os-code-out .b3os-code .ln {
+    width: 0;
+    margin-right: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    vertical-align: top;
+    visibility: hidden;
+  }
+  .b3os-code-out .b3os-code pre {
+    white-space: pre;
+    overflow-wrap: normal;
+    overflow-x: auto;
+  }
+  .b3os-code-out .b3os-code .b3os-code__line {
+    padding-left: 0;
+    text-indent: 0;
+  }
+
+  /* ---------- Product page moments ---------- */
+  .moment-rail {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 24px;
+  }
+  .moment-rail::before {
+    content: "";
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    height: 1px;
+    background: var(--b3-line);
+  }
+  .moment-step__node {
+    position: relative;
+    z-index: 1;
+    display: inline-grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--b3-line);
+    border-radius: 9999px;
+    background: var(--b3-surface);
+    box-shadow: var(--b3os-shadow-pressed);
+    color: var(--b3-ink-3);
+  }
+  .moment-step[data-active] .moment-step__node {
+    border-color: var(--b3-accent-line);
+    background: var(--b3-accent-soft);
+    color: var(--b3-accent-text);
+  }
+  @media (max-width: 767px) {
+    .moment-rail {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 20px;
+      padding-left: 48px;
+    }
+    .moment-rail::before {
+      top: 16px;
+      bottom: 16px;
+      left: 16px;
+      right: auto;
+      width: 1px;
+      height: auto;
+    }
+    .moment-step__node {
+      position: absolute;
+      left: -48px;
+      top: -6px;
+    }
+    .moment-step p:first-of-type {
+      margin-top: 0;
+    }
+  }
+
+  /* routines: example run on the canvas grid */
+  .routine-trace {
+    position: relative;
+    display: grid;
+    gap: 14px;
+    max-width: 520px;
+  }
+  .routine-trace::before {
+    content: "";
+    position: absolute;
+    top: 22px;
+    bottom: 22px;
+    left: 21px;
+    border-left: 1px dashed var(--b3-line-strong);
+  }
+  .routine-node {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    padding: 10px 14px;
+    border: 1px solid var(--b3-line);
+    border-radius: var(--b3-radius-md);
+    background: var(--b3-surface);
+    box-shadow: var(--b3os-shadow-soft);
+  }
+  .routine-node__state {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    border: 2px solid var(--b3-line-strong);
+    background: var(--b3-surface);
+  }
+  .routine-node[data-state="succeeded"] .routine-node__state {
+    border-color: var(--b3-success-dot);
+    background: var(--b3-success-dot);
+  }
+  .routine-node[data-state="running"] .routine-node__state {
+    border-color: var(--b3-accent);
+    background: var(--b3-accent-soft);
+  }
+}
+
+/* ---------- Homepage (redesign 2026-11-07) ---------- */
+@layer components {
+  /* Blueprint grid (ui/Blueprint.tsx; b3os-web HeroGridColumns + HeroGridDotRow): six columns of hairlines inside the
+     rail, inset 9 px. From 1024 px the rail draws the outer two lines, so the grid draws only the inner ones. */
+  .b3os-blueprint {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    display: grid;
+    padding: 0 9px;
+    pointer-events: none;
+  }
+  .b3os-blueprint__cols {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    border-inline: 1px solid var(--b3os-grid-line);
+  }
+  .b3os-blueprint__cols > i + i {
+    border-left: 1px solid var(--b3os-grid-line);
+  }
+  @media (min-width: 1024px) {
+    .b3os-blueprint__cols {
+      border-inline: 0;
+    }
+  }
+  @media (max-width: 1023px) {
+    .b3os-blueprint__cols {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .b3os-blueprint__cols > i:nth-child(n + 4) {
+      display: none;
+    }
+  }
+
+  /* The content of a band on the grid (the hero, the closing band): its gutter is a variable, so a node row inside it
+     can reach the rail's edges. */
+  .b3os-band {
+    --b3os-gx: 20px;
+    padding-inline: var(--b3os-gx);
+  }
+  @media (min-width: 768px) {
+    .b3os-band {
+      --b3os-gx: 32px;
+    }
+  }
+  @media (min-width: 1280px) {
+    .b3os-band {
+      --b3os-gx: 56px;
+    }
+  }
+  /* A node row's slot: zero height in the content's flow (the row's line sits in the gap the margins around it make), or
+     with --behind across the middle of the block it shares a parent with, under that block. */
+  .b3os-blueprint-slot {
+    position: relative;
+    align-self: stretch;
+    height: 0;
+  }
+  .b3os-blueprint-slot--behind {
+    position: absolute;
+    inset: 50% 0 auto;
+  }
+  .b3os-blueprint__row {
+    position: absolute;
+    top: 0;
+    right: calc(-1 * var(--b3os-gx, 0px));
+    left: calc(-1 * var(--b3os-gx, 0px));
+    z-index: -1;
+    height: 0;
+    pointer-events: none;
+  }
+  .b3os-blueprint__row::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--b3os-grid-line);
+  }
+  .b3os-blueprint__row > i {
+    position: absolute;
+    top: -9px;
+    width: 19px;
+    height: 19px;
+    margin-left: -9.5px;
+    border-radius: 9999px;
+    background: var(--b3-bg);
+  }
+  .b3os-blueprint__row > i::after {
+    content: "";
+    position: absolute;
+    inset: 6.5px;
+    border-radius: 9999px;
+    background: var(--b3os-grid-node);
+  }
+  /* Node n sits on column line n: 9 px in from each edge, then every sixth of the space between. */
+  .b3os-blueprint__row > i:nth-child(1) {
+    left: 9.5px;
+  }
+  .b3os-blueprint__row > i:nth-child(2) {
+    left: calc(9.5px + (100% - 19px) * 1 / 6);
+  }
+  .b3os-blueprint__row > i:nth-child(3) {
+    left: calc(9.5px + (100% - 19px) * 2 / 6);
+  }
+  .b3os-blueprint__row > i:nth-child(4) {
+    left: calc(9.5px + (100% - 19px) * 3 / 6);
+  }
+  .b3os-blueprint__row > i:nth-child(5) {
+    left: calc(9.5px + (100% - 19px) * 4 / 6);
+  }
+  .b3os-blueprint__row > i:nth-child(6) {
+    left: calc(9.5px + (100% - 19px) * 5 / 6);
+  }
+  .b3os-blueprint__row > i:nth-child(7) {
+    left: calc(100% - 9.5px);
+  }
+  @media (max-width: 1023px) {
+    .b3os-blueprint__row > i:nth-child(even) {
+      display: none;
+    }
+  }
+  /* Phones: the column lines alone (Sean: corner dots are too busy on mobile). */
+  @media (max-width: 767px) {
+    .b3os-blueprint-slot {
+      display: none;
+    }
+  }
+
+  /* Two buttons under a headline: side by side and sharing the row on phones, stacked only under 360 px. */
+  .home-actions {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+  }
+  @media (max-width: 767px) {
+    .home-actions > * {
+      flex: 1 1 0;
+      min-width: 0;
+      padding-inline: 12px;
+    }
+  }
+  @media (max-width: 359px) {
+    .home-actions {
+      flex-direction: column;
+    }
+  }
+
+  /* The setup prompt (ui/PromptBox.tsx; b3os-web AIInput): a tinted tray, a raised box, a bar with the label and a raised
+     button. The whole box is the button. */
+  .b3os-prompt {
+    width: min(100%, 600px);
+    padding: 8px;
+    border-radius: 22px;
+    background: var(--b3os-tray);
+  }
+  .b3os-prompt__box {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    padding: 16px 16px 12px 18px;
+    border: 1px solid var(--b3-line);
+    border-radius: var(--b3-radius-lg);
+    background: var(--b3-surface);
+    box-shadow: var(--b3os-shadow-box);
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color var(--b3-dur-fast) var(--b3-ease-ui),
+      transform var(--b3-dur-press) var(--b3-ease-ui);
+  }
+  .b3os-prompt__box:hover {
+    border-color: var(--b3-line-strong);
+  }
+  .b3os-prompt__box:active {
+    transform: scale(0.99);
+  }
+  .b3os-prompt__box:focus-visible {
+    outline: 2px solid var(--b3-focus);
+    outline-offset: 2px;
+  }
+  .b3os-prompt__text {
+    font: 400 16px / 1.5 var(--b3-font-sans);
+    color: var(--b3-ink-3);
+    text-wrap: pretty;
+  }
+  .b3os-prompt__bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .b3os-prompt__label {
+    min-width: 0;
+    font: 500 12px / 1.3 var(--b3-font-mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: pre;
+    color: var(--b3-accent-text);
+  }
+  .b3os-prompt__clients {
+    margin-left: 4px;
+    font: 400 13px / 1.3 var(--b3-font-sans);
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: normal;
+    color: var(--b3-ink-3);
+  }
+  @media (max-width: 479px) {
+    .b3os-prompt__clients {
+      display: none;
+    }
+  }
+  .b3os-prompt__action {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    height: 40px;
+    padding: 0 12px;
+    border-radius: var(--b3-radius-sm);
+    background: var(--b3os-btn-neutral);
+    box-shadow: var(--b3os-chrome-neutral), var(--b3os-rim);
+    font: 500 14px / 1 var(--b3-font-sans);
+    color: var(--b3os-btn-neutral-ink);
+  }
+  .b3os-prompt__action svg {
+    width: 16px;
+    height: 16px;
+  }
+  @media (max-width: 767px) {
+    .b3os-prompt__action {
+      height: 44px;
+    }
+  }
+
+  /* The readout under the hero: a name column and two metrics (bar, then value). Phones: each arm is a block whose
+     values carry their own words, since the column heads are hidden. */
+  .home-readout__head,
+  .home-readout__arm {
+    display: grid;
+    grid-template-columns: minmax(0, 280px) minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    column-gap: 40px;
+  }
+  .home-readout__head {
+    padding-bottom: 10px;
+    font: 500 12px / 1 var(--b3-font-mono);
+    color: var(--b3-ink-3);
+  }
+  /* Which way is better, beside each head (the two columns point opposite ways); under it where the column is narrow
+     (768 to 1023 px), so neither half breaks. */
+  .home-readout__better {
+    font-weight: 400;
+    color: var(--b3-ink-4);
+  }
+  .home-readout__better::before {
+    content: "· ";
+  }
+  @media (min-width: 768px) and (max-width: 1023px) {
+    .home-readout__head {
+      align-items: end;
+    }
+    .home-readout__better {
+      display: block;
+      margin-top: 4px;
+    }
+    .home-readout__better::before {
+      content: none;
+    }
+  }
+  .home-readout__arm {
+    padding: 10px 0;
+    border-top: 1px solid var(--b3-line-soft);
+  }
+  .home-readout__name {
+    font: 400 14px / 1.35 var(--b3-font-sans);
+    color: var(--b3-ink);
+  }
+  .home-readout__arm[data-us] .home-readout__name {
+    font-weight: 500;
+  }
+  .home-readout__metric {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 7rem;
+    align-items: center;
+    gap: 14px;
+  }
+  /* The track a step darker than the sunken tint, so a short bar still reads against a visible whole. */
+  .home-readout__track {
+    display: block;
+    height: 8px;
+    overflow: hidden;
+    border-radius: 3px;
+    background: var(--b3-line-soft);
+  }
+  .home-readout__track > b {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--b3-series-context);
+  }
+  .home-readout__track > b[data-us] {
+    background: var(--b3-accent);
+  }
+  .home-readout__value {
+    font: 500 14px / 1 var(--b3-font-mono);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+    color: var(--b3-ink);
+  }
+  .home-readout__words {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  /* Phones: the heads become a two-line legend above the arms (with which way is better); the values carry their words. */
+  @media (max-width: 767px) {
+    .home-readout__head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      row-gap: 6px;
+      line-height: 1.3;
+    }
+    .home-readout__head > :first-child {
+      display: none;
+    }
+    .home-readout__arm {
+      grid-template-columns: minmax(0, 1fr);
+      row-gap: 8px;
+      padding: 12px 0;
+    }
+    .home-readout__metric {
+      grid-template-columns: minmax(0, 1fr) 9.5rem;
+    }
+    .home-readout__words {
+      position: static;
+      width: auto;
+      height: auto;
+      overflow: visible;
+      clip-path: none;
+      font-family: var(--b3-font-sans);
+      font-weight: 400;
+      color: var(--b3-ink-3);
+    }
+  }
+
+  /* A quiet disclosure: its summary reads as a small link-like line (44 px on phones). /benchmarks folds its method
+     text into these. */
+  .home-details > summary,
+  .b3os-disclose > summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    cursor: pointer;
+    font: 500 13px / 1.2 var(--b3-font-sans);
+    color: var(--b3-ink-2);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+    text-underline-offset: 0.2em;
+  }
+  @media (max-width: 767px) {
+    .home-details > summary,
+    .b3os-disclose > summary {
+      min-height: 44px;
+    }
+  }
+
+  /* Tiles: one object (.b3os-stats), the figure large, "under" small and muted, the unit in mono. */
+  .home-tiles > * {
+    padding: 22px 22px 18px;
+  }
+  .home-figure {
+    font: 600 clamp(2.25rem, 1.6rem + 1.6vw, 3rem) / 1 var(--b3-font-sans);
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    color: var(--b3-ink);
+  }
+  .home-figure__under {
+    margin-right: 0.18em;
+    font-size: 0.5em;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--b3-ink-3);
+  }
+  .home-figure .home-figure__unit {
+    margin-left: 0.12em;
+    font-size: 0.45em;
+    letter-spacing: 0;
+  }
+
+  /* The loop diagram (ui/LoopDiagram.tsx): wide from 768 px, tall under it. */
+  .b3os-diagram {
+    position: relative;
+  }
+  .b3os-diagram--tall {
+    display: none;
+  }
+  @media (max-width: 767px) {
+    .b3os-diagram--wide {
+      display: none;
+    }
+    .b3os-diagram--tall {
+      display: block;
+    }
+  }
+  .b3os-diagram__frame {
+    position: absolute;
+    border: 1px solid var(--b3-line);
+    border-radius: var(--b3-radius-xl);
+  }
+  .b3os-diagram__frame-label {
+    position: absolute;
+    top: 14px;
+    left: 18px;
+    font: 500 12px / 1 var(--b3-font-mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--b3-ink-3);
+  }
+  .b3os-diagram__lines {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
+  }
+  .b3os-diagram__lines line {
+    stroke: var(--b3-line-strong);
+    stroke-width: 1;
+  }
+  .b3os-diagram__lines line[data-kind="accent"] {
+    stroke: var(--b3-accent);
+  }
+  .b3os-diagram__lines line[data-kind="out"] {
+    stroke-dasharray: 4 4;
+  }
+  .b3os-diagram__joint {
+    position: absolute;
+    width: 19px;
+    height: 19px;
+    border-radius: 9999px;
+    background: var(--b3-bg);
+    transform: translate(-50%, -50%);
+  }
+  .b3os-diagram__joint::after {
+    content: "";
+    position: absolute;
+    inset: 6.5px;
+    border-radius: 9999px;
+    background: var(--b3os-grid-node);
+  }
+  .b3os-diagram__label {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    font: 500 12px / 1 var(--b3-font-mono);
+    white-space: nowrap;
+    color: var(--b3-ink-3);
+  }
+  .b3os-diagram__label[data-align="start"] {
+    transform: translate(0, -50%);
+  }
+  .b3os-diagram__well {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 128px;
+    margin-left: -64px;
+    margin-top: -30px;
+    text-align: center;
+  }
+  /* A well above the spine: its name over its icon, so the line down from the icon crosses no text. The icon's centre
+     stays on the point: the well's foot is 30 px under it. */
+  .b3os-diagram__well[data-label="above"] {
+    flex-direction: column-reverse;
+    margin-top: 0;
+    transform: translateY(calc(-100% + 30px));
+  }
+  .b3os-diagram__well[data-label="above"] .b3os-diagram__text {
+    margin: 0 0 8px;
+  }
+  /* A well on the spine's end in the tall drawing: its name beside the icon, so the line out of its foot crosses none. */
+  .b3os-diagram__well[data-label="side"] {
+    flex-direction: row;
+    gap: 12px;
+    width: auto;
+    margin-left: -30px;
+    text-align: left;
+  }
+  .b3os-diagram__well[data-label="side"] .b3os-diagram__text {
+    margin: 0;
+  }
+  .b3os-diagram__tile {
+    display: inline-flex;
+    border-radius: 17px;
+    background: var(--b3-bg);
+  }
+  .b3os-diagram__tile .b3os-tile__plate {
+    color: var(--b3-ink-2);
+  }
+  .b3os-diagram__well[data-well="agent"] .b3os-tile__plate {
+    color: var(--b3-accent-text);
+  }
+  .b3os-diagram__text {
+    display: flex;
+    flex-direction: column;
+    margin-top: 8px;
+  }
+  .b3os-diagram__name {
+    font: 500 14px / 1.3 var(--b3-font-sans);
+    white-space: nowrap;
+    color: var(--b3-ink);
+  }
+  .b3os-diagram__sub {
+    margin-top: 1px;
+    font: 400 13px / 1.3 var(--b3-font-sans);
+    white-space: nowrap;
+    color: var(--b3-ink-3);
+  }
+
+  /* Products: a tab list on the left and one panel (Modal's product tabs). Under 1024 px the list is a grid of buttons. */
+  .home-products {
+    display: grid;
+    gap: 20px;
+  }
+  .home-products__list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .home-products__tab {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    min-height: 56px;
+    padding: 8px 12px 8px 8px;
+    border: 1px solid transparent;
+    border-radius: var(--b3-radius-md);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      background-color var(--b3-dur-fast) var(--b3-ease-ui),
+      box-shadow var(--b3-dur-fast) var(--b3-ease-ui);
+  }
+  .home-products__tab:hover {
+    background: var(--b3-surface-hover);
+  }
+  .home-products__tab[aria-selected="true"] {
+    border-color: var(--b3-line);
+    background: var(--b3-surface);
+    box-shadow: var(--b3os-shadow-soft);
+  }
+  .home-products__well {
+    flex: none;
+    padding: 4px;
+    border-radius: 14px;
+  }
+  .home-products__well .b3os-tile__plate {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    color: var(--b3-ink-2);
+  }
+  .home-products__tab[aria-selected="true"] .b3os-tile__plate {
+    color: var(--b3-accent-text);
+  }
+  /* Each row's 3 by 3 grid (DIRECTION 2; console elegance area 8 fix round, R1) sits in the icon's place: under a mouse
+     the icon gives way to it and it plays the row's own pattern; at rest, on a touch screen and with reduced motion the
+     icon shows and nothing moves. */
+  .home-products__well .b3os-tile__plate > * {
+    grid-area: 1 / 1;
+    transition: opacity var(--b3-dur-fast) var(--b3-ease-ui);
+  }
+  .home-products__pixels {
+    opacity: 0;
+    color: var(--b3-accent-text);
+  }
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    .home-products__tab:hover .home-products__pixels {
+      opacity: 1;
+    }
+    .home-products__tab:hover .b3os-tile__plate > svg {
+      opacity: 0;
+    }
+  }
+  .home-products__name {
+    display: block;
+    font: 600 16px / 1.3 var(--b3-font-sans);
+    letter-spacing: -0.01em;
+    color: var(--b3-ink);
+  }
+  .home-products__line {
+    display: none;
+    margin-top: 2px;
+    font: 400 13px / 1.4 var(--b3-font-sans);
+    color: var(--b3-ink-3);
+    text-wrap: pretty;
+  }
+  .home-products__panel {
+    min-width: 0;
+  }
+  /* An odd last row (seven in two or three columns) spans the row, as the header menu's seventh does. */
+  @media (max-width: 1023px) {
+    .home-products__tab:last-child:nth-child(odd) {
+      grid-column: 1 / -1;
+    }
+  }
+  @media (max-width: 767px) {
+    .home-products__list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .home-products__tab {
+      min-height: 52px;
+      gap: 10px;
+      padding: 6px 10px 6px 6px;
+    }
+    .home-products__well .b3os-tile__plate {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+    }
+    .home-products__name {
+      font-size: 15px;
+    }
+  }
+  @media (min-width: 1024px) {
+    .home-products {
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: 40px;
+      align-items: start;
+    }
+    /* Seven rows inside the homepage's height budget (ops/browser-gate.mjs height, 4,800 px at 1440): 2 px apart and
+       6 px inside, the rows themselves unboxed until chosen. */
+    .home-products__list {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 2px;
+    }
+    .home-products__tab {
+      min-height: 60px;
+      padding: 6px 14px 6px 8px;
+    }
+    .home-products__name {
+      font-size: 17px;
+    }
+    .home-products__line {
+      display: block;
+    }
+  }
+
+  /* Start: the stepper (ui/Stepper.tsx; b3os-web ReliableByDesign). Each node a 40 px ring holding a 28 px numbered
+     circle; a 1 px rail between the nodes, blue into the active step. */
+  .b3os-stepper {
+    position: relative;
+    display: grid;
+    gap: 36px;
+    padding-top: 28px;
+  }
+  /* The lead-in: the rail arrives in the brand blue from a blueprint node above step 1, the active step. */
+  .b3os-stepper::before {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 19.5px;
+    height: 25px;
+    width: 1px;
+    background: var(--b3-accent);
+  }
+  .b3os-stepper::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 17px;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: var(--b3-accent);
+  }
+  .b3os-stepper__step {
+    position: relative;
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    column-gap: 20px;
+  }
+  .b3os-stepper__step:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    top: 40px;
+    bottom: -36px;
+    left: 19.5px;
+    width: 1px;
+    background: var(--b3-line);
+  }
+  .b3os-stepper__node {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--b3-line);
+    border-radius: 9999px;
+    background: var(--b3-bg);
+    box-shadow: var(--b3os-shadow-pressed);
+  }
+  .b3os-stepper__node > span {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--b3-line-strong);
+    border-radius: 9999px;
+    background: var(--b3-surface);
+    box-shadow: var(--b3os-shadow-input);
+    font: 600 13px / 1 var(--b3-font-sans);
+    font-variant-numeric: tabular-nums;
+    color: var(--b3-ink-2);
+  }
+  .b3os-stepper__step[data-active] .b3os-stepper__node {
+    border-color: var(--b3-accent-line);
+  }
+  .b3os-stepper__step[data-active] .b3os-stepper__node > span {
+    border-color: var(--b3-accent);
+    background: var(--b3-accent);
+    box-shadow: var(--b3os-rim);
+    color: var(--b3-accent-ink);
+  }
+  .b3os-stepper__title {
+    padding-top: 8px;
+    font: 600 1.25rem / 1.3 var(--b3-font-sans);
+    letter-spacing: -0.015em;
+    color: var(--b3-ink);
+    text-wrap: balance;
+  }
+
+  /* An install command: mono on the sunken tint, scrolling inside itself, the copy button pinned right. */
+  .home-command {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 4px 4px 4px 0;
+    border-radius: var(--b3-radius-md);
+    background: var(--b3-surface-sunken);
+    box-shadow: var(--b3os-shadow-groove);
+  }
+  .home-command__text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 8px 14px;
+    font: 500 14px / 1.4 var(--b3-font-mono);
+    white-space: nowrap;
+    color: var(--b3-ink);
+    scrollbar-width: none;
+  }
+  .home-command__text::-webkit-scrollbar {
+    display: none;
+  }
+  /* Phones: the command wraps at its spaces (a word longer than the line breaks too) beside its copy button, so it
+     never scrolls sideways inside its box (console elegance AUDIT 8.2, 2.9's rule: 238 px in 234 at 390). */
+  @media (max-width: 639px) {
+    .home-command__text {
+      overflow-x: visible;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  /* Developer links: one hairline-divided row; two columns of 48 px rows on phones. */
+  .home-links {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    border-block: 1px solid var(--b3-line);
+    background: var(--b3-line-soft);
+  }
+  .home-links > a {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 48px;
+    padding: 0 14px;
+    background: var(--b3-bg);
+    font: 500 14px / 1.2 var(--b3-font-sans);
+    color: var(--b3-ink-2);
+    transition:
+      color var(--b3-dur-fast) var(--b3-ease-ui),
+      background-color var(--b3-dur-fast) var(--b3-ease-ui);
+  }
+  .home-links > a svg {
+    color: var(--b3-ink-4);
+    transition: color var(--b3-dur-fast) var(--b3-ease-ui);
+  }
+  .home-links > a:hover {
+    color: var(--b3-ink);
+    background: color-mix(in srgb, var(--b3-bg) 94%, var(--b3-ink));
+  }
+  .home-links > a:hover svg {
+    color: var(--b3-accent-text);
+  }
+  @media (min-width: 768px) {
+    .home-links {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 1024px) {
+    .home-links {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+  }
+}
+
+/* ---------- Product pages and /pricing (round 6, DESIGN.md §4) ---------- */
+@layer components {
+  .home-actions--start {
+    justify-content: flex-start;
+  }
+
+  /* Hero: the product's well beside its bracketed name, then API, CLI and MCP as quiet mono rows. */
+  .product-hero__well {
+    flex: none;
+    padding: 3px;
+    border-radius: 12px;
+  }
+  .product-hero__well .b3os-tile__plate {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    color: var(--b3-accent-text);
+  }
+  .product-hero__ways {
+    display: grid;
+    gap: 6px;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .product-hero__ways > div {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: 12px;
+  }
+  .product-hero__ways dt {
+    color: var(--b3-ink-3);
+  }
+  .product-hero__ways dd {
+    min-width: 0;
+    font-family: var(--b3-font-mono);
+    color: var(--b3-ink-2);
+    overflow-wrap: anywhere;
+  }
+
+  /* The ledger (ui/Headlines.tsx HeadlineLedger; layout from React Bits Pro stats-13): hairline rows of index, figure,
+     then what it is. No frame, so the provenance badges inside sit on the page ground. */
+  .b3os-ledger {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid var(--b3-line);
+  }
+  .b3os-ledger__row {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(13rem, 0.5fr) minmax(0, 1fr);
+    gap: 8px 32px;
+    align-items: start;
+    padding: 24px 0;
+    border-bottom: 1px solid var(--b3-line);
+  }
+  .b3os-ledger__index {
+    padding-top: 0.55em;
+    font: 500 13px / 1 var(--b3-font-mono);
+    color: var(--b3-ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .b3os-ledger__figure {
+    font: 600 clamp(2.25rem, 1.6rem + 1.6vw, 3rem) / 1 var(--b3-font-sans);
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    color: var(--b3-ink);
+  }
+  .b3os-ledger__figure .b3os-stat__unit {
+    margin-left: 0.12em;
+    font-size: 0.45em;
+    letter-spacing: 0;
+  }
+  @media (max-width: 767px) {
+    .b3os-ledger__row {
+      grid-template-columns: 2rem minmax(0, 1fr);
+      gap: 12px 8px;
+      padding: 20px 0;
+    }
+    .b3os-ledger__body {
+      grid-column: 2;
+    }
+  }
+
+  /* What it does (site/FeatureList.tsx; layout from React Bits Pro features-13): a numbered list, every row open,
+     beside a pane. The pane is a tint, not a frame, so the moment's own outlined images and code inside it are not a
+     card in a card. */
+  .b3os-feats {
+    display: grid;
+    gap: 32px;
+  }
+  @media (min-width: 1024px) {
+    .b3os-feats {
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+      gap: 56px;
+      align-items: start;
+    }
+  }
+  .b3os-feats__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid var(--b3-line);
+  }
+  .b3os-feat {
+    display: grid;
+    grid-template-columns: 2.25rem minmax(0, 1fr);
+    gap: 8px;
+    padding: 20px 0 24px;
+    border-bottom: 1px solid var(--b3-line);
+  }
+  .b3os-feat__index {
+    padding-top: 0.3em;
+    font: 500 12px / 1 var(--b3-font-mono);
+    color: var(--b3-ink-4);
+    font-variant-numeric: tabular-nums;
+  }
+  .b3os-feat__title {
+    margin: 0;
+    font: 500 1.125rem / 1.35 var(--b3-font-sans);
+    letter-spacing: -0.012em;
+    color: var(--b3-ink);
+  }
+  .b3os-feats__pane {
+    min-width: 0;
+    padding: 20px;
+    border-radius: 22px;
+    background: var(--b3os-tray);
+  }
+  @media (min-width: 1024px) {
+    .b3os-feats__pane {
+      position: sticky;
+      top: 88px;
+      padding: 24px;
+    }
+  }
+  /* Without a pane (deploy, whose plan is a band of its own): the features fill the width in two columns from 768 px,
+     the first half down the left (FeatureList sets --feat-rows), each row's hairlines level across both. */
+  @media (min-width: 768px) {
+    .b3os-feats--cols .b3os-feats__list {
+      display: grid;
+      grid-auto-flow: column;
+      grid-template-rows: repeat(var(--feat-rows, 4), auto);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 56px;
+      border-top: 0;
+    }
+    .b3os-feats--cols .b3os-feat {
+      border-top: 1px solid var(--b3-line);
+      border-bottom: 0;
+    }
+    .b3os-feats--cols .b3os-feat[data-col-end] {
+      border-bottom: 1px solid var(--b3-line);
+    }
+  }
+  @media (min-width: 1024px) {
+    .b3os-feats--cols {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  /* A moment's rail stands up in the pane, as it does on a phone. */
+  .b3os-feats__pane .moment-rail {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+    padding-left: 48px;
+  }
+  .b3os-feats__pane .moment-rail::before {
+    top: 16px;
+    bottom: 16px;
+    left: 16px;
+    right: auto;
+    width: 1px;
+    height: auto;
+  }
+  .b3os-feats__pane .moment-step__node {
+    position: absolute;
+    left: -48px;
+    top: -6px;
+  }
+  .b3os-feats__pane .moment-step p:first-of-type {
+    margin-top: 0;
+  }
+
+  /* "More results": a quiet disclosure with a plus that becomes a minus (no turned chevron). */
+  .product-more > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    cursor: pointer;
+    list-style: none;
+    font: 500 14px / 1.2 var(--b3-font-sans);
+    color: var(--b3-ink-2);
+  }
+  .product-more > summary::-webkit-details-marker {
+    display: none;
+  }
+  .product-more > summary:hover {
+    color: var(--b3-ink);
+  }
+  .product-more__minus,
+  .product-more[open] .product-more__plus {
+    display: none;
+  }
+  .product-more[open] .product-more__minus {
+    display: block;
+  }
+
+  /* /pricing: a plus that becomes a minus on open disclosures (the limit groups, the questions). */
+  .pricing-mark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    color: var(--b3-ink-4);
+  }
+  .pricing-mark__minus,
+  details[open] > summary .pricing-mark__plus {
+    display: none;
+  }
+  details[open] > summary .pricing-mark__minus {
+    display: block;
+  }
+  details[open] > summary .pricing-mark {
+    color: var(--b3-ink-2);
+  }
+  .pricing-group > summary,
+  .pricing-faq summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .pricing-group > summary::-webkit-details-marker,
+  .pricing-faq summary::-webkit-details-marker {
+    display: none;
+  }
+  .pricing-group > summary {
+    min-height: 52px;
+    padding-top: 12px;
+    font: 500 12px / 1.4 var(--b3-font-mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--b3-ink-3);
+  }
+  .pricing-group > summary:hover {
+    color: var(--b3-ink);
+  }
+  .pricing-group {
+    padding-bottom: 16px;
+  }
+  /* From 768 px every group shows at once, side by side: the summary is a plain heading, no toggle (console elegance
+     area 8 fix round, P3). A phone keeps the plus and minus, to fold the long list. */
+  @media (min-width: 768px) {
+    .pricing-group > summary {
+      pointer-events: none;
+      cursor: default;
+    }
+    .pricing-group > summary .pricing-mark {
+      display: none;
+    }
+  }
+  .pricing-faq {
+    border-top: 1px solid var(--b3-line);
+  }
+  .pricing-faq > details {
+    border-bottom: 1px solid var(--b3-line);
+  }
+  .pricing-faq summary {
+    min-height: 60px;
+    padding: 12px 0;
+    font: 500 1.0625rem / 1.4 var(--b3-font-sans);
+    color: var(--b3-ink);
+  }
+  .pricing-faq summary:hover .pricing-mark {
+    color: var(--b3-ink);
+  }
+  .pricing-faq__a {
+    max-width: 62ch;
+    padding: 0 44px 20px 0;
+    font: 400 15px / 1.6 var(--b3-font-sans);
+    color: var(--b3-ink-2);
+    text-wrap: pretty;
+  }
+  @media (max-width: 767px) {
+    .pricing-faq__a {
+      padding-right: 0;
+    }
+  }
+  .pricing-group > summary:focus-visible,
+  .pricing-faq summary:focus-visible,
+  .product-more > summary:focus-visible {
+    outline: 2px solid var(--b3-focus);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* /render's styles and voices: one row of tabs that wraps on phones; the selected one is a filled surface, not an
+     underline (console elegance AUDIT 8.8, as 2.7: S09). 36 px tall, 44 px on a touch screen. */
+  .render-media__tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .render-media__tabs > button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 12px;
+    border-radius: 6px;
+    font: 500 14px / 1 var(--b3-font-sans);
+    color: var(--b3-ink-3);
+    cursor: pointer;
+    transition:
+      color var(--b3-dur-fast) var(--b3-ease-ui),
+      background-color var(--b3-dur-fast) var(--b3-ease-ui);
+  }
+  .render-media__tabs > button:hover {
+    color: var(--b3-ink);
+  }
+  .render-media__tabs > [aria-selected="true"] {
+    background: var(--b3-surface-sunken);
+    color: var(--b3-ink);
+  }
+  /* In dark the sunken surface is the page itself: the console's quiet tabs' chosen fill (console area 6). */
+  :where([data-theme="dark"]) .render-media__tabs > [aria-selected="true"] {
+    background: var(--ds-neutral-800);
+  }
+  .render-media__tabs > button:focus-visible {
+    outline: 2px solid var(--b3-focus);
+    outline-offset: 2px;
+  }
+  @media (pointer: coarse) {
+    .render-media__tabs > button {
+      min-height: 44px;
+    }
+  }
+
+  /* A pack's mark (actions/marks.tsx PackMark `plain`): the glyph in a hairline square, no glass tile (AUDIT 6.7, S16):
+     the console's cards and the site's marketplace (8.6), so it lives in the sheet both load. */
+  .pack-mark {
+    display: grid;
+    flex-shrink: 0;
+    place-items: center;
+    border: 1px solid var(--b3-line);
+    border-radius: 8px;
+    color: var(--b3-ink-2);
+  }
+  .pack-mark svg {
+    width: 56%;
+    height: 56%;
+  }
+
+  /* /changelog: the newest ten, then "Show {n} older" (a summary drawn as the neutral button) that opens the rest in
+     place and goes once they show. */
+  .changelog-older {
+    border-top: 1px solid var(--b3-line);
+    padding-top: 32px;
+  }
+  .changelog-older > summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  .changelog-older > summary::-webkit-details-marker {
+    display: none;
+  }
+  .changelog-older[open] {
+    padding-top: 0;
+  }
+  .changelog-older[open] > summary {
+    display: none;
+  }
+
+  /* /pricing's meters: a grid of three on wide screens (unit, what it counts, product), a stacked row on phones. */
+  .pricing-meters {
+    border-top: 1px solid var(--b3-line);
+  }
+  .pricing-meters__head,
+  .pricing-meters__row {
+    display: grid;
+    grid-template-columns: minmax(0, 13rem) minmax(0, 1fr) minmax(0, 10rem);
+    gap: 6px 24px;
+    align-items: baseline;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--b3-line-soft);
+  }
+  .pricing-meters__head {
+    padding: 10px 0;
+    border-bottom-color: var(--b3-line);
+    font: 500 12px / 1.4 var(--b3-font-mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--b3-ink-3);
+  }
+  .pricing-meters code {
+    font-size: 12px;
+  }
+  @media (max-width: 767px) {
+    .pricing-meters__head {
+      display: none;
+    }
+    .pricing-meters__row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  /* Limits: label and value rows on hairlines, at least 44 px each. */
+  /* Install lines (deploy): a label, then the homepage's command row; side by side from 640 px. */
+  .product-install {
+    display: grid;
+    gap: 12px;
+    max-width: 44rem;
+    margin: 0;
+  }
+  .product-install > div {
+    display: grid;
+    gap: 8px;
+  }
+  .product-install dt {
+    font: 400 14px / 1.4 var(--b3-font-sans);
+    color: var(--b3-ink-2);
+  }
+  .product-install dd {
+    margin: 0;
+  }
+  @media (min-width: 640px) {
+    .product-install > div {
+      grid-template-columns: 8.5rem minmax(0, 1fr);
+      align-items: center;
+      gap: 16px;
+    }
+  }
+  .product-limits__head {
+    margin: 0;
+    font: 500 12px / 1.4 var(--b3-font-mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--b3-ink-3);
+  }
+  .product-limits {
+    margin: 12px 0 0;
+    border-top: 1px solid var(--b3-line);
+  }
+  .product-limits > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 48px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--b3-line-soft);
+  }
+  .product-limits dt {
+    min-width: 0;
+    font: 400 14px / 1.4 var(--b3-font-sans);
+    color: var(--b3-ink-2);
+  }
+  .product-limits dd {
+    flex: none;
+    margin: 0;
+    font: 500 14px / 1.4 var(--b3-font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--b3-ink);
+    text-align: right;
+  }
+}
+
+/* Dashboard additions live in app.css (imported by the dashboard entry). */

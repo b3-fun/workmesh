@@ -72,14 +72,14 @@ struct MenuContent: View {
         }
         if s.ownership.backedOff {
             return SlackLine(symbol: "person.crop.circle", text: "Your own Slack status is up",
-                             help: "agentblip leaves it alone and picks up again when it clears.", live: false)
+                             help: "Workmesh leaves it alone and picks up again when it clears.", live: false)
         }
         if let f = s.formatted {
             return SlackLine(symbol: "bubble.left.fill", text: f.text,
                              help: "Your Slack status: \(f.text)", live: true)
         }
         return SlackLine(symbol: "bubble.left", text: "Slack status clear",
-                         help: "No agents are working, so agentblip shows nothing.", live: false)
+                         help: "No agents are working, so Workmesh shows nothing.", live: false)
     }
 
     @ViewBuilder
@@ -223,16 +223,16 @@ struct MenuContent: View {
 
     private var offline: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("The agentblip daemon isn't running", systemImage: "circle.dashed")
+            Label("The Workmesh daemon isn't running", systemImage: "circle.dashed")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             HStack {
-                Text("agentblip start --detach")
+                Text("workmesh start --detach")
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
                 Spacer()
                 Button {
-                    model.copy("agentblip start --detach")
+                    model.copy("workmesh start --detach")
                 } label: {
                     Image(systemName: "doc.on.doc")
                 }

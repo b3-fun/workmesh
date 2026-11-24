@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Builds a release binary and wraps it into agentblip.app — a menu-bar agent
+# Builds a release binary and wraps it into Workmesh.app — a menu-bar agent
 # (LSUIElement, no dock icon). No Xcode project needed; pure SwiftPM + bundling.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-APP_NAME="agentblip"
-BUNDLE_ID="org.npclabs.agentblip.menubar"
+APP_NAME="Workmesh"
+BUNDLE_ID="org.npclabs.workmesh.menubar"
 VERSION="${1:-0.1.0}"
 OUT="${OUT:-dist}"
 
 echo "Building release binary…"
 swift build -c release
 
-BIN="$(swift build -c release --show-bin-path)/AgentblipMenuBar"
+BIN="$(swift build -c release --show-bin-path)/WorkmeshMenuBar"
 APP="$OUT/$APP_NAME.app"
 CONTENTS="$APP/Contents"
 
@@ -28,7 +28,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key><string>$APP_NAME</string>
-    <key>CFBundleDisplayName</key><string>agentblip</string>
+    <key>CFBundleDisplayName</key><string>Workmesh</string>
     <key>CFBundleExecutable</key><string>$APP_NAME</string>
     <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
     <key>CFBundleVersion</key><string>$VERSION</string>

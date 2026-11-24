@@ -14,14 +14,14 @@ enum StatusIcon {
     static func image(for blip: BlipState) -> NSImage {
         switch blip {
         case .unreachable:
-            return template("circle.dashed", alpha: 0.45, label: "agentblip: daemon offline")
+            return template("circle.dashed", alpha: 0.45, label: "Workmesh: daemon offline")
         case .idle:
-            return template("circle", label: "agentblip: no agents running")
+            return template("circle", label: "Workmesh: no agents running")
         case .working(let n, let onAir):
             let base = numbered(n)
-            return template(onAir ? "\(base).fill" : base, label: "agentblip: \(n) working")
+            return template(onAir ? "\(base).fill" : base, label: "Workmesh: \(n) working")
         case .needsYou(let n):
-            return tinted("\(numbered(n)).fill", color: .systemOrange, label: "agentblip: \(n) need you")
+            return tinted("\(numbered(n)).fill", color: .systemOrange, label: "Workmesh: \(n) need you")
         }
     }
 

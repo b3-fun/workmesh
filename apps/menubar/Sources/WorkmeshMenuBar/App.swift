@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct AgentblipMenuBarApp: App {
+struct WorkmeshMenuBarApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {

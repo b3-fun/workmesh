@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "AgentblipMenuBar",
+    name: "WorkmeshMenuBar",
     platforms: [.macOS(.v13)], // MenuBarExtra requires macOS 13 (Ventura)
     targets: [
         .executableTarget(
-            name: "AgentblipMenuBar",
-            path: "Sources/AgentblipMenuBar"
+            name: "WorkmeshMenuBar",
+            path: "Sources/WorkmeshMenuBar"
         )
     ]
 )

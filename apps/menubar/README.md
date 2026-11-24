@@ -1,11 +1,11 @@
-# agentblip menu bar app (macOS)
+# Workmesh menu bar app (macOS)
 
 A tiny native SwiftUI menu bar app — the "on-air light" for your AI agents, on
 your own screen. It's a **thin client of the local daemon**: it holds no logic
 of its own, just polls the daemon's loopback API and renders the blip.
 
 ```
-menu bar app ──GET /state, /config──▶ agentblip daemon (127.0.0.1:4519) ──▶ Slack
+menu bar app ──GET /state, /config──▶ workmesh daemon (127.0.0.1:4519) ──▶ Slack
             ◀──POST /pause /resume /config /sessions/dismiss──
 ```
 
@@ -38,28 +38,33 @@ only, so there's zero logic to keep in sync.
 ## Requirements
 
 - macOS 13 (Ventura) or later — uses SwiftUI `MenuBarExtra`.
-- The `agentblip` CLI installed and the daemon running (`npm i -g agentblip`,
-  then `agentblip setup` / `agentblip start`). The app finds the daemon via the
-  same `~/.local/state/agentblip/daemon.secret` and `~/.config/agentblip/config.json`
-  the CLI uses (XDG paths respected).
+- The `workmesh` CLI installed and the daemon running (`npm i -g @b3os/workmesh`,
+  then `workmesh setup` / `workmesh start --detach`). The app finds the daemon via the
+  same `~/.local/state/workmesh/daemon.secret` and `~/.config/workmesh/config.json`
+  the CLI uses (XDG paths respected; while only the pre-rename `agentblip` files
+  exist, it reads those).
 
 ## Build & run
 
 ```bash
 cd apps/menubar
 swift build                 # compile
-./scripts/make-app.sh 0.2.0 # → dist/agentblip.app (a menu-bar agent, LSUIElement)
-open dist/agentblip.app
+./scripts/make-app.sh 0.3.0 # → dist/Workmesh.app (a menu-bar agent, LSUIElement)
+open dist/Workmesh.app
 ```
 
 The build is unsigned, so on first launch macOS Gatekeeper will complain —
-right-click the app → **Open**, or `xattr -dr com.apple.quarantine dist/agentblip.app`.
-For distribution we'd notarize it or ship a Homebrew cask (`brew install --cask agentblip`).
+right-click the app → **Open**, or `xattr -dr com.apple.quarantine dist/Workmesh.app`.
+For distribution we'd notarize it or ship a Homebrew cask (`brew install --cask workmesh`).
+
+To start it at login, a LaunchAgent with the label `org.npclabs.workmesh.menubar`
+(the bundle id) that runs `Workmesh.app/Contents/MacOS/Workmesh` with `RunAtLoad`
+and `KeepAlive` works until the app offers launch at login itself.
 
 ## Layout
 
 ```
-Sources/AgentblipMenuBar/
+Sources/WorkmeshMenuBar/
   App.swift          # @main MenuBarExtra scene
   AppModel.swift     # poll loop + control actions (ObservableObject)
   DaemonClient.swift # authed HTTP to the loopback API
@@ -69,7 +74,7 @@ Sources/AgentblipMenuBar/
   MenuContent.swift  # the dropdown: header, grouped list, settings
   SessionRow.swift   # one session row + its action menu
   Notifier.swift     # opt-in "needs you" notifications
-scripts/make-app.sh  # bundles the binary into agentblip.app
+scripts/make-app.sh  # bundles the binary into Workmesh.app
 ```
 
 The app stays a thin client. Everything it shows comes from the daemon: the

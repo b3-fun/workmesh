@@ -8,8 +8,8 @@ import {
   HUB_DEVICE_TOKEN_RE,
   hubProjectRuleSchema,
   hubShareLevelSchema,
-} from "@agentblip/core";
-import type { FormatOptions, HubShareLevel } from "@agentblip/core";
+} from "@workmesh/core";
+import type { FormatOptions, HubShareLevel } from "@workmesh/core";
 import { configPath } from "./paths";
 
 const templatesSchema = z

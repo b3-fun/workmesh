@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import { planStatusUpdate } from "@agentblip/core";
-import type { SlackStatus } from "@agentblip/core";
+import { planStatusUpdate } from "@workmesh/core";
+import type { SlackStatus } from "@workmesh/core";
 import { loadConfigSafe, saveConfig } from "../lib/config";
 import { configPath, ownershipStatePath } from "../lib/paths";
 import { loadOwnershipState } from "../lib/ownership-state";

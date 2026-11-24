@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { SessionEvent } from "@agentblip/core";
+import type { SessionEvent } from "@workmesh/core";
 
 /**
  * Claude Code writes a per-workflow `journal.jsonl` under

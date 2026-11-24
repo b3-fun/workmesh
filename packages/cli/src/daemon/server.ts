@@ -1,6 +1,6 @@
 import http from "node:http";
-import { sessionEventSchema } from "@agentblip/core";
-import type { SessionEvent, SlackStatus, StatusSnapshot } from "@agentblip/core";
+import { sessionEventSchema } from "@workmesh/core";
+import type { SessionEvent, SlackStatus, StatusSnapshot } from "@workmesh/core";
 import { secretsEqual } from "../lib/daemon-auth";
 import { z } from "zod";
 import { liveConfigPatchSchema } from "../lib/config";

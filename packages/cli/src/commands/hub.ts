@@ -6,8 +6,8 @@ import {
   hubPairPollResponseSchema,
   hubPairStartResponseSchema,
   hubShareLevelSchema,
-} from "@agentblip/core";
-import type { HubPairStartResponse, HubProjectRule, HubShareLevel } from "@agentblip/core";
+} from "@workmesh/core";
+import type { HubPairStartResponse, HubProjectRule, HubShareLevel } from "@workmesh/core";
 import pkg from "../../package.json";
 import { hubShareLevel, loadConfig, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";

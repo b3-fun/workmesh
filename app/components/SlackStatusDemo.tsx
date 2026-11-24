@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 /**
  * Fake Slack profile card cycling through REAL formatter outputs
- * (see @agentblip/core format.ts DEFAULT_TEMPLATES).
+ * (see @workmesh/core format.ts DEFAULT_TEMPLATES).
  */
 const STATUSES = [
   { emoji: "🤖", text: "claude agent working" },

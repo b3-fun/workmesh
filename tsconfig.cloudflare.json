@@ -21,7 +21,7 @@
     "rootDirs": [".", "./.react-router/types"],
     "paths": {
       "~/*": ["./app/*"],
-      "@agentblip/core": ["./packages/core/src/index.ts"]
+      "@workmesh/core": ["./packages/core/src/index.ts"]
     },
     "esModuleInterop": true,
     "resolveJsonModule": true,

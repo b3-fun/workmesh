@@ -92,7 +92,7 @@ while snoozed.
 ## The event schema
 
 `POST /event` bodies are validated against `sessionEventSchema` from
-[`@agentblip/core`](../packages/core/src/events.ts):
+[`@workmesh/core`](../packages/core/src/events.ts):
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -146,7 +146,7 @@ Details worth knowing:
 ## Staleness rules
 
 The daemon assumes adapters die without saying goodbye, so liveness is enforced
-(constants from `@agentblip/core`):
+(constants from `@workmesh/core`):
 
 - A `working` session silent for **3 minutes** is demoted to idle and its activity
   cleared (a `waiting` one gets **30 minutes**, since waiting is quiet by design).

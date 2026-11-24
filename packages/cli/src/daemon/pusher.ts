@@ -4,7 +4,7 @@ import {
   EMPTY_OWNERSHIP_STATE,
   formatStatus,
   planStatusUpdate,
-} from "@agentblip/core";
+} from "@workmesh/core";
 import type {
   FormatOptions,
   OwnershipAction,
@@ -13,7 +13,7 @@ import type {
   SlackStatus,
   StatusPolicy,
   StatusReadResponse,
-} from "@agentblip/core";
+} from "@workmesh/core";
 import { PermanentSinkError } from "../sinks/types";
 import type { Sink } from "../sinks/types";
 

@@ -4,8 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { watch } from "chokidar";
 import { z } from "zod";
-import { DETAIL_LIMITS } from "@agentblip/core";
-import type { SessionEvent, SessionEventDetail } from "@agentblip/core";
+import { DETAIL_LIMITS } from "@workmesh/core";
+import type { SessionEvent, SessionEventDetail } from "@workmesh/core";
 import {
   absolutePath,
   clip,

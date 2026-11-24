@@ -1,5 +1,5 @@
-import { sessionEventSchema } from "@agentblip/core";
-import type { SessionEvent } from "@agentblip/core";
+import { sessionEventSchema } from "@workmesh/core";
+import type { SessionEvent } from "@workmesh/core";
 import { mapHookInput } from "../adapters/claude-code";
 import { mapCodexHookInput, mapNotifyArg } from "../adapters/codex";
 import { fitEventBody } from "../adapters/detail";

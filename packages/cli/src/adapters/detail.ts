@@ -1,6 +1,6 @@
 import path from "node:path";
-import { DETAIL_LIMITS, truncateHead, truncateMiddle } from "@agentblip/core";
-import type { SessionEvent, SessionEventDetail } from "@agentblip/core";
+import { DETAIL_LIMITS, truncateHead, truncateMiddle } from "@workmesh/core";
+import type { SessionEvent, SessionEventDetail } from "@workmesh/core";
 
 /**
  * Helpers that build the local-only `detail` block of a SessionEvent from raw

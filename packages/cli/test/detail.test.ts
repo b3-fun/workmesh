@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DETAIL_LIMITS, SessionStore, formatStatus, sessionEventSchema } from "@agentblip/core";
-import type { SessionEvent } from "@agentblip/core";
+import { DETAIL_LIMITS, SessionStore, formatStatus, sessionEventSchema } from "@workmesh/core";
+import type { SessionEvent } from "@workmesh/core";
 import { mapHookInput } from "../src/adapters/claude-code";
 import { fitEventBody, responseOk, responseText } from "../src/adapters/detail";
 import { Pusher } from "../src/daemon/pusher";

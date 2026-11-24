@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { EMPTY_OWNERSHIP_STATE, slackStatusSchema } from "@agentblip/core";
-import type { OwnershipState } from "@agentblip/core";
+import { EMPTY_OWNERSHIP_STATE, slackStatusSchema } from "@workmesh/core";
+import type { OwnershipState } from "@workmesh/core";
 import { ownershipStatePath } from "./paths";
 
 /**

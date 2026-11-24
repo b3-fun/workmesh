@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AgentSession } from "@agentblip/core";
+import type { AgentSession } from "@workmesh/core";
 import { isProcessAlive } from "../lib/pidfile";
 
 /**

@@ -63,7 +63,7 @@ Any tool (curl) ───┼─────────────────�
 │   ├── routes/                # _index (landing), pair, privacy
 │   └── app.css                # Tailwind v4
 ├── packages/
-│   ├── core/                  # @agentblip/core — shared, dependency-light (zod only)
+│   ├── core/                  # @workmesh/core — shared, dependency-light (zod only)
 │   │   └── src/               # events (zod wire contracts), aggregate, format, redact
 │   └── cli/                   # `agentblip` npm CLI (daemon + adapters + sinks)
 │       └── src/

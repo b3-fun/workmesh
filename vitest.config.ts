@@ -11,7 +11,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@agentblip/core": new URL("./packages/core/src/index.ts", import.meta.url)
+      "@workmesh/core": new URL("./packages/core/src/index.ts", import.meta.url)
         .pathname,
     },
   },

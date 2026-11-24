@@ -1,5 +1,5 @@
 import os from "node:os";
-import { truncateHead } from "@agentblip/core";
+import { truncateHead } from "@workmesh/core";
 
 /**
  * Secret redaction for conversation text (Bullpen SPEC §9). Runs on the

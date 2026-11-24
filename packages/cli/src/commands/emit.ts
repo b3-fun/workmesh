@@ -1,4 +1,4 @@
-import { eventKindSchema, sessionEventSchema } from "@agentblip/core";
+import { eventKindSchema, sessionEventSchema } from "@workmesh/core";
 import { loadConfig } from "../lib/config";
 import { ensureDaemon, postEvent } from "../lib/daemon-client";
 import { green } from "../lib/ui";

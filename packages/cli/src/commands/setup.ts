@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { pairPollResponseSchema, pairStartResponseSchema } from "@agentblip/core";
+import { pairPollResponseSchema, pairStartResponseSchema } from "@workmesh/core";
 import {
   codexConfigPath,
   codexHooksPath,

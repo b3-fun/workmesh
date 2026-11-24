@@ -3,7 +3,7 @@ import {
   pairStartResponseSchema,
   statusReadResponseSchema,
   type PairPollResponse,
-} from "@agentblip/core";
+} from "@workmesh/core";
 import type { Env } from "../env";
 import { aesGcmDecrypt, aesGcmEncrypt, sha256hex } from "../lib/crypto";
 import {

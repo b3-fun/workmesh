@@ -6,7 +6,7 @@ import {
   type SlackProfileGetBody,
   type SlackStatus,
   type StatusReadResponse,
-} from "@agentblip/core";
+} from "@workmesh/core";
 import type { Sink } from "./types";
 
 const PUSH_TIMEOUT_MS = 10_000;

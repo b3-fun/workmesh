@@ -59,7 +59,7 @@
     "commander": "^14.0.0"
   },
   "devDependencies": {
-    "@agentblip/core": "*",
+    "@workmesh/core": "*",
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",

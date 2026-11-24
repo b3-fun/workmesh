@@ -10,5 +10,5 @@ export default defineConfig({
   banner: { js: "#!/usr/bin/env node" },
   // core is a private workspace package (and pulls in zod) — bundle both so the
   // published CLI only depends on commander + chokidar at runtime.
-  noExternal: ["@agentblip/core"],
+  noExternal: ["@workmesh/core"],
 });

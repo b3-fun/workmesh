@@ -1,4 +1,4 @@
-import type { SlackStatus, StatusReadResponse } from "@agentblip/core";
+import type { SlackStatus, StatusReadResponse } from "@workmesh/core";
 
 export interface Sink {
   name: string;

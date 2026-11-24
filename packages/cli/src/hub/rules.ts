@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { HUB_CMD_RE, HUB_TOOL_RE } from "@agentblip/core";
+import { HUB_CMD_RE, HUB_TOOL_RE } from "@workmesh/core";
 
 /**
  * Pure reductions from raw hook facts to the metadata the hub may receive

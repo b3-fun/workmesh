@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import { SessionStore, formatStatus } from "@agentblip/core";
-import type { SessionEvent } from "@agentblip/core";
+import { SessionStore, formatStatus } from "@workmesh/core";
+import type { SessionEvent } from "@workmesh/core";
 import { codexSessionsDir, createCodexWatcher } from "../adapters/codex";
 import type { CodexWatcher } from "../adapters/codex";
 import { claudeProjectsDir, createWorkflowWatcher } from "../adapters/workflow";

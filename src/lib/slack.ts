@@ -5,7 +5,7 @@ import {
   toSlackProfile,
   type SlackProfileGetBody,
   type SlackStatus,
-} from "@agentblip/core";
+} from "@workmesh/core";
 
 /** Slack Web API calls get a hard 5s budget so a slow Slack can't hang the Worker. */
 const SLACK_TIMEOUT_MS = 5_000;

@@ -7,7 +7,7 @@ import {
   type PairPollResponse,
   type PairStartResponse,
   type StatusReadResponse,
-} from "@agentblip/core";
+} from "@workmesh/core";
 import type { Env } from "../env";
 import {
   aesGcmDecrypt,

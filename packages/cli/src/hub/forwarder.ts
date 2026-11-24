@@ -15,7 +15,7 @@ import {
   hubSessionUpsertSchema,
   isRepoRelativePath,
   truncateHead,
-} from "@agentblip/core";
+} from "@workmesh/core";
 import type {
   AgentSession,
   HubActivityEvent,
@@ -24,7 +24,7 @@ import type {
   HubSessionUpsert,
   HubShareLevel,
   SessionEvent,
-} from "@agentblip/core";
+} from "@workmesh/core";
 import type { z } from "zod";
 import { GitResolver } from "./git";
 import { scrubText } from "./redact";

@@ -2,8 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { SessionStore } from "@agentblip/core";
-import type { AgentSession } from "@agentblip/core";
+import { SessionStore } from "@workmesh/core";
+import type { AgentSession } from "@workmesh/core";
 import {
   ClaudeLiveness,
   DEAD_SESSION_GRACE_MS,

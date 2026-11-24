@@ -1,4 +1,4 @@
-import type { SlackStatus, StatusReadResponse } from "@agentblip/core";
+import type { SlackStatus, StatusReadResponse } from "@workmesh/core";
 import type { Sink } from "./types";
 
 /** Dry-run sink: logs what would be sent to Slack. */

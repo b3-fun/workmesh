@@ -27,7 +27,7 @@ workers/app.ts     Worker entry: Hono /api + React Router SSR catch-all
 src/               Worker backend — api/ (pair, slack oauth, status, health),
                    lib/ (kv store, slack client, token crypto, rate limit)
 app/               React Router v7 site (landing, /pair, privacy)
-packages/core/     @agentblip/core — zod wire contracts (events.ts), session
+packages/core/     @workmesh/core — zod wire contracts (events.ts), session
                    aggregation (aggregate.ts), status formatting (format.ts).
                    The shared contract: CLI and Worker both import from here.
 packages/cli/      the `agentblip` npm package — daemon, commands,

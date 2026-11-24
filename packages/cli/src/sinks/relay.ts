@@ -1,9 +1,9 @@
-import { statusReadResponseSchema } from "@agentblip/core";
+import { statusReadResponseSchema } from "@workmesh/core";
 import type {
   SlackStatus,
   StatusReadResponse,
   StatusUpdateRequest,
-} from "@agentblip/core";
+} from "@workmesh/core";
 import { PermanentSinkError } from "./types";
 import type { Sink } from "./types";
 

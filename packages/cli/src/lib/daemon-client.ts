@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import type { SessionEvent, SlackStatus, StatusSnapshot } from "@agentblip/core";
+import type { SessionEvent, SlackStatus, StatusSnapshot } from "@workmesh/core";
 import type { OwnershipSummary } from "../daemon/pusher";
 import type { HubState } from "../daemon/server";
 import type { Config } from "./config";

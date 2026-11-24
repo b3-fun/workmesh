@@ -10,7 +10,7 @@ menu bar app ──GET /state, /config──▶ agentblip daemon (127.0.0.1:4519
 ```
 
 All the real work — session aggregation, status formatting, the ownership guard
-— stays in `@agentblip/core` and the daemon. The app is presentation + control
+— stays in `@workmesh/core` and the daemon. The app is presentation + control
 only, so there's zero logic to keep in sync.
 
 ## What it shows

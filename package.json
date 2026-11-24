@@ -1,5 +1,5 @@
 {
-  "name": "agentblip-app",
+  "name": "workmesh-app",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -14,7 +14,7 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
-    "@agentblip/core": "*",
+    "@workmesh/core": "*",
     "hono": "^4.6.0",
     "isbot": "^5.1.0",
     "react": "^19.0.0",

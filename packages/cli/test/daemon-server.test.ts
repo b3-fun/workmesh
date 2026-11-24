@@ -4,7 +4,7 @@ import path from "node:path";
 import type http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { SessionEvent } from "@agentblip/core";
+import type { SessionEvent } from "@workmesh/core";
 import type { SafeConfig } from "../src/lib/config";
 import type { OwnershipSummary } from "../src/daemon/pusher";
 import { createDaemonServer } from "../src/daemon/server";

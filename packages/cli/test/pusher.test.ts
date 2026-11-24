@@ -2,13 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EMPTY_OWNERSHIP_STATE, SessionStore } from "@agentblip/core";
+import { EMPTY_OWNERSHIP_STATE, SessionStore } from "@workmesh/core";
 import type {
   OwnershipState,
   SessionEvent,
   SlackStatus,
   StatusPolicy,
-} from "@agentblip/core";
+} from "@workmesh/core";
 import { Pusher } from "../src/daemon/pusher";
 import { loadOwnershipState, saveOwnershipState } from "../src/lib/ownership-state";
 import { PermanentSinkError } from "../src/sinks/types";

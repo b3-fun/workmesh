@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import type { HubEvent } from "../../shared/types";
 import { buildTranscript, prLinks, turnDuration, type Item } from "../lib/transcript";
 import { duration, useNow } from "../time";
-import { repoName, type SessionView } from "../view";
+import { currentNow, repoName, type SessionView } from "../view";
 import { Markdown } from "./Markdown";
 import { Button, IconChevron, IconClose, IssueChip, StateDot, cx } from "./ui";
 
@@ -269,7 +269,7 @@ export function Conversation({
   const status =
     s.state === "waiting" && !dim
       ? (s.waitingReason ?? s.activity ?? "Needs input")
-      : (s.nowLine ?? (dim ? null : s.activity) ?? (s.offline ? "Offline" : s.state === "ended" ? "Ended" : null));
+      : (currentNow(s) ?? (dim ? null : s.activity) ?? (s.offline ? "Offline" : s.state === "ended" ? "Ended" : null));
 
   return (
     <section aria-label={`Conversation: ${s.name ?? s.key}`} className="relative flex min-h-0 flex-1 flex-col">
@@ -302,8 +302,8 @@ export function Conversation({
             {status}
           </p>
         )}
-        {s.state === "waiting" && !dim && s.nowLine && s.waitingReason && (
-          <p className="mt-0.5 text-[12.5px] text-muted">{s.nowLine}</p>
+        {s.state === "waiting" && !dim && currentNow(s) && s.waitingReason && (
+          <p className="mt-0.5 text-[12.5px] text-muted">{currentNow(s)}</p>
         )}
         {(s.issues.length > 0 || prs.length > 0) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">

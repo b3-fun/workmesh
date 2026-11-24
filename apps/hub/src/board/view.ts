@@ -39,6 +39,17 @@ export interface BoardView {
 
 const STATE_RANK: Record<string, number> = { working: 0, waiting: 1, idle: 2, ended: 3 };
 
+/**
+ * The now line, unless it was written before the current working or waiting state began (a new turn started and its
+ * refresh hasn't landed yet): then the relay's live label is the better guess. Ended and idle sessions keep their
+ * last line.
+ */
+export function currentNow(s: Pick<Session, "nowLine" | "nowAt" | "state" | "stateSince">): string | null {
+  if (!s.nowLine) return null;
+  if ((s.state === "working" || s.state === "waiting") && (s.nowAt ?? 0) < s.stateSince - 2_000) return null;
+  return s.nowLine;
+}
+
 export function repoName(repo: string | null): string {
   if (!repo) return "No repo";
   return repo.split("/").pop() ?? repo;

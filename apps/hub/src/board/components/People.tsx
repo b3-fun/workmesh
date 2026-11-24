@@ -1,7 +1,7 @@
 import { Collapsible } from "radix-ui";
 import { useState } from "react";
 import { age, useNow } from "../time";
-import { repoName, type Lane, type SessionView } from "../view";
+import { currentNow, repoName, type Lane, type SessionView } from "../view";
 import { Age, IconChevron, IssueChip, Row, StateDot, cx } from "./ui";
 
 function SessionRow({
@@ -19,7 +19,8 @@ function SessionRow({
   const waiting = s.state === "waiting" && !dim;
   const activity = s.offline ? "offline" : s.state === "ended" ? "ended" : (s.activity ?? s.state);
   // The summary leads; the relay's live label stays as a trace beside the branch (SPEC.md §12).
-  const lead = waiting ? (s.waitingReason ?? s.nowLine ?? activity) : (s.nowLine ?? activity);
+  const now = currentNow(s);
+  const lead = waiting ? (s.waitingReason ?? now ?? activity) : (now ?? activity);
   const trace = lead !== activity ? activity : null;
   return (
     <Row

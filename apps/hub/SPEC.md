@@ -351,3 +351,20 @@ such as "Ran 2 shell commands", turn durations).
 - **Lanes** show the now line (falling back to the activity label); **Waiting** shows the waiting reason.
 - **Digest strip** at the top when there is one; dismissible.
 - **Metadata-only** sessions show the tool timeline and say the person shares activity only.
+
+As built (v0.2):
+- Selecting a session swaps the right column from the all-sessions live tail to the conversation and widens it
+  (the lanes give up width); at 400 px the columns stack and the conversation scrolls on its own. The live tail
+  shows one-line previews of prompts and messages and "turn ended · 1m 34s" rows.
+- Prompts render verbatim (pre-wrapped, collapsed past 8 lines or 600 chars, "Cut at 4,000 characters" when
+  `truncated`). Messages render through `src/board/lib/markdown.ts`: paragraphs, headings as bold lines, fenced
+  code, inline code, bold, italics, nested lists, quotes, simple tables; links only for http(s) and mailto, opened
+  with `target="_blank" rel="noopener noreferrer"`; everything else is text nodes, never HTML.
+- Tool folds (`src/board/lib/transcript.ts`) group by kind in order of first appearance: shell commands, edited and
+  read files (distinct paths), searches, web searches and fetches, agents, plan updates, skills, MCP calls per
+  server, other tools by name; a failed call turns the fold's marker red and adds "· N failed".
+- A now line written before the session's current working or waiting state began (a new turn whose refresh hasn't
+  landed) is not shown; the relay's activity label stands in until it does. The relay's label also stays as a small
+  trace under the summary.
+- The digest strip's dismissal is remembered per browser for that digest. "Earlier" loads 500 events per page and
+  hides once the session's start is loaded. The footer reads "Summaries by …" or "Summaries off".

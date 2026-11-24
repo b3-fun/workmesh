@@ -24,7 +24,13 @@ function prNumber(url: string): string {
   return `#${url.split("/").pop()}`;
 }
 
-const firstLine = (t: string) => t.replace(/[`*_#>]+/g, "").replace(/\s+/g, " ").trim();
+/** One line of a prompt or message: code marks and bold markers go, underscores in names stay. */
+const firstLine = (t: string) =>
+  t
+    .replace(/`+|\*\*|__/g, "")
+    .replace(/^[\s#>*-]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
 function What({ e }: { e: HubEvent }) {
   switch (e.kind) {

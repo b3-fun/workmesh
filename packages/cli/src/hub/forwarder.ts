@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { truncateHead } from "@workmesh/core";
 import {
   HUB_DESC_MAX,
   HUB_MAX_BODY_BYTES,
@@ -14,17 +15,15 @@ import {
   hubIngestRequestSchema,
   hubSessionUpsertSchema,
   isRepoRelativePath,
-  truncateHead,
-} from "@workmesh/core";
+} from "@workmesh/protocol";
+import type { AgentSession, SessionEvent } from "@workmesh/core";
 import type {
-  AgentSession,
   HubActivityEvent,
   HubEventKind,
   HubProjectRule,
   HubSessionUpsert,
   HubShareLevel,
-  SessionEvent,
-} from "@workmesh/core";
+} from "@workmesh/protocol";
 import type { z } from "zod";
 import { GitResolver } from "./git";
 import { scrubText } from "./redact";

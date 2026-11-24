@@ -7,6 +7,9 @@ export default defineConfig({
       "@workmesh/core": fileURLToPath(
         new URL("../core/src/index.ts", import.meta.url),
       ),
+      "@workmesh/protocol": fileURLToPath(
+        new URL("../protocol/src/index.ts", import.meta.url),
+      ),
     },
   },
   test: {

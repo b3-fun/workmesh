@@ -1,4 +1,5 @@
 import { runInDurableObject } from "cloudflare:test";
+import { HUB_DEVICE_TOKEN_RE } from "@workmesh/protocol";
 import { describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/worker/crypto";
 import { approve, call, poll, post, projectStub, startPairing } from "./helpers";
@@ -25,7 +26,7 @@ describe("pairing", () => {
 
     const first = (await (await poll(p)).json()) as Record<string, unknown>;
     expect(first.status).toBe("complete");
-    expect(first.deviceToken).toMatch(/^bp_[0-9a-f]{64}$/);
+    expect(first.deviceToken).toMatch(HUB_DEVICE_TOKEN_RE);
     expect(first.person).toEqual({ email: "sean@npclabs.org", name: "Sean" });
     expect(first.project).toEqual({
       id: "b3",

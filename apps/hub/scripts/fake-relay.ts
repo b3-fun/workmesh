@@ -12,7 +12,8 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import type { EventKind, SessionState, ShareLevel } from "../src/shared/types.ts";
+import type { HubActivityEvent, HubIngestRequest, HubSessionUpsert } from "@workmesh/protocol";
+import type { SessionState, ShareLevel } from "../src/shared/types.ts";
 
 const { values: opts } = parseArgs({
   options: {
@@ -33,42 +34,15 @@ const log = (...a: unknown[]) => opts.quiet || console.log(...a);
 
 type Repo = "b3-fun/b3os-beta" | "b3-fun/b3iq" | "b3-fun/bullpen";
 
-interface Upsert {
-  key: string;
-  source: string;
+/** What the fake relay sends, typed by the wire protocol it shares with the real relay. */
+interface Upsert extends HubSessionUpsert {
   name: string;
-  state: SessionState;
-  activity?: string;
-  background?: boolean;
-  agents?: number;
-  phase?: string;
   repo: Repo;
   branch: string;
   issues: string[];
-  startedAt: number;
-  updatedAt: number;
-  stateSince: number;
 }
 
-interface Ev {
-  id: string;
-  key: string;
-  ts: number;
-  kind: EventKind;
-  tool?: string;
-  label?: string;
-  path?: string;
-  cmd?: string;
-  repo?: string;
-  branch?: string;
-  issues?: string[];
-  pr?: string;
-  ok?: boolean;
-  text?: string;
-  truncated?: boolean;
-  desc?: string;
-  durationMs?: number;
-}
+type Ev = HubActivityEvent;
 
 // --------------------------------------------------------------------------- scripts
 
@@ -607,7 +581,7 @@ async function run() {
       const cacheKey = `${BASE} ${p.machine}`;
       let token = cache[cacheKey];
       const prefix = `f${i}${Date.now().toString(36)}`;
-      const send = async (body: Record<string, unknown>) => {
+      const send = async (body: Omit<HubIngestRequest, "share">) => {
         for (let failures = 0; ; ) {
           let r: Awaited<ReturnType<typeof post>>;
           try {

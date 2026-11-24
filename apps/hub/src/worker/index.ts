@@ -1,16 +1,18 @@
-import { Hono, type Context, type MiddlewareHandler } from "hono";
-import { MAX_RELAY_BODY_BYTES, PROJECT } from "../shared/types";
-import { AccessError, verifyAccessJwt } from "./access";
-import { DEVICE_TOKEN_RE, sha256Hex } from "./crypto";
-import type { Project, Result } from "./project";
 import {
-  IngestSchema,
-  PairApproveSchema,
-  PairCodeSchema,
-  PairPollSchema,
-  PairStartSchema,
-  describeIssues,
-} from "./schema";
+  HUB_DEVICE_TOKEN_RE,
+  HUB_MAX_BODY_BYTES,
+  hubIngestAcceptSchema,
+  hubPairApproveRequestSchema,
+  hubPairCodeSchema,
+  hubPairPollRequestSchema,
+  hubPairStartRequestSchema,
+} from "@workmesh/protocol";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { PROJECT } from "../shared/types";
+import { AccessError, verifyAccessJwt } from "./access";
+import { sha256Hex } from "./crypto";
+import { describeIssues } from "./ingest";
+import type { Project, Result } from "./project";
 
 export { Project } from "./project";
 
@@ -61,7 +63,7 @@ type Parsed = { ok: true; data: unknown } | { ok: false; res: Response };
 async function readJson(c: Context): Promise<Parsed> {
   let text: string;
   try {
-    text = await readCapped(c.req.raw, MAX_RELAY_BODY_BYTES);
+    text = await readCapped(c.req.raw, HUB_MAX_BODY_BYTES);
   } catch (err) {
     if (err instanceof TooLarge) return { ok: false, res: jsonError(c, 413, "request body over 256 KB") };
     throw err;
@@ -78,7 +80,7 @@ async function readJson(c: Context): Promise<Parsed> {
 app.post("/relay/pair/start", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return body.res;
-  const parsed = PairStartSchema.safeParse(body.data);
+  const parsed = hubPairStartRequestSchema.safeParse(body.data);
   if (!parsed.success) return jsonError(c, 400, "invalid request", { issues: describeIssues(parsed.error) });
   const ip = c.req.header("cf-connecting-ip") ?? "unknown";
   const r = await project(c.env).pairStart({
@@ -94,7 +96,7 @@ app.post("/relay/pair/start", async (c) => {
 app.post("/relay/pair/poll", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return body.res;
-  const parsed = PairPollSchema.safeParse(body.data);
+  const parsed = hubPairPollRequestSchema.safeParse(body.data);
   if (!parsed.success) return jsonError(c, 400, "invalid request", { issues: describeIssues(parsed.error) });
   const r = await project(c.env).pairPoll(parsed.data.deviceId, await sha256Hex(parsed.data.pollSecret));
   return send(c, r);
@@ -105,9 +107,9 @@ app.post("/relay/ingest", async (c) => {
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   const body = await readJson(c);
   if (!body.ok && body.res.status === 413) return body.res;
-  if (!DEVICE_TOKEN_RE.test(token)) return jsonError(c, 401, "missing or malformed device token");
+  if (!HUB_DEVICE_TOKEN_RE.test(token)) return jsonError(c, 401, "missing or malformed device token");
   if (!body.ok) return body.res;
-  const parsed = IngestSchema.safeParse(body.data);
+  const parsed = hubIngestAcceptSchema.safeParse(body.data);
   if (!parsed.success) {
     const issues = describeIssues(parsed.error);
     console.warn("ingest rejected", JSON.stringify(issues));
@@ -177,7 +179,7 @@ app.get("/api/stream", async (c) => {
 app.get("/api/summaries", async (c) => c.json(await project(c.env).summaryUsage()));
 
 app.get("/api/pair/:code", async (c) => {
-  const code = PairCodeSchema.safeParse(c.req.param("code"));
+  const code = hubPairCodeSchema.safeParse(c.req.param("code"));
   if (!code.success) return jsonError(c, 404, "unknown code");
   return send(c, await project(c.env).pairInfo(code.data));
 });
@@ -185,7 +187,7 @@ app.get("/api/pair/:code", async (c) => {
 app.post("/api/pair/approve", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return body.res;
-  const parsed = PairApproveSchema.safeParse(body.data);
+  const parsed = hubPairApproveRequestSchema.safeParse(body.data);
   if (!parsed.success) return jsonError(c, 400, "invalid code");
   return send(c, await project(c.env).pairApprove(parsed.data.code, c.var.email));
 });

@@ -51,8 +51,7 @@ export function ulid(now = Date.now()): string {
   return time + pick(CROCKFORD, 16);
 }
 
+/** A new device token; matches HUB_DEVICE_TOKEN_RE in @workmesh/protocol. */
 export function deviceToken(): string {
   return `bp_${randomHex(32)}`;
 }
-
-export const DEVICE_TOKEN_RE = /^bp_[0-9a-f]{64}$/;

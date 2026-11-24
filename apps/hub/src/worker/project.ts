@@ -1,4 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
+import type {
+  HubIngestAccepted,
+  HubIngestResponse,
+  HubPairPollResponse,
+  HubPairStartResponse,
+  HubSessionUpsertAccepted,
+} from "@workmesh/protocol";
 import {
   BOARD_WINDOW_MS,
   EVENT_RETENTION_MS,
@@ -18,7 +25,7 @@ import {
   type StreamMessage,
 } from "../shared/types";
 import { deviceToken, pairingCode, randomHex, sha256Hex, ulid } from "./crypto";
-import { conversationFields, type IngestPayload, type SessionUpsert } from "./schema";
+import { conversationFields } from "./ingest";
 import { POLICY, capAllows, dailyCap, dueAt, mergeTrigger, utcDay, type Trigger } from "./summaries/policy";
 import {
   digestRequest,
@@ -496,7 +503,7 @@ export class Project extends DurableObject<Env> {
         pollSecret,
         verifyUrl: `${input.origin}/pair?code=${code}`,
         expiresInSec: PAIRING_TTL_SEC,
-      },
+      } satisfies HubPairStartResponse,
     };
   }
 
@@ -545,7 +552,7 @@ export class Project extends DurableObject<Env> {
     if (!p || p.poll_secret_hash !== pollSecretHash) return { status: 401, body: { error: "unknown pairing" } };
     const now = Date.now();
     if (!p.approved_by) {
-      return { status: 200, body: { status: now > p.expires_at ? "expired" : "pending" } };
+      return { status: 200, body: { status: now > p.expires_at ? "expired" : "pending" } satisfies HubPairPollResponse };
     }
     const person = this.person(p.approved_by);
     const project = {
@@ -555,7 +562,7 @@ export class Project extends DurableObject<Env> {
       issueKeys: PROJECT.issueKeys,
       defaultShare: PROJECT.defaultShare,
     };
-    if (p.delivered) return { status: 200, body: { status: "complete", person, project } };
+    if (p.delivered) return { status: 200, body: { status: "complete", person, project } satisfies HubPairPollResponse };
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
         `INSERT INTO devices (id, email, machine, client, token_hash, created_at, share)
@@ -572,12 +579,12 @@ export class Project extends DurableObject<Env> {
     });
     const device = this.device(p.device_id);
     if (device) this.broadcast({ type: "device", device: toDevice(device) });
-    return { status: 200, body: { status: "complete", deviceToken: token, person, project } };
+    return { status: 200, body: { status: "complete", deviceToken: token, person, project } satisfies HubPairPollResponse };
   }
 
   // ----------------------------------------------------------------- ingest
 
-  async ingest(tokenHash: string, payload: IngestPayload): Promise<Result> {
+  async ingest(tokenHash: string, payload: HubIngestAccepted): Promise<Result> {
     const device = this.sql.exec<DeviceRow>("SELECT * FROM devices WHERE token_hash = ?", tokenHash).toArray()[0];
     if (!device || device.revoked_at != null) {
       return { status: 401, body: { error: "unknown or revoked device token; pair again" } };
@@ -700,7 +707,7 @@ export class Project extends DurableObject<Env> {
       this.enqueue(triggers, now);
       await this.armAlarm();
     }
-    return { status: 200, body: { ok: true, accepted: inserted.length } };
+    return { status: 200, body: { ok: true, accepted: inserted.length } satisfies HubIngestResponse };
   }
 
   /** A device went back to metadata: its text, and everything written from it, leaves the hub (SPEC.md §8). */
@@ -718,7 +725,7 @@ export class Project extends DurableObject<Env> {
   private upsertSession(
     device: DeviceRow,
     hubKey: string,
-    s: SessionUpsert,
+    s: HubSessionUpsertAccepted,
     now: number,
   ): { changed: boolean; prevState: string | null } {
     const existing = this.sql.exec<SessionRow>("SELECT * FROM sessions WHERE hub_key = ?", hubKey).toArray()[0];

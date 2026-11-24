@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { BoardState, StreamMessage } from "../src/shared/types";
-import { scrubSecrets } from "../src/worker/schema";
+import { scrubSecrets } from "../src/worker/ingest";
 import { batch, call, event, ingest, pairDevice, post, projectStub, session, startPairing } from "./helpers";
 
 // Conversation capture on the hub (SPEC.md §8, §10).

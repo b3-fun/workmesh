@@ -1,15 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import {
-  DEFAULT_DAEMON_PORT,
-  DEFAULT_DEBOUNCE_MS,
-  DEFAULT_STATUS_TTL_SEC,
-  HUB_DEVICE_TOKEN_RE,
-  hubProjectRuleSchema,
-  hubShareLevelSchema,
-} from "@workmesh/core";
-import type { FormatOptions, HubShareLevel } from "@workmesh/core";
+import { DEFAULT_DAEMON_PORT, DEFAULT_DEBOUNCE_MS, DEFAULT_STATUS_TTL_SEC } from "@workmesh/core";
+import { HUB_DEVICE_TOKEN_RE, hubProjectRuleSchema, hubShareLevelSchema } from "@workmesh/protocol";
+import type { FormatOptions } from "@workmesh/core";
+import type { HubShareLevel } from "@workmesh/protocol";
 import { envSetting } from "./names";
 import { configPath } from "./paths";
 

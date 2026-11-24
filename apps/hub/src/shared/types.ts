@@ -1,4 +1,7 @@
-// Types and constants shared by the Worker, the board and the fake relay.
+// Types and constants shared by the Worker, the board and the fake relay. The relay ↔ hub wire format (ingest bodies,
+// pairing, share levels, limits) is in @workmesh/protocol; this file is the hub's own board-facing shapes.
+// Type-only imports from the protocol, so the board bundle never pulls in zod.
+import type { HubEventKind, HubProjectRule, HubSessionState, HubShareLevel } from "@workmesh/protocol";
 
 export const PUBLIC_URL = "https://bullpen.b3os.org";
 
@@ -9,19 +12,14 @@ export const BOARD_WINDOW_MS = 12 * 3600_000;
 /** Events are kept this long. */
 export const EVENT_RETENTION_MS = 7 * 24 * 3600_000;
 export const PAIRING_TTL_SEC = 600;
-export const MAX_RELAY_BODY_BYTES = 256 * 1024;
 
 /** What a device shares beyond metadata (SPEC.md §8). */
-export type ShareLevel = "metadata" | "conversation";
+export type ShareLevel = HubShareLevel;
+export type SessionState = HubSessionState;
+export type EventKind = HubEventKind;
 
-export interface ProjectInfo {
-  id: string;
-  name: string;
-  include: { remotes: string[]; dirs: string[] };
-  issueKeys: string[];
-  /** The level a relay suggests at `agentblip hub connect` (SPEC.md §8). */
-  defaultShare: ShareLevel;
-}
+/** The project's sharing rule as the hub sends it at pairing; the hub always names a `defaultShare`. */
+export type ProjectInfo = HubProjectRule & { defaultShare: ShareLevel };
 
 export const PROJECT: ProjectInfo = {
   id: "b3",
@@ -30,13 +28,6 @@ export const PROJECT: ProjectInfo = {
   issueKeys: ["B3"],
   defaultShare: "conversation",
 };
-
-/** Caps on conversation text (SPEC.md §10). */
-export const MAX_TEXT_CHARS = 4000;
-export const MAX_DESC_CHARS = 200;
-
-export type SessionState = "working" | "waiting" | "idle" | "ended";
-export type EventKind = "start" | "prompt" | "tool" | "waiting" | "idle" | "end" | "message" | "turn";
 
 export interface Person {
   email: string;

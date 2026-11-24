@@ -10,12 +10,12 @@ export function createSink(config: Config): Sink {
   switch (config.mode) {
     case "relay":
       if (!config.deviceToken) {
-        throw new Error('mode is "relay" but no device token — run `agentblip setup`');
+        throw new Error('mode is "relay" but no device token — run `workmesh setup`');
       }
       return createRelaySink(config.relayUrl, config.deviceToken);
     case "slack":
       if (!config.slackToken) {
-        throw new Error('mode is "slack" but no Slack token — run `agentblip setup`');
+        throw new Error('mode is "slack" but no Slack token — run `workmesh setup`');
       }
       return createSlackSink(config.slackToken);
     case "console":

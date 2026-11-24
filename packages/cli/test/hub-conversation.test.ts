@@ -33,7 +33,7 @@ function fakeRepo(dir: string, origin: string, branch = "main"): void {
 }
 
 beforeAll(() => {
-  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-convo-")));
+  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-convo-")));
   docs = path.join(home, "Documents");
   beta = path.join(docs, "b3", "b3os-beta");
   salience = path.join(docs, "salience");

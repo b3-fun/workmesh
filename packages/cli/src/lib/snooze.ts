@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** Snooze lengths offered by the menu bar app and `agentblip pause --for`. */
+/** Snooze lengths offered by the menu bar app and `workmesh pause --for`. */
 export const SNOOZE_PRESETS = ["30m", "1h", "tomorrow"] as const;
 export type SnoozePreset = (typeof SNOOZE_PRESETS)[number];
 

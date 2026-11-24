@@ -11,7 +11,7 @@ const HTTP_TIMEOUT_MS = 10_000;
 
 /**
  * Decide what happens to the Slack status when the device is unlinked, honoring
- * the same ownership rules the daemon uses: never wipe a status agentblip
+ * the same ownership rules the daemon uses: never wipe a status Workmesh
  * didn't set, and restore one it displaced. Returns whether the relay should
  * do the clear server-side (true) or leave the status as-is (false).
  */
@@ -106,6 +106,6 @@ export async function runUnlink(): Promise<void> {
   saveConfig(config);
   console.log(green(`device token removed from ${configPath()}`));
   if (wasRelay) {
-    console.log(dim("mode set to console — run `agentblip setup` to pair again"));
+    console.log(dim("mode set to console — run `workmesh setup` to pair again"));
   }
 }

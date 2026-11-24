@@ -24,7 +24,7 @@ const MAX_BACKOFF_MS = 5 * 60_000;
 const PERMANENT_GRACE_MS = 60_000;
 /** Permanent failures past the grace window before pushes halt for good. */
 const MAX_PERMANENT_FAILURES = 3;
-/** Shutdown must not hang on a slow sink — `agentblip stop` waits only 5s. */
+/** Shutdown must not hang on a slow sink — `workmesh stop` waits only 5s. */
 const SHUTDOWN_FLUSH_TIMEOUT_MS = 3000;
 const CLEARED = "null";
 /** Sentinel that never matches a real signature — forces a retry push. */
@@ -34,7 +34,7 @@ export interface PusherOptions {
   store: SessionStore;
   sink: Sink;
   formatOpts: FormatOptions;
-  /** How to treat a Slack status agentblip didn't set. Default: "respect". */
+  /** How to treat a Slack status Workmesh didn't set. Default: "respect". */
   policy?: StatusPolicy;
   /** OwnershipState persisted by a previous daemon run. */
   initialOwnership?: OwnershipState;
@@ -74,7 +74,7 @@ function sameOwnership(a: OwnershipState, b: OwnershipState): boolean {
  * Every outbound attempt (change push, ttl refresh, pause/shutdown clear) is
  * guarded by core's planStatusUpdate: the current Slack status is read once
  * per attempt and the state machine decides push/restore/clear/skip — so
- * agentblip never clobbers a status it didn't set.
+ * Workmesh never clobbers a status it didn't set.
  */
 export class Pusher {
   paused = false;
@@ -199,7 +199,7 @@ export class Pusher {
     const residue =
       this.ownership.lastPushed !== null || this.ownership.savedPrior !== null;
     if (this.lastSignature !== CLEARED || residue) this.push(null, CLEARED);
-    // Cap the wait: the sink allows 10s per push, but `agentblip stop` only
+    // Cap the wait: the sink allows 10s per push, but `workmesh stop` only
     // waits 5s — a slow relay must not make a normal shutdown look failed.
     await Promise.race([
       this.flush(),
@@ -281,7 +281,7 @@ export class Pusher {
         const fix =
           this.sink.name === "slack"
             ? "reissue your Slack token with the users.profile:read scope"
-            : "run `agentblip setup` to re-pair with the read scope";
+            : "run `workmesh setup` to re-pair with the read scope";
         this.log(
           `sink "${this.sink.name}" cannot read the current status (token lacks users.profile:read) — ` +
             "legacy mode: an existing status set by you or another app may be overwritten; " +
@@ -306,7 +306,7 @@ export class Pusher {
       this.log("existing status cleared — resuming status updates");
     }
     if (action.kind === "restore") {
-      this.log("restored the Slack status agentblip had displaced");
+      this.log("restored the Slack status Workmesh had displaced");
     }
     if (!sameOwnership(prev, next)) {
       try {

@@ -37,7 +37,7 @@ export const SECRETS = {
   npm: j("np", "m_", fakeChars(36, 16)),
   linear: j("lin", "_api_", fakeChars(40, 17)),
   bullpen: j("bp", "_", hex(64, 18)),
-  agentblip: j("ab", "_", hex(64, 19)),
+  relayDevice: j("ab", "_", hex(64, 19)),
   google: j("AI", "za", "Sy", fakeChars(33, 20)),
   hf: j("hf", "_", fakeChars(34, 21)),
   jwt: j("ey", "JhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", ".", "ey", "JzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0", ".", fakeChars(43, 22)),

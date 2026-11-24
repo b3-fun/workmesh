@@ -13,11 +13,11 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
   try {
     state = await getState(config.port);
   } catch {
-    const error = `daemon not running on 127.0.0.1:${config.port} — start it with \`agentblip start --detach\``;
+    const error = `daemon not running on 127.0.0.1:${config.port} — start it with \`workmesh start --detach\``;
     if (opts.json) console.log(JSON.stringify({ ok: false, error }));
     else {
       console.log(
-        `${yellow("daemon not running")} on 127.0.0.1:${config.port} — start it with ${bold("agentblip start --detach")}`,
+        `${yellow("daemon not running")} on 127.0.0.1:${config.port} — start it with ${bold("workmesh start --detach")}`,
       );
     }
     process.exitCode = 1;
@@ -33,8 +33,8 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
     console.log(
       yellow(
         state.pausedUntil
-          ? `snoozed — status updates resume in ${formatDuration(state.pausedUntil - Date.now())} (or \`agentblip resume\`)`
-          : "paused — status updates suspended (`agentblip resume`)",
+          ? `snoozed — status updates resume in ${formatDuration(state.pausedUntil - Date.now())} (or \`workmesh resume\`)`
+          : "paused — status updates suspended (`workmesh resume`)",
       ),
     );
   }
@@ -42,7 +42,7 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
     console.log(
       yellow(
         bold(
-          "standing down — your existing Slack status is untouched; agentblip resumes when it clears",
+          "standing down — your existing Slack status is untouched; Workmesh resumes when it clears",
         ),
       ),
     );

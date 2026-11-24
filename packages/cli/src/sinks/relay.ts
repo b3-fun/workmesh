@@ -28,7 +28,7 @@ export function createRelaySink(relayUrl: string, deviceToken: string): Sink {
       if (res.status === 401) {
         // permanent: the relay deleted this device — retrying can't fix it
         throw new PermanentSinkError(
-          "device unlinked or token revoked — run `agentblip setup` to pair again",
+          "device unlinked or token revoked — run `workmesh setup` to pair again",
         );
       }
       if (!res.ok) throw new Error(`relay responded ${res.status}`);
@@ -41,7 +41,7 @@ export function createRelaySink(relayUrl: string, deviceToken: string): Sink {
       if (res.status === 401) {
         // permanent: the relay deleted this device — retrying can't fix it
         throw new PermanentSinkError(
-          "device unlinked or token revoked — run `agentblip setup` to pair again",
+          "device unlinked or token revoked — run `workmesh setup` to pair again",
         );
       }
       if (!res.ok) throw new Error(`relay responded ${res.status}`);

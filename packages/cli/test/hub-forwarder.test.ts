@@ -36,7 +36,7 @@ function fakeRepo(dir: string, origin: string, branch = "main"): void {
 }
 
 beforeAll(() => {
-  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-hubfwd-")));
+  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-hubfwd-")));
   docs = path.join(home, "Documents");
   beta = path.join(docs, "b3", "b3os-beta");
   wt = path.join(docs, "b3", "b3os-beta-relay");
@@ -598,7 +598,7 @@ describe("HubForwarder delivery (mock hub over HTTP)", () => {
     tools(h, 1);
     await h.fwd.tick();
     expect(h.fwd.status()).toMatchObject({ halted: true });
-    expect(h.logs.join("\n")).toContain(`agentblip hub connect ${base}`);
+    expect(h.logs.join("\n")).toContain(`workmesh hub connect ${base}`);
     tools(h, 2);
     h.advance(60_000);
     await h.fwd.tick();

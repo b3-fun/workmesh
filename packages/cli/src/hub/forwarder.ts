@@ -72,9 +72,9 @@ export interface HubForwarderOptions {
   token: string;
   /** Sharing rule received at pairing. */
   rule: HubProjectRule;
-  /** Absolute dirs the person shares locally (`agentblip hub include`). */
+  /** Absolute dirs the person shares locally (`workmesh hub include`). */
   includeDirs?: readonly string[];
-  /** Absolute dirs the person never shares (`agentblip hub exclude`); beat every include. */
+  /** Absolute dirs the person never shares (`workmesh hub exclude`); beat every include. */
   excludeDirs?: readonly string[];
   /** The daemon's live sessions. */
   listSessions: () => readonly AgentSession[];
@@ -1082,7 +1082,7 @@ export class HubForwarder {
       this.timer = undefined;
       this.log(
         `hub: ${this.url} rejected this device's token (401): forwarding stopped. ` +
-          `Run \`agentblip hub connect ${this.url}\` to pair this machine again.`,
+          `Run \`workmesh hub connect ${this.url}\` to pair this machine again.`,
       );
       return false;
     }

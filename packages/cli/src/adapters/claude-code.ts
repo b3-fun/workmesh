@@ -17,10 +17,11 @@ import {
   transcriptPathOf,
   urlHost,
 } from "./detail";
+import { OUR_COMMAND_RE } from "../lib/names";
 
 /**
  * Absolute hook invocation: GUI-launched agents don't inherit the login-shell
- * PATH, so a bare `agentblip` may not resolve (exit 127 on every hook).
+ * PATH, so a bare `workmesh` may not resolve (exit 127 on every hook).
  * import.meta.url is the bundled CLI entry (dist/index.js) at runtime; both
  * paths are quoted for spaces.
  */
@@ -534,14 +535,14 @@ export function claudeSettingsPath(): string {
   return path.join(os.homedir(), ".claude", "settings.json");
 }
 
-/** Our Claude Code hook command, under either name (agentblip, crewblip) and any install path. */
+/** Our Claude Code hook command, under any of our names (lib/names.ts) and any install path. */
 export function isOurClaudeHook(command: unknown): command is string {
-  return typeof command === "string" && /agentblip|crewblip|workmesh/.test(command) && command.includes("hook claude-code");
+  return typeof command === "string" && OUR_COMMAND_RE.test(command) && command.includes("hook claude-code");
 }
 
 /**
  * Finds our hook in an event's entry list. When it points somewhere else (an
- * older install path, the agentblip → @b3os/workmesh move), it is repointed
+ * older install path, a checkout from before the rename), it is repointed
  * to `command` in place. Returns whether ours was found and whether it changed.
  */
 function refreshOurHook(entries: unknown, command: string): { found: boolean; updated: boolean } {
@@ -565,7 +566,7 @@ function refreshOurHook(entries: unknown, command: string): { found: boolean; up
   return { found, updated };
 }
 
-function entryListHasAgentblip(entries: unknown): boolean {
+function entryListHasOurs(entries: unknown): boolean {
   if (!Array.isArray(entries)) return false;
   return entries.some((entry) => {
     const hooks = (entry as { hooks?: unknown } | null)?.hooks;
@@ -580,8 +581,8 @@ export interface HookInstallResult {
 }
 
 /**
- * Merges agentblip hook entries into Claude Code settings. Idempotent: events
- * that already carry an agentblip command are skipped, unknown keys are
+ * Merges Workmesh hook entries into Claude Code settings. Idempotent: events
+ * that already carry our command are skipped, unknown keys are
  * preserved, and the original file is backed up once.
  */
 export function installClaudeHooks(settingsPath = claudeSettingsPath()): HookInstallResult {
@@ -627,7 +628,7 @@ export function installClaudeHooks(settingsPath = claudeSettingsPath()): HookIns
   let backupPath: string | undefined;
   if (changed) {
     if (original !== undefined) {
-      backupPath = `${settingsPath}.agentblip-backup`;
+      backupPath = `${settingsPath}.workmesh-backup`;
       if (!fs.existsSync(backupPath)) fs.writeFileSync(backupPath, original);
     }
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
@@ -642,7 +643,7 @@ export function areClaudeHooksInstalled(settingsPath = claudeSettingsPath()): bo
       hooks?: Record<string, unknown>;
     };
     return CLAUDE_HOOK_EVENTS.every((event) =>
-      entryListHasAgentblip(parsed.hooks?.[event]),
+      entryListHasOurs(parsed.hooks?.[event]),
     );
   } catch {
     return false;

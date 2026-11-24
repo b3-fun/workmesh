@@ -116,7 +116,7 @@ describe("Claude Code hook detail (local only)", () => {
   });
 });
 
-describe("detail never reaches the Slack status path or the agentblip relay", () => {
+describe("detail never reaches the Slack status path or the Workmesh relay", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });

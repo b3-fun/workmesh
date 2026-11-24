@@ -102,7 +102,7 @@ async function pairDevice(relayUrl: string): Promise<string> {
   } finally {
     spin.stop();
   }
-  throw new Error("pairing expired — run `agentblip setup` again");
+  throw new Error("pairing expired — run `workmesh setup` again");
 }
 
 /** Validates a relay URL (prompt or --relay-url flag). Throws on garbage. */
@@ -126,9 +126,9 @@ export interface SetupOptions {
   hooksOnly?: boolean;
 }
 
-/** `agentblip setup --hooks-only`: (re)install Claude Code and Codex hooks, nothing else. */
+/** `workmesh setup --hooks-only`: (re)install Claude Code and Codex hooks, nothing else. */
 export function installHooksOnly(): void {
-  console.log(bold("agentblip setup --hooks-only"));
+  console.log(bold("workmesh setup --hooks-only"));
   try {
     const result = installClaudeHooks();
     console.log(
@@ -149,7 +149,7 @@ export function installHooksOnly(): void {
         (result.backupPath ? dim(` (backup: ${result.backupPath})`) : ""),
     );
     if (result.changed) {
-      console.log(`  ${yellow("open Codex and run /hooks to trust agentblip's hooks (Codex skips untrusted hooks)")}`);
+      console.log(`  ${yellow("open Codex and run /hooks to trust Workmesh's hooks (Codex skips untrusted hooks)")}`);
     }
   } catch (err) {
     console.log(`  codex: ${red(`could not update hooks.json: ${errorMessage(err)}`)}`);
@@ -171,7 +171,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     installHooksOnly();
     return;
   }
-  console.log(bold("agentblip setup"));
+  console.log(bold("workmesh setup"));
   console.log(dim("your Slack status, synced with your local AI agent sessions\n"));
 
   const config = loadConfigSafe();
@@ -179,7 +179,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
 
   const modes = ["relay", "slack", "console"] as const;
   config.mode = await select(
-    "How should agentblip update Slack?",
+    "How should Workmesh update Slack?",
     [
       {
         value: "relay",
@@ -203,7 +203,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     console.log(
       dim(
         "\n  needs a user token with users.profile:write scopes" +
-          " (add users.profile:read so agentblip never overwrites a status it didn't set)",
+          " (add users.profile:read so Workmesh never overwrites a status it didn't set)",
       ),
     );
     const keepHint = config.slackToken ? " (enter keeps the saved token)" : "";
@@ -230,7 +230,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     [
       {
         value: "respect",
-        label: "respect it (recommended) — agentblip stands down until it clears",
+        label: "respect it (recommended) — Workmesh stands down until it clears",
       },
       {
         value: "overwrite",
@@ -274,7 +274,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
       );
       if (result.changed) {
         console.log(
-          `  ${yellow("Codex runs a new hook only after you trust it: open Codex and run /hooks to review and trust agentblip's")}`,
+          `  ${yellow("Codex runs a new hook only after you trust it: open Codex and run /hooks to review and trust Workmesh's")}`,
         );
       }
     } catch (err) {
@@ -286,7 +286,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
       else if (result === "already-installed") console.log(`  ${dim("already installed")}`);
       else {
         console.log(
-          `  ${yellow("config.toml already sets `notify` — add agentblip manually:")}`,
+          `  ${yellow("config.toml already sets `notify` — add Workmesh manually:")}`,
         );
         console.log(`    ${codexNotifyLine()}`);
       }
@@ -303,12 +303,12 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     // without a restart the changes above silently never apply.
     console.log(
       yellow(
-        `daemon is running with the old config — restart it: ${bold("agentblip stop && agentblip start --detach")}`,
+        `daemon is running with the old config — restart it: ${bold("workmesh stop && workmesh start --detach")}`,
       ),
     );
   }
   console.log("\nnext steps:");
-  console.log(`  ${bold("agentblip start --detach")}   run the sync daemon`);
-  console.log(`  ${bold("agentblip status")}           see live agent sessions`);
-  console.log(`  ${bold("agentblip doctor")}           verify everything`);
+  console.log(`  ${bold("workmesh start --detach")}   run the sync daemon`);
+  console.log(`  ${bold("workmesh status")}           see live agent sessions`);
+  console.log(`  ${bold("workmesh doctor")}           verify everything`);
 }

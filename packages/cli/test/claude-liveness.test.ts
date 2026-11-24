@@ -88,8 +88,8 @@ describe("ClaudeLiveness", () => {
   it("reports new or changed session names only", () => {
     const l = new ClaudeLiveness();
     const s = sessions({ id: "a", name: "documents-07" }, { id: "b" });
-    const out = l.step(s, live({ sessionId: "a", name: "documents-07" }, { sessionId: "b", name: "agentblip-2" }), T);
-    expect(out.names).toEqual([["claude-code:b", "agentblip-2"]]);
+    const out = l.step(s, live({ sessionId: "a", name: "documents-07" }, { sessionId: "b", name: "workmesh-2" }), T);
+    expect(out.names).toEqual([["claude-code:b", "workmesh-2"]]);
   });
 });
 

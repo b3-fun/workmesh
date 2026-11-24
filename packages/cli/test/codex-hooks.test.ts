@@ -158,7 +158,7 @@ describe("installCodexHooks", () => {
   let dir: string;
   let hooksPath: string;
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-codex-hooks-"));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-codex-hooks-"));
     hooksPath = path.join(dir, "hooks.json");
   });
   afterEach(() => {
@@ -181,7 +181,7 @@ describe("installCodexHooks", () => {
     fs.writeFileSync(hooksPath, JSON.stringify(existing, null, 2));
     const result = installCodexHooks(hooksPath);
     expect(result.changed).toBe(true);
-    expect(result.backupPath).toBe(`${hooksPath}.agentblip-backup`);
+    expect(result.backupPath).toBe(`${hooksPath}.workmesh-backup`);
     expect(JSON.parse(fs.readFileSync(result.backupPath!, "utf8"))).toEqual(existing);
 
     const doc = JSON.parse(fs.readFileSync(hooksPath, "utf8")) as typeof existing & {
@@ -218,7 +218,7 @@ describe("installCodexHooks", () => {
   it("does not count the notify hook as the lifecycle hooks", () => {
     fs.writeFileSync(
       hooksPath,
-      JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "node /x/agentblip/dist/index.js hook codex" }] }] } }),
+      JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "node /x/workmesh/dist/index.js hook codex" }] }] } }),
     );
     expect(areCodexHooksInstalled(hooksPath)).toBe(false);
   });

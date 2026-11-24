@@ -43,7 +43,7 @@ describe("liveAgentCount", () => {
 describe("findActiveJournals", () => {
   let dir: string;
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-wf-"));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-wf-"));
   });
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 

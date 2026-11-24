@@ -22,7 +22,7 @@ let stateDirTmp: string;
 let savedStateHome: string | undefined;
 
 beforeEach(() => {
-  stateDirTmp = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-client-"));
+  stateDirTmp = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-client-"));
   savedStateHome = process.env.XDG_STATE_HOME;
   process.env.XDG_STATE_HOME = stateDirTmp;
 });

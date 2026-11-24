@@ -88,7 +88,7 @@ describe("pairWithHub (SPEC §3.1)", () => {
     const codes: string[] = [];
     const result = await pairWithHub("https://hub", {
       machine: "seans-mac-studio",
-      client: "agentblip/0.6.0",
+      client: "workmesh/0.6.0",
       fetchImpl: fakeFetch(
         [{ status: "pending" }, { status: "complete", deviceToken: TOKEN, person: { email: "sean@npclabs.org", name: "Sean" }, project: PROJECT }],
         calls,
@@ -97,7 +97,7 @@ describe("pairWithHub (SPEC §3.1)", () => {
       wait: async () => {},
     });
     expect(codes).toEqual(["ABCD-1234"]);
-    expect(calls[0]).toEqual({ url: "https://hub/relay/pair/start", body: { machine: "seans-mac-studio", client: "agentblip/0.6.0" } });
+    expect(calls[0]).toEqual({ url: "https://hub/relay/pair/start", body: { machine: "seans-mac-studio", client: "workmesh/0.6.0" } });
     expect(calls[1]?.body).toEqual({ deviceId: start.deviceId, pollSecret: start.pollSecret });
     expect(result).toEqual({ deviceId: start.deviceId, deviceToken: TOKEN, person: { email: "sean@npclabs.org", name: "Sean" }, project: PROJECT });
   });
@@ -106,12 +106,12 @@ describe("pairWithHub (SPEC §3.1)", () => {
     const calls: Array<{ url: string; body: unknown }> = [];
     await pairWithHub("https://hub", {
       machine: "m",
-      client: "agentblip/0.7.0",
+      client: "workmesh/0.7.0",
       share: "conversation",
       fetchImpl: fakeFetch([{ status: "complete", deviceToken: TOKEN, project: PROJECT }], calls),
       wait: async () => {},
     });
-    expect(calls[0]?.body).toEqual({ machine: "m", client: "agentblip/0.7.0", share: "conversation" });
+    expect(calls[0]?.body).toEqual({ machine: "m", client: "workmesh/0.7.0", share: "conversation" });
   });
 
   it("fails on expiry and on a malformed token", async () => {
@@ -131,7 +131,7 @@ describe("pairWithHub (SPEC §3.1)", () => {
 describe("hub config", () => {
   let dir: string;
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-hubcfg-"));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-hubcfg-"));
   });
   afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -165,14 +165,14 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
   const saved: Record<string, string | undefined> = {};
 
   beforeAll(async () => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-hubcli-"));
-    for (const k of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "AGENTBLIP_PORT"]) saved[k] = process.env[k];
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-hubcli-"));
+    for (const k of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "WORKMESH_PORT"]) saved[k] = process.env[k];
     process.env.XDG_CONFIG_HOME = path.join(tmp, "config");
     process.env.XDG_STATE_HOME = path.join(tmp, "state");
     // A port nothing listens on: these tests must never reach a real daemon.
     const probe = http.createServer();
     await new Promise<void>((r) => probe.listen(0, "127.0.0.1", r));
-    process.env.AGENTBLIP_PORT = String((probe.address() as AddressInfo).port);
+    process.env.WORKMESH_PORT = String((probe.address() as AddressInfo).port);
     await new Promise<void>((r) => probe.close(() => r()));
 
     let polls = 0;
@@ -202,7 +202,7 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await runHubConnect(base, { open: false, machine: "Test-Box.local" });
-      const file = path.join(tmp, "config", "agentblip", "config.json");
+      const file = path.join(tmp, "config", "workmesh", "config.json");
       expect(fs.statSync(file).mode & 0o777).toBe(0o600);
       const hub = loadConfig(file).hub;
       expect(hub).toMatchObject({ url: base, deviceToken: TOKEN, machine: "test-box", project: PROJECT, person: { name: "Sean" } });
@@ -227,7 +227,7 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
   it("--share sets the level; the question suggests the hub's default; hub share changes it", async () => {
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      const file = path.join(tmp, "config", "agentblip", "config.json");
+      const file = path.join(tmp, "config", "workmesh", "config.json");
       await runHubConnect(base, { open: false, share: "conversation" });
       expect(loadConfig(file).hub?.share).toBe("conversation");
       expect(out.mock.calls.flat().join("\n")).toContain("sharing level: ");

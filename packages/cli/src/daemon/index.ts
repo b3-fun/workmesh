@@ -8,7 +8,7 @@ import type { WorkflowWatcher } from "../adapters/workflow";
 import { formatOptionsFromConfig, hubShareLevel, readHubConfig, safeConfig, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
-import { createDaemonSecret } from "../lib/daemon-auth";
+import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
 import { stateDir } from "../lib/paths";
 import {
@@ -29,7 +29,7 @@ const CLAUDE_LIVENESS_INTERVAL_MS = 15_000;
 export async function runDaemon(config: Config): Promise<void> {
   const existingPid = readPidFile();
   if (existingPid !== undefined && existingPid !== process.pid && isProcessAlive(existingPid)) {
-    throw new Error(`daemon already running (pid ${existingPid}) — \`agentblip stop\` first`);
+    throw new Error(`daemon already running (pid ${existingPid}) — \`workmesh stop\` first`);
   }
   fs.mkdirSync(stateDir(), { recursive: true });
 
@@ -57,7 +57,7 @@ export async function runDaemon(config: Config): Promise<void> {
   });
 
   // Hub forward (Bullpen): runs beside the pusher, on its own timer; rebuilt
-  // when `agentblip hub connect|disconnect|include|exclude` asks for a reload.
+  // when `workmesh hub connect|disconnect|include|exclude` asks for a reload.
   let forwarder: HubForwarder | undefined;
   const startForwarder = (hub: HubConfig | undefined): void => {
     const previous = forwarder;
@@ -96,6 +96,7 @@ export async function runDaemon(config: Config): Promise<void> {
   // Written before listen: the file must exist by the time /health answers,
   // and a stale secret from a failed start is harmless.
   const secret = createDaemonSecret();
+  mirrorLegacySecret(secret);
 
   const server = createDaemonServer({
     secret,
@@ -139,7 +140,7 @@ export async function runDaemon(config: Config): Promise<void> {
       return forwarder ? { enabled: true, ...forwarder.status() } : { enabled: false };
     },
     setConfig: (patch) => {
-      // `agentblip hub …` writes the hub section while the daemon runs: take
+      // `workmesh hub …` writes the hub section while the daemon runs: take
       // it from disk so saving a live patch never drops a pairing.
       const hubOnDisk = readHubConfig();
       liveConfig = {
@@ -207,7 +208,7 @@ export async function runDaemon(config: Config): Promise<void> {
     }
 
     log(
-      `agentblip daemon listening on 127.0.0.1:${config.port} (sink: ${sink.name}, granularity: ${config.granularity}, statusPolicy: ${config.statusPolicy})`,
+      `Workmesh daemon listening on 127.0.0.1:${config.port} (sink: ${sink.name}, granularity: ${config.granularity}, statusPolicy: ${config.statusPolicy})`,
     );
 
     let shuttingDown = false;

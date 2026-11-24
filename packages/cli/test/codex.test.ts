@@ -12,6 +12,7 @@ import {
   mapNotifyArg,
   rolloutSessionId,
 } from "../src/adapters/codex";
+import { OUR_COMMAND_RE } from "../src/lib/names";
 
 describe("mapNotifyArg", () => {
   const notify = (over: Record<string, unknown> = {}): string =>
@@ -121,7 +122,7 @@ describe("createCodexWatcher", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-watch-"));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-watch-"));
   });
 
   afterEach(() => {
@@ -154,13 +155,13 @@ describe("createCodexWatcher", () => {
 });
 
 describe("codexNotifyLine", () => {
-  it("uses an absolute node + entry invocation and keeps the agentblip marker", () => {
+  it("uses an absolute node + entry invocation that carries one of our names", () => {
     const line = codexNotifyLine();
     expect(line).toMatch(/^notify = \[/);
     expect(line).toContain(JSON.stringify(process.execPath));
     expect(line).toContain('"hook", "codex"]');
-    // isCodexNotifyInstalled greps for "agentblip" — the entry path carries it
-    expect(line).toContain("agentblip");
+    // isCodexNotifyInstalled looks for our name — the entry path carries it
+    expect(line).toMatch(OUR_COMMAND_RE);
   });
 });
 
@@ -169,7 +170,7 @@ describe("installCodexNotify", () => {
   let configPath: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-codex-"));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-codex-"));
     configPath = path.join(dir, "config.toml");
   });
 
@@ -207,7 +208,7 @@ describe("installCodexNotify", () => {
     expect(isCodexNotifyInstalled(configPath)).toBe(false);
   });
 
-  it("is idempotent when agentblip is already installed", () => {
+  it("is idempotent when Workmesh is already installed", () => {
     installCodexNotify(configPath);
     const afterFirst = fs.readFileSync(configPath, "utf8");
     expect(installCodexNotify(configPath)).toBe("already-installed");
@@ -215,7 +216,7 @@ describe("installCodexNotify", () => {
   });
 
   it("repoints the legacy bare-command install to the absolute command", () => {
-    const legacy = 'notify = ["agentblip", "hook", "codex"]\n';
+    const legacy = 'notify = ["agentblip", "hook", "codex"]\n'; // pre-rename bare command
     fs.writeFileSync(configPath, legacy);
     expect(installCodexNotify(configPath)).toBe("installed");
     expect(fs.readFileSync(configPath, "utf8")).toBe(`${codexNotifyLine()}\n`);
@@ -223,8 +224,8 @@ describe("installCodexNotify", () => {
     expect(installCodexNotify(configPath)).toBe("already-installed");
   });
 
-  it("leaves another tool's notify alone even when it chains to agentblip", () => {
-    const other = 'notify = ["/x/Client", "turn-ended", "--previous-notify", "[\\"node\\",\\"/x/agentblip/dist/index.js\\",\\"hook\\",\\"codex\\"]"]\n';
+  it("leaves another tool's notify alone even when it chains to Workmesh", () => {
+    const other = 'notify = ["/x/Client", "turn-ended", "--previous-notify", "[\\"node\\",\\"/x/workmesh/dist/index.js\\",\\"hook\\",\\"codex\\"]"]\n';
     fs.writeFileSync(configPath, other);
     expect(installCodexNotify(configPath)).toBe("already-installed");
     expect(fs.readFileSync(configPath, "utf8")).toBe(other);

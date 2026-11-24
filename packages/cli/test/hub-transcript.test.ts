@@ -16,7 +16,7 @@ import { claudeLines as cl, codexLines as cx } from "./fixtures/transcripts";
 
 let dir: string;
 beforeAll(() => {
-  dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-tail-")));
+  dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-tail-")));
 });
 afterAll(() => {
   fs.rmSync(dir, { recursive: true, force: true });

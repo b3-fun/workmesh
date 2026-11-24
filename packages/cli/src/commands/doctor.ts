@@ -46,13 +46,13 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
   checks.push(
     nodeMajor >= 20
       ? ok("node", `v${process.versions.node}`)
-      : fail("node", `v${process.versions.node} — agentblip needs node >= 20`),
+      : fail("node", `v${process.versions.node} — Workmesh needs node >= 20`),
   );
 
   let config: Config | undefined;
   const file = configPath();
   if (!fs.existsSync(file)) {
-    checks.push(warn("config", `${file} missing — run \`agentblip setup\``));
+    checks.push(warn("config", `${file} missing — run \`workmesh setup\``));
   } else {
     try {
       config = loadConfig();
@@ -67,13 +67,13 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     checks.push(
       cfg.deviceToken
         ? ok("device token", "present")
-        : fail("device token", "missing — run `agentblip setup`"),
+        : fail("device token", "missing — run `workmesh setup`"),
     );
   } else if (cfg.mode === "slack") {
     checks.push(
       cfg.slackToken
         ? ok("slack token", "present")
-        : fail("slack token", "missing — run `agentblip setup`"),
+        : fail("slack token", "missing — run `workmesh setup`"),
     );
   }
 
@@ -81,7 +81,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     ok(
       "status policy",
       cfg.statusPolicy === "respect"
-        ? "respect — never overwrites a status agentblip didn't set"
+        ? "respect — never overwrites a status Workmesh didn't set"
         : "overwrite — displaces an existing status while agents work, restores it after",
     ),
   );
@@ -98,13 +98,13 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
       checks.push(
         warn(
           "ownership",
-          "standing down — your existing Slack status is untouched; agentblip resumes when it clears",
+          "standing down — your existing Slack status is untouched; Workmesh resumes when it clears",
         ),
       );
     }
   } catch {
     checks.push(
-      warn("daemon", `not running on 127.0.0.1:${cfg.port} — \`agentblip start --detach\``),
+      warn("daemon", `not running on 127.0.0.1:${cfg.port} — \`workmesh start --detach\``),
     );
   }
 
@@ -118,7 +118,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
           ? ok("status read", "token can read the current status (ownership guard active)")
           : warn(
               "status read",
-              "token lacks users.profile:read — existing statuses can't be detected (legacy mode); run `agentblip setup` to re-pair",
+              "token lacks users.profile:read — existing statuses can't be detected (legacy mode); run `workmesh setup` to re-pair",
             ),
       );
     } catch (err) {
@@ -155,21 +155,21 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
         "hub sharing",
         level === "conversation"
           ? "conversation — prompts, agent text, tool descriptions and turn times from shared repos, redacted on this machine"
-          : "metadata — no prompt or agent text leaves this machine (`agentblip hub share conversation` to add it)",
+          : "metadata — no prompt or agent text leaves this machine (`workmesh hub share conversation` to add it)",
       ),
     );
     try {
       const state = await getHubState(cfg.port);
       if (state.enabled && state.share !== undefined && state.share !== level) {
-        checks.push(warn("hub sharing", `the daemon still shares ${state.share}: run \`agentblip hub share ${level}\` again or restart it`));
+        checks.push(warn("hub sharing", `the daemon still shares ${state.share}: run \`workmesh hub share ${level}\` again or restart it`));
       }
       if (state.enabled && state.share === undefined) {
-        checks.push(warn("hub forward", "the running daemon predates sharing levels — restart it: `agentblip stop && agentblip start --detach`"));
+        checks.push(warn("hub forward", "the running daemon predates sharing levels — restart it: `workmesh stop && workmesh start --detach`"));
       }
       if (!state.enabled) {
-        checks.push(warn("hub forward", "the daemon isn't forwarding — restart it: `agentblip stop && agentblip start --detach`"));
+        checks.push(warn("hub forward", "the daemon isn't forwarding — restart it: `workmesh stop && workmesh start --detach`"));
       } else if (state.halted) {
-        checks.push(fail("hub forward", `stopped: ${state.lastError ?? "token rejected"} — run \`agentblip hub connect ${hub.url}\``));
+        checks.push(fail("hub forward", `stopped: ${state.lastError ?? "token rejected"} — run \`workmesh hub connect ${hub.url}\``));
       } else if (state.lastSendOk === false) {
         checks.push(warn("hub forward", `retrying: ${state.lastError ?? "send failed"} (${state.queued} queued, ${state.dropped} dropped)`));
       } else {
@@ -189,24 +189,24 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
   checks.push(
     areClaudeHooksInstalled()
       ? ok("claude code hooks", claudeSettingsPath())
-      : warn("claude code hooks", "not installed — run `agentblip setup`"),
+      : warn("claude code hooks", "not installed — run `workmesh setup`"),
   );
   checks.push(
     areCodexHooksInstalled()
       ? ok("codex hooks", `${codexHooksPath()} (trust them in Codex with /hooks)`)
-      : warn("codex hooks", "not installed — run `agentblip setup`"),
+      : warn("codex hooks", "not installed — run `workmesh setup`"),
   );
   checks.push(
     isCodexNotifyInstalled()
       ? ok("codex notify", codexConfigPath())
-      : warn("codex notify", "not installed — run `agentblip setup`"),
+      : warn("codex notify", "not installed — run `workmesh setup`"),
   );
 
   const failed = checks.some((check) => check.status === "fail");
   if (opts.json) {
     console.log(JSON.stringify({ ok: !failed, checks }, null, 2));
   } else {
-    console.log("agentblip doctor\n");
+    console.log("workmesh doctor\n");
     const nameWidth = Math.max(...checks.map((check) => check.name.length));
     for (const check of checks) {
       const icon =

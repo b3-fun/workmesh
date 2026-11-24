@@ -346,7 +346,7 @@ describe("daemon client auth integration", () => {
   let savedStateHome: string | undefined;
 
   beforeEach(async () => {
-    stateDirTmp = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-state-"));
+    stateDirTmp = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-state-"));
     savedStateHome = process.env.XDG_STATE_HOME;
     process.env.XDG_STATE_HOME = stateDirTmp;
     h = await startServer();
@@ -363,7 +363,7 @@ describe("daemon client auth integration", () => {
     // simulate the daemon having written its secret into the state dir
     const written = createDaemonSecret();
     expect(written).toHaveLength(64);
-    const secretFile = path.join(stateDirTmp, "agentblip", "daemon.secret");
+    const secretFile = path.join(stateDirTmp, "workmesh", "daemon.secret");
     expect(fs.statSync(secretFile).mode & 0o777).toBe(0o600);
     // our test server uses a fixed secret — rewrite the file to match
     fs.writeFileSync(secretFile, `${SECRET}\n`);
@@ -381,8 +381,8 @@ describe("daemon client auth integration", () => {
   });
 
   it("pauseDaemon returns without waiting for the sink push", async () => {
-    fs.mkdirSync(path.join(stateDirTmp, "agentblip"), { recursive: true });
-    fs.writeFileSync(path.join(stateDirTmp, "agentblip", "daemon.secret"), `${SECRET}\n`);
+    fs.mkdirSync(path.join(stateDirTmp, "workmesh"), { recursive: true });
+    fs.writeFileSync(path.join(stateDirTmp, "workmesh", "daemon.secret"), `${SECRET}\n`);
     await expect(pauseDaemon(h.port)).resolves.toEqual({ ok: true, paused: true });
   });
 });

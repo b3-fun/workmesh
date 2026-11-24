@@ -9,6 +9,10 @@ let dir: string;
 let file: string;
 const savedEnv: Record<string, string | undefined> = {};
 const ENV_KEYS = [
+  "WORKMESH_RELAY_URL",
+  "WORKMESH_TOKEN",
+  "WORKMESH_PORT",
+  "WORKMESH_STATUS_POLICY",
   "AGENTBLIP_RELAY_URL",
   "AGENTBLIP_TOKEN",
   "AGENTBLIP_PORT",
@@ -16,7 +20,7 @@ const ENV_KEYS = [
 ];
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-config-"));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-config-"));
   file = path.join(dir, "config.json");
   for (const key of ENV_KEYS) {
     savedEnv[key] = process.env[key];
@@ -87,24 +91,45 @@ describe("config", () => {
   });
 
   it("applies env overrides", () => {
-    process.env.AGENTBLIP_RELAY_URL = "https://relay.example.com";
-    process.env.AGENTBLIP_TOKEN = "ab_envtoken";
-    process.env.AGENTBLIP_PORT = "9123";
+    process.env.WORKMESH_RELAY_URL = "https://relay.example.com";
+    process.env.WORKMESH_TOKEN = "ab_envtoken";
+    process.env.WORKMESH_PORT = "9123";
     const config = loadConfig(file);
     expect(config.relayUrl).toBe("https://relay.example.com");
     expect(config.deviceToken).toBe("ab_envtoken");
     expect(config.port).toBe(9123);
   });
 
-  it("ignores an invalid AGENTBLIP_PORT", () => {
-    process.env.AGENTBLIP_PORT = "not-a-port";
+  it("still reads the pre-rename AGENTBLIP_* vars, with WORKMESH_* winning", () => {
+    process.env.AGENTBLIP_RELAY_URL = "https://old.example.com";
+    process.env.AGENTBLIP_TOKEN = "ab_oldtoken";
+    process.env.AGENTBLIP_PORT = "9124";
+    process.env.AGENTBLIP_STATUS_POLICY = "overwrite";
+    let config = loadConfig(file);
+    expect(config.relayUrl).toBe("https://old.example.com");
+    expect(config.deviceToken).toBe("ab_oldtoken");
+    expect(config.port).toBe(9124);
+    expect(config.statusPolicy).toBe("overwrite");
+
+    process.env.WORKMESH_RELAY_URL = "https://new.example.com";
+    process.env.WORKMESH_PORT = "9125";
+    process.env.WORKMESH_STATUS_POLICY = "respect";
+    config = loadConfig(file);
+    expect(config.relayUrl).toBe("https://new.example.com");
+    expect(config.deviceToken).toBe("ab_oldtoken");
+    expect(config.port).toBe(9125);
+    expect(config.statusPolicy).toBe("respect");
+  });
+
+  it("ignores an invalid WORKMESH_PORT", () => {
+    process.env.WORKMESH_PORT = "not-a-port";
     expect(loadConfig(file).port).toBe(DEFAULT_DAEMON_PORT);
   });
 
-  it("applies AGENTBLIP_STATUS_POLICY, ignoring invalid values", () => {
-    process.env.AGENTBLIP_STATUS_POLICY = "overwrite";
+  it("applies WORKMESH_STATUS_POLICY, ignoring invalid values", () => {
+    process.env.WORKMESH_STATUS_POLICY = "overwrite";
     expect(loadConfig(file).statusPolicy).toBe("overwrite");
-    process.env.AGENTBLIP_STATUS_POLICY = "clobber";
+    process.env.WORKMESH_STATUS_POLICY = "clobber";
     expect(loadConfig(file).statusPolicy).toBe("respect");
   });
 

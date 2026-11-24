@@ -10,11 +10,12 @@ import {
   mapHookInput,
   textAsksUser,
 } from "../src/adapters/claude-code";
+import { OUR_COMMAND_RE } from "../src/lib/names";
 
 const input = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   hook_event_name: "PreToolUse",
   session_id: "sess-1",
-  cwd: "/Users/dev/projects/agentblip",
+  cwd: "/Users/dev/projects/workmesh",
   ...over,
 });
 
@@ -25,8 +26,8 @@ describe("mapHookInput", () => {
       source: "claude-code",
       sessionId: "sess-1",
       kind: "start",
-      project: "agentblip",
-      cwd: "/Users/dev/projects/agentblip",
+      project: "workmesh",
+      cwd: "/Users/dev/projects/workmesh",
       ts: 123,
     });
   });
@@ -248,13 +249,13 @@ describe("mapHookInput", () => {
 });
 
 describe("claudeHookCommand", () => {
-  it("writes a quoted absolute invocation that keeps the agentblip marker", () => {
+  it("writes a quoted absolute invocation that carries one of our names", () => {
     const command = claudeHookCommand();
     // absolute node + entry paths, quoted for spaces, PATH-independent
     expect(command.startsWith(`"${process.execPath}" "`)).toBe(true);
     expect(command.endsWith('" hook claude-code')).toBe(true);
-    // install idempotency checks command.includes("agentblip")
-    expect(command).toContain("agentblip");
+    // install idempotency recognises our command by name (lib/names.ts)
+    expect(command).toMatch(OUR_COMMAND_RE);
   });
 });
 

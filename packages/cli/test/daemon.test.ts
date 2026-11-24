@@ -12,7 +12,7 @@ let stateDirTmp: string;
 let savedStateHome: string | undefined;
 
 beforeEach(() => {
-  stateDirTmp = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-daemon-"));
+  stateDirTmp = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-daemon-"));
   savedStateHome = process.env.XDG_STATE_HOME;
   process.env.XDG_STATE_HOME = stateDirTmp;
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -34,7 +34,7 @@ const config = (over: Record<string, unknown> = {}): Config =>
 describe("runDaemon startup failures", () => {
   it("does not leave a pidfile when the sink cannot be created", async () => {
     // unlink leaves relay mode + no token in old configs; the daemon must
-    // fail without claiming the pidfile, or `agentblip stop` lies later.
+    // fail without claiming the pidfile, or `workmesh stop` lies later.
     await expect(runDaemon(config({ mode: "relay" }))).rejects.toThrow(/device token/);
     expect(fs.existsSync(pidFilePath())).toBe(false);
   });

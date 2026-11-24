@@ -19,6 +19,7 @@ import { runStart } from "./commands/start";
 import { runStatus } from "./commands/status";
 import { runStop } from "./commands/stop";
 import { runUnlink } from "./commands/unlink";
+import { migrateLegacyDirs } from "./lib/migrate";
 import { errorMessage, red } from "./lib/ui";
 
 function wrap<A extends unknown[]>(
@@ -34,11 +35,14 @@ function wrap<A extends unknown[]>(
   };
 }
 
+// Carry config and state over from the pre-rename agentblip directories once.
+migrateLegacyDirs();
+
 const program = new Command();
 
 program
   .name("workmesh")
-  .description("Your Slack status, synced with your local AI agent sessions.")
+  .description("Your coding agents, live on your team's board and in your Slack status.")
   .version(pkg.version);
 
 program
@@ -64,7 +68,7 @@ program
 
 program
   .command("status")
-  .description("Show live agent sessions and the status agentblip would set")
+  .description("Show live agent sessions and the status Workmesh would set")
   .option("--json", "machine-readable output")
   .action(wrap(runStatus));
 

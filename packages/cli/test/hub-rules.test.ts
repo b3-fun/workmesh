@@ -135,7 +135,7 @@ describe("labels and tool names", () => {
 describe("git resolution", () => {
   let dir: string;
   beforeAll(() => {
-    dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-git-")));
+    dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-git-")));
   });
   afterAll(() => {
     fs.rmSync(dir, { recursive: true, force: true });

@@ -17,12 +17,13 @@ import {
   responseText,
   transcriptPathOf,
 } from "./detail";
+import { OUR_COMMAND_RE } from "../lib/names";
 
 const MAX_ACTIVITY_LEN = 60;
 
 /**
  * Absolute notify invocation: GUI-launched agents don't inherit the login-shell
- * PATH, so a bare `agentblip` may not resolve. import.meta.url is the bundled
+ * PATH, so a bare `workmesh` may not resolve. import.meta.url is the bundled
  * CLI entry (dist/index.js) at runtime; JSON strings are valid TOML strings.
  */
 export function codexNotifyLine(): string {
@@ -75,27 +76,27 @@ export function mapNotifyArg(argvJson: string, fallbackNow = Date.now()): Sessio
 export type CodexInstallResult = "installed" | "already-installed" | "manual";
 
 /**
- * Adds the agentblip notify hook to ~/.codex/config.toml. If a notify key
+ * Adds the Workmesh notify hook to ~/.codex/config.toml. If a notify key
  * already exists we never rewrite it — the user gets manual instructions.
  */
 export function installCodexNotify(configPath = codexConfigPath()): CodexInstallResult {
   let text = "";
   if (fs.existsSync(configPath)) text = fs.readFileSync(configPath, "utf8");
   if (/^\s*notify\s*=/m.test(text)) {
-    if (!/^\s*notify\s*=.*(agentblip|crewblip|workmesh)/m.test(text)) return "manual";
+    if (!notifyLineIsOurs(text)) return "manual";
     // Only our own line is repointed (an older install path, the bare legacy
-    // command, or the agentblip → @b3os/workmesh move): exactly
-    // ["<node>", "<entry>", "hook", "codex"] or ["agentblip", "hook", "codex"].
+    // command, or an install from before the rename): exactly
+    // ["<node>", "<entry>", "hook", "codex"] or ["<name>", "hook", "codex"].
     // Another tool's notify that merely chains to us is left alone.
     const ours = /^[ \t]*notify[ \t]*=[ \t]*\[[ \t]*"[^"\n]*"[ \t]*,[ \t]*(?:"[^"\n]*"[ \t]*,[ \t]*)?"hook"[ \t]*,[ \t]*"codex"[ \t]*\][ \t]*$/m;
     const match = ours.exec(text);
-    if (!match || !/agentblip|crewblip|workmesh/.test(match[0])) return "already-installed";
+    if (!match || !OUR_COMMAND_RE.test(match[0])) return "already-installed";
     const next = text.replace(ours, codexNotifyLine());
     if (next === text) return "already-installed";
     fs.writeFileSync(configPath, next);
     return "installed";
   }
-  const block = `# agentblip: surface Codex turns in your Slack status\n${codexNotifyLine()}\n`;
+  const block = `# workmesh: surface Codex turns in your Slack status\n${codexNotifyLine()}\n`;
   // `notify` must be top-level TOML: if the file has [table] sections, appending
   // would land the key inside the last table — prepend instead.
   const next = /^\s*\[/m.test(text)
@@ -108,10 +109,15 @@ export function installCodexNotify(configPath = codexConfigPath()): CodexInstall
   return "installed";
 }
 
+/** A top-level `notify = …` line that names one of our commands. */
+function notifyLineIsOurs(text: string): boolean {
+  return text.split("\n").some((line) => /^\s*notify\s*=/.test(line) && OUR_COMMAND_RE.test(line));
+}
+
 export function isCodexNotifyInstalled(configPath = codexConfigPath()): boolean {
   try {
     const text = fs.readFileSync(configPath, "utf8");
-    return /^\s*notify\s*=.*(agentblip|crewblip|workmesh)/m.test(text);
+    return notifyLineIsOurs(text);
   } catch {
     return false;
   }
@@ -202,7 +208,7 @@ export function codexHooksPath(): string {
 }
 
 /**
- * Events agentblip installs. PermissionRequest is beyond Claude Code's set:
+ * Events Workmesh installs. PermissionRequest is beyond Claude Code's set:
  * it is Codex's "blocked on an approval" signal, which maps to waiting.
  */
 export const CODEX_HOOK_EVENTS: readonly string[] = [
@@ -479,10 +485,10 @@ function mapCodexEvent(
 
 /** Our Codex hooks.json command, under either name and any install path. */
 export function isOurCodexHook(command: unknown): command is string {
-  return typeof command === "string" && /agentblip|crewblip|workmesh/.test(command) && command.includes("codex-hooks");
+  return typeof command === "string" && OUR_COMMAND_RE.test(command) && command.includes("codex-hooks");
 }
 
-function hookListHasAgentblip(entries: unknown): boolean {
+function hookListHasOurs(entries: unknown): boolean {
   if (!Array.isArray(entries)) return false;
   return entries.some((entry) => {
     const hooks = (entry as { hooks?: unknown } | null)?.hooks;
@@ -515,9 +521,9 @@ export interface CodexHooksInstallResult {
 }
 
 /**
- * Merges agentblip's entries into Codex's hooks.json. Never overwrites: other
- * tools' entries and unknown keys are kept, events that already carry an
- * agentblip codex-hooks command are skipped, and the original file is backed
+ * Merges Workmesh's entries into Codex's hooks.json. Never overwrites: other
+ * tools' entries and unknown keys are kept, events that already carry our
+ * codex-hooks command are skipped, and the original file is backed
  * up once. Throws (changing nothing) when the file isn't a JSON object.
  */
 export function installCodexHooks(hooksPath = codexHooksPath()): CodexHooksInstallResult {
@@ -545,7 +551,7 @@ export function installCodexHooks(hooksPath = codexHooksPath()): CodexHooksInsta
   for (const event of CODEX_HOOK_EVENTS) {
     const list = hooks[event];
     if (repointCodexHooks(list, command)) changed = true;
-    if (hookListHasAgentblip(list)) continue;
+    if (hookListHasOurs(list)) continue;
     const entry = { hooks: [{ type: "command", command, timeout: codexHookTimeout(event) }] };
     if (Array.isArray(list)) list.push(entry);
     else if (list === undefined) hooks[event] = [entry];
@@ -556,7 +562,7 @@ export function installCodexHooks(hooksPath = codexHooksPath()): CodexHooksInsta
   let backupPath: string | undefined;
   if (changed) {
     if (original !== undefined) {
-      backupPath = `${hooksPath}.agentblip-backup`;
+      backupPath = `${hooksPath}.workmesh-backup`;
       if (!fs.existsSync(backupPath)) fs.writeFileSync(backupPath, original);
     }
     fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
@@ -568,7 +574,7 @@ export function installCodexHooks(hooksPath = codexHooksPath()): CodexHooksInsta
 export function areCodexHooksInstalled(hooksPath = codexHooksPath()): boolean {
   try {
     const parsed = JSON.parse(fs.readFileSync(hooksPath, "utf8")) as { hooks?: Record<string, unknown> };
-    return CODEX_HOOK_EVENTS.every((event) => hookListHasAgentblip(parsed.hooks?.[event]));
+    return CODEX_HOOK_EVENTS.every((event) => hookListHasOurs(parsed.hooks?.[event]));
   } catch {
     return false;
   }

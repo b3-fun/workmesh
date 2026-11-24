@@ -12,7 +12,7 @@ let savedConfigHome: string | undefined;
 let savedStateHome: string | undefined;
 
 beforeEach(() => {
-  configDirTmp = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-unlink-"));
+  configDirTmp = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-unlink-"));
   savedConfigHome = process.env.XDG_CONFIG_HOME;
   savedStateHome = process.env.XDG_STATE_HOME;
   process.env.XDG_CONFIG_HOME = configDirTmp;

@@ -152,11 +152,11 @@ describe("SessionStore", () => {
 
   it("keeps cwd and name sticky across events", () => {
     const store = new SessionStore();
-    store.apply(ev({ cwd: "/x/agentblip", name: "agentblip-1" }), 1000);
+    store.apply(ev({ cwd: "/x/workmesh", name: "workmesh-1" }), 1000);
     store.apply(ev({ activity: "thinking" }), 2000);
     const s = store.snapshot().sessions[0];
-    expect(s?.cwd).toBe("/x/agentblip");
-    expect(s?.name).toBe("agentblip-1");
+    expect(s?.cwd).toBe("/x/workmesh");
+    expect(s?.name).toBe("workmesh-1");
   });
 
   it("remove drops a session; annotate sets a name without counting as activity", () => {

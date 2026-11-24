@@ -13,7 +13,7 @@ let dir: string;
 let settingsPath: string;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-hooks-"));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-hooks-"));
   settingsPath = path.join(dir, "settings.json");
 });
 
@@ -83,7 +83,7 @@ describe("installClaudeHooks", () => {
     const legacyHooks: Record<string, unknown> = {};
     for (const event of CLAUDE_HOOK_EVENTS) {
       legacyHooks[event] = [
-        { hooks: [{ type: "command", command: "agentblip hook claude-code" }] },
+        { hooks: [{ type: "command", command: "agentblip hook claude-code" }] }, // pre-rename bare command
       ];
     }
     const original = JSON.stringify({ hooks: legacyHooks }, null, 2);
@@ -110,10 +110,28 @@ describe("installClaudeHooks", () => {
     expect(after).not.toContain("node_modules/agentblip/");
   });
 
+  it("repoints a pre-rename checkout (…/agentblip/packages/cli/dist) to this one", () => {
+    const old = '"/opt/homebrew/bin/node" "/Users/you/Documents/agentblip/packages/cli/dist/index.js" hook claude-code';
+    const hooks: Record<string, unknown> = {};
+    for (const event of CLAUDE_HOOK_EVENTS) {
+      hooks[event] = [{ hooks: [{ type: "command", command: old }, { type: "command", command: "other-tool" }] }];
+    }
+    fs.writeFileSync(settingsPath, JSON.stringify({ hooks }, null, 2));
+    const result = installClaudeHooks(settingsPath);
+    expect(result.changed).toBe(true);
+    expect(result.backupPath).toBe(`${settingsPath}.workmesh-backup`);
+    const after = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
+    for (const event of CLAUDE_HOOK_EVENTS) {
+      expect(after.hooks[event]).toHaveLength(1);
+      expect(after.hooks[event]![0]!.hooks.map((h) => h.command)).toEqual([claudeHookCommand(), "other-tool"]);
+    }
+    expect(installClaudeHooks(settingsPath).changed).toBe(false);
+  });
+
   it("backs up the original file exactly once", () => {
     fs.writeFileSync(settingsPath, JSON.stringify({ model: "opus" }));
     const first = installClaudeHooks(settingsPath);
-    expect(first.backupPath).toBe(`${settingsPath}.agentblip-backup`);
+    expect(first.backupPath).toBe(`${settingsPath}.workmesh-backup`);
     expect(fs.readFileSync(first.backupPath ?? "", "utf8")).toBe(
       JSON.stringify({ model: "opus" }),
     );
@@ -123,7 +141,7 @@ describe("installClaudeHooks", () => {
     delete settings.hooks.Stop;
     fs.writeFileSync(settingsPath, JSON.stringify(settings));
     installClaudeHooks(settingsPath);
-    expect(fs.readFileSync(`${settingsPath}.agentblip-backup`, "utf8")).toBe(
+    expect(fs.readFileSync(`${settingsPath}.workmesh-backup`, "utf8")).toBe(
       JSON.stringify({ model: "opus" }),
     );
   });

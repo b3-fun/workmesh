@@ -323,7 +323,7 @@ describe("Pusher", () => {
   });
 
   it("shutdown resolves within its cap even when the sink hangs", async () => {
-    // `agentblip stop` waits 5s — a 10s sink push must not stall shutdown.
+    // `workmesh stop` waits 5s — a 10s sink push must not stall shutdown.
     const { store, pusher, fail } = build();
     pusher.start();
     store.apply(working("a", "editing a.ts"));
@@ -610,7 +610,7 @@ describe("ownership state file", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-ownership-"));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-ownership-"));
   });
 
   afterEach(() => {

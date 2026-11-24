@@ -24,7 +24,7 @@ let home: string;
 let repo: string;
 let projects: string;
 beforeAll(() => {
-  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-privacy-")));
+  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-privacy-")));
   repo = path.join(home, "Documents", "b3", "b3os-beta");
   fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
   fs.writeFileSync(path.join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
@@ -56,7 +56,7 @@ function forbidden(): string[] {
     s.npm.slice(4),
     s.linear.slice(8),
     s.bullpen.slice(3),
-    s.agentblip.slice(3),
+    s.relayDevice.slice(3),
     s.google.slice(4),
     s.hf.slice(3),
     s.jwt.split(".")[1]!,
@@ -147,7 +147,7 @@ function run(share: HubShareLevel) {
   append(
     cl.text(
       [
-        `Done. Stored PRIVATE_KEY=0x${s.evmKey} in the vault; agentblip token ${s.agentblip}.`,
+        `Done. Stored PRIVATE_KEY=0x${s.evmKey} in the vault; relay token ${s.relayDevice}.`,
         `Cloudflare token: ${s.cloudflare}, xoxp ${s.slackUser}, legacy key ${s.openaiLegacy}.`,
         `Notes are in ${home}/Documents/notes.md.`,
       ].join("\n"),

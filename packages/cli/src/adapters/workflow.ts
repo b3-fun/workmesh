@@ -8,7 +8,7 @@ import type { SessionEvent } from "@workmesh/core";
  *   ~/.claude/projects/<slug>/<session>/subagents/workflows/<wf>/journal.jsonl
  * with a `started` line when an agent spawns and a `result` line when it
  * finishes. Live agents = started − result. Hooks can't see this count, so we
- * watch the journals and report the fleet — every agentblip + ultracode user
+ * watch the journals and report the fleet — every Workmesh + ultracode user
  * gets accurate "N agents working" with no setup. This depends on Claude Code's
  * internal layout (undocumented), so everything here degrades to a no-op if the
  * dir or format isn't what we expect.

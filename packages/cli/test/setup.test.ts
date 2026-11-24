@@ -24,7 +24,7 @@ describe("setup --hooks-only", () => {
     const path = await import("node:path");
     const { vi } = await import("vitest");
     const { installHooksOnly } = await import("../src/commands/setup");
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "agentblip-hooksonly-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-hooksonly-"));
     const saved = { HOME: process.env.HOME, CODEX_HOME: process.env.CODEX_HOME, XDG: process.env.XDG_CONFIG_HOME };
     process.env.HOME = home;
     delete process.env.CODEX_HOME;
@@ -34,7 +34,7 @@ describe("setup --hooks-only", () => {
       fs.mkdirSync(path.join(home, ".codex"));
       const other = { hooks: { Stop: [{ hooks: [{ type: "command", command: "'/x/node' '/x/notify.mjs'", timeout: 5 }] }] } };
       fs.writeFileSync(path.join(home, ".codex", "hooks.json"), JSON.stringify(other));
-      const toml = 'notify = ["/x/Client", "turn-ended", "--previous-notify", "[\\"node\\",\\"/x/agentblip/dist/index.js\\",\\"hook\\",\\"codex\\"]"]\n';
+      const toml = 'notify = ["/x/Client", "turn-ended", "--previous-notify", "[\\"node\\",\\"/x/workmesh/dist/index.js\\",\\"hook\\",\\"codex\\"]"]\n';
       fs.writeFileSync(path.join(home, ".codex", "config.toml"), toml);
 
       installHooksOnly();
@@ -47,7 +47,7 @@ describe("setup --hooks-only", () => {
       expect(fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8")).toBe(toml);
       const claude = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8")) as { hooks: object };
       expect(Object.keys(claude.hooks)).toContain("PreToolUse");
-      expect(fs.existsSync(path.join(home, ".config", "agentblip", "config.json"))).toBe(false);
+      expect(fs.existsSync(path.join(home, ".config", "workmesh", "config.json"))).toBe(false);
     } finally {
       log.mockRestore();
       process.env.HOME = saved.HOME;

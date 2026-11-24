@@ -10,6 +10,7 @@ import {
   hubShareLevelSchema,
 } from "@workmesh/core";
 import type { FormatOptions, HubShareLevel } from "@workmesh/core";
+import { envSetting } from "./names";
 import { configPath } from "./paths";
 
 const templatesSchema = z
@@ -37,9 +38,9 @@ export const hubConfigSchema = z.object({
   machine: z.string().max(120).optional(),
   person: z.object({ email: z.string(), name: z.string() }).optional(),
   project: hubProjectRuleSchema,
-  /** Absolute dirs shared on top of the project's rule (`agentblip hub include`). */
+  /** Absolute dirs shared on top of the project's rule (`workmesh hub include`). */
   includeDirs: z.array(z.string()).default([]),
-  /** Absolute dirs never shared, whatever their remote (`agentblip hub exclude`). */
+  /** Absolute dirs never shared, whatever their remote (`workmesh hub exclude`). */
   excludeDirs: z.array(z.string()).default([]),
   pairedAt: z.number().int().optional(),
   /**
@@ -63,7 +64,7 @@ export const configSchema = z.object({
   slackToken: z.string().optional(),
   port: z.number().int().min(1).max(65535).default(DEFAULT_DAEMON_PORT),
   granularity: z.enum(["off", "presence", "count", "activity"]).default("count"),
-  /** How to treat a Slack status agentblip didn't set (ownership guard). */
+  /** How to treat a Slack status Workmesh didn't set (ownership guard). */
   statusPolicy: z.enum(["respect", "overwrite"]).default("respect"),
   showProject: z.boolean().default(false),
   /** Lead the activity status with the repo name ("b3iq: editing README.md"). */
@@ -101,7 +102,7 @@ export const configSchema = z.object({
     }),
   autoStartDaemon: z.boolean().default(true),
   /**
-   * Present once paired with a hub (`agentblip hub connect`). A malformed
+   * Present once paired with a hub (`workmesh hub connect`). A malformed
    * section reads as "not paired" instead of invalidating the Slack config.
    */
   hub: hubConfigSchema.optional().catch(undefined),
@@ -122,7 +123,7 @@ export function loadConfig(file = configPath()): Config {
       raw = JSON.parse(text) as unknown;
     } catch {
       throw new Error(
-        `invalid JSON in ${file} — fix or delete it, then run \`agentblip setup\``,
+        `invalid JSON in ${file} — fix or delete it, then run \`workmesh setup\``,
       );
     }
   }
@@ -146,16 +147,17 @@ export function loadConfigSafe(file = configPath()): Config {
 }
 
 function applyEnvOverrides(config: Config): Config {
-  const relayUrl = process.env.AGENTBLIP_RELAY_URL;
+  // WORKMESH_*, or the pre-rename AGENTBLIP_* when that is all that is set.
+  const relayUrl = envSetting("RELAY_URL");
   if (relayUrl) config.relayUrl = relayUrl;
-  const token = process.env.AGENTBLIP_TOKEN;
+  const token = envSetting("TOKEN");
   if (token) config.deviceToken = token;
-  const port = process.env.AGENTBLIP_PORT;
+  const port = envSetting("PORT");
   if (port) {
     const n = Number.parseInt(port, 10);
     if (Number.isInteger(n) && n >= 1 && n <= 65535) config.port = n;
   }
-  const policy = process.env.AGENTBLIP_STATUS_POLICY;
+  const policy = envSetting("STATUS_POLICY");
   if (policy === "respect" || policy === "overwrite") config.statusPolicy = policy;
   return config;
 }

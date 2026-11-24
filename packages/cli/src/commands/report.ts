@@ -15,11 +15,11 @@ export interface ReportOptions {
 
 /**
  * Orchestrator reporter: an ultracode workflow, a CI fan-out, or any script
- * that spawns concurrent agents calls this so agentblip's "N agents working"
+ * that spawns concurrent agents calls this so Workmesh's "N agents working"
  * reflects the real fleet — something hooks can't see. `--done` clears it.
  *
- *   agentblip report --agents 5 --phase "verify" --activity "reviewing findings"
- *   agentblip report --done
+ *   workmesh report --agents 5 --phase "verify" --activity "reviewing findings"
+ *   workmesh report --done
  */
 export async function runReport(opts: ReportOptions): Promise<void> {
   const config = loadConfig();
@@ -45,7 +45,7 @@ export async function runReport(opts: ReportOptions): Promise<void> {
 
   if (!(await ensureDaemon(config))) {
     throw new Error(
-      `daemon not running on 127.0.0.1:${config.port} and could not be auto-started — \`agentblip start --detach\``,
+      `daemon not running on 127.0.0.1:${config.port} and could not be auto-started — \`workmesh start --detach\``,
     );
   }
   await postEvent(config.port, parsed.data);

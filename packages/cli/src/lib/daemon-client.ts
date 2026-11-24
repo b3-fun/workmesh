@@ -189,7 +189,7 @@ export function sinkConfigured(config: Config): boolean {
 }
 
 /**
- * Spawns `agentblip start` detached, logging to the state dir. A lockfile
+ * Spawns `workmesh start` detached, logging to the state dir. A lockfile
  * guards against concurrent hooks racing to start multiple daemons. Failed
  * starts leave a cooldown marker so hooks stop re-spawning a crashing daemon.
  */

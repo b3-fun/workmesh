@@ -221,7 +221,7 @@ export function hubToolName(tool: string | undefined): string | undefined {
   return tool && tool.length <= 64 && HUB_TOOL_RE.test(tool) ? tool : undefined;
 }
 
-/** agentblip's own fixed labels: safe to send as they are. */
+/** Workmesh's own fixed labels: safe to send as they are. */
 export const SAFE_LABELS: ReadonlySet<string> = new Set([
   "thinking",
   "needs my input",

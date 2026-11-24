@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { daemonSecretPath } from "./paths";
+import { daemonSecretPath, legacyDaemonSecretPath } from "./paths";
 
 /**
  * Loopback TCP is reachable by every local user on a shared host, so the
@@ -15,6 +15,23 @@ export function createDaemonSecret(file = daemonSecretPath()): string {
   // writeFileSync's mode only applies on create — enforce on rewrite too.
   fs.chmodSync(file, 0o600);
   return secret;
+}
+
+/**
+ * Keeps a copy of the secret at its pre-rename path while that directory
+ * exists, so readers built before the rename keep working against this daemon:
+ * an older menu bar app, hooks still pointing at an older install, other local
+ * tools that read it. Never creates the old directory; best effort.
+ */
+export function mirrorLegacySecret(secret: string, file = legacyDaemonSecretPath()): boolean {
+  if (!fs.existsSync(path.dirname(file))) return false;
+  try {
+    fs.writeFileSync(file, `${secret}\n`, { mode: 0o600 });
+    fs.chmodSync(file, 0o600);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Read fresh on every request so clients follow daemon restarts. */

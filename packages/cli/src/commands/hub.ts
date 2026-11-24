@@ -113,7 +113,7 @@ export async function pairWithHub(hubUrl: string, opts: PairOptions): Promise<Pa
   const now = opts.now ?? Date.now;
   const startRes = await postJson(fetchImpl, `${hubUrl}/relay/pair/start`, {
     machine: opts.machine,
-    client: opts.client ?? `agentblip/${pkg.version}`,
+    client: opts.client ?? `workmesh/${pkg.version}`,
     ...(opts.share ? { share: opts.share } : {}),
   });
   if (startRes.status === 429) {
@@ -136,7 +136,7 @@ export async function pairWithHub(hubUrl: string, opts: PairOptions): Promise<Pa
     } catch {
       continue; // transient network error: keep polling
     }
-    if (res.status === 401) throw new Error("the hub no longer knows this pairing — run `agentblip hub connect` again");
+    if (res.status === 401) throw new Error("the hub no longer knows this pairing — run `workmesh hub connect` again");
     if (!res.ok) continue;
     const poll = hubPairPollResponseSchema.parse(await res.json());
     if (poll.status === "expired") break;
@@ -147,7 +147,7 @@ export async function pairWithHub(hubUrl: string, opts: PairOptions): Promise<Pa
     if (!poll.project) throw new Error("the hub sent no project sharing rule — pair again");
     return { deviceId: pair.deviceId, deviceToken: poll.deviceToken, person: poll.person, project: poll.project };
   }
-  throw new Error("pairing code expired — run `agentblip hub connect` again");
+  throw new Error("pairing code expired — run `workmesh hub connect` again");
 }
 
 /** Absolute, normalized form of a dir argument (`~` expanded). */
@@ -175,13 +175,13 @@ async function reloadDaemon(config: Config): Promise<HubState | undefined> {
   } catch (err) {
     // A daemon older than 0.6 has no /hub/reload: it needs a restart.
     console.log(yellow(`  the running daemon did not reload (${err instanceof Error ? err.message : String(err)})`));
-    console.log(yellow(`  restart it: ${bold("agentblip stop && agentblip start --detach")}`));
+    console.log(yellow(`  restart it: ${bold("workmesh stop && workmesh start --detach")}`));
     return undefined;
   }
 }
 
 function requireHub(config: Config): HubConfig {
-  if (!config.hub) throw new Error(`not connected to a hub — run \`agentblip hub connect ${EXAMPLE_HUB_URL}\``);
+  if (!config.hub) throw new Error(`not connected to a hub — run \`workmesh hub connect ${EXAMPLE_HUB_URL}\``);
   return config.hub;
 }
 
@@ -207,7 +207,7 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
   const flagShare = opts.share !== undefined ? parseShareLevel(opts.share) : undefined;
   const config = loadConfig();
   const machine = opts.machine ? machineName(opts.machine) : machineName();
-  console.log(bold("agentblip hub connect"));
+  console.log(bold("workmesh hub connect"));
   console.log(dim(`pairing ${machine} with ${hubUrl}\n`));
 
   let spin: ReturnType<typeof spinner> | undefined;
@@ -264,10 +264,10 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
       (result.project.include.dirs.length ? ` and under ${result.project.include.dirs.join(", ")}` : ""),
   );
   console.log(`  sharing level: ${bold(share)} — ${SHARE_LEVEL_SUMMARY[share]}`);
-  console.log(dim(`  change it any time: agentblip hub share ${share === "conversation" ? "metadata" : "conversation"}`));
+  console.log(dim(`  change it any time: workmesh hub share ${share === "conversation" ? "metadata" : "conversation"}`));
   const state = await reloadDaemon(config);
   if (state?.enabled) console.log(green("  the daemon is forwarding now"));
-  else if (state === undefined) console.log(`  start the daemon: ${bold("agentblip start --detach")}`);
+  else if (state === undefined) console.log(`  start the daemon: ${bold("workmesh start --detach")}`);
 }
 
 export interface HubStatusOptions {
@@ -307,7 +307,7 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
     return;
   }
   if (!hub) {
-    console.log(`not connected to a hub — ${bold(`agentblip hub connect ${EXAMPLE_HUB_URL}`)}`);
+    console.log(`not connected to a hub — ${bold(`workmesh hub connect ${EXAMPLE_HUB_URL}`)}`);
     return;
   }
   const rows: Array<[string, string]> = [
@@ -319,16 +319,16 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
   ];
   if (hub.excludeDirs.length) rows.push(["never shares", hub.excludeDirs.join(", ")]);
   if (!daemon) {
-    rows.push(["daemon", daemonError ? red(daemonError) : yellow("not running — `agentblip start --detach`")]);
+    rows.push(["daemon", daemonError ? red(daemonError) : yellow("not running — `workmesh start --detach`")]);
   } else if (!daemon.enabled) {
-    rows.push(["daemon", yellow("running without hub forward — `agentblip stop && agentblip start --detach`")]);
+    rows.push(["daemon", yellow("running without hub forward — `workmesh stop && workmesh start --detach`")]);
   } else {
     const ago = (t?: number): string => (t ? `${formatDuration(Date.now() - t)} ago` : "never");
     rows.push(
       [
         "forwarding",
         daemon.halted
-          ? red(`stopped: ${daemon.lastError ?? "token rejected"} — run \`agentblip hub connect ${hub.url}\``)
+          ? red(`stopped: ${daemon.lastError ?? "token rejected"} — run \`workmesh hub connect ${hub.url}\``)
           : daemon.lastSendOk === false
             ? yellow(`retrying: ${daemon.lastError ?? "send failed"}`)
             : green("on"),
@@ -345,7 +345,7 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
   for (const [k, v] of rows) console.log(`  ${dim(k.padEnd(width))}  ${v}`);
 }
 
-/** `agentblip hub share [level]`: show or change what this machine shares. */
+/** `workmesh hub share [level]`: show or change what this machine shares. */
 export async function runHubShare(level?: string): Promise<void> {
   const config = loadConfig();
   const hub = requireHub(config);

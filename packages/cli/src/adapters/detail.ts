@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DETAIL_LIMITS, truncateMiddle } from "@agentblip/core";
+import { DETAIL_LIMITS, truncateHead, truncateMiddle } from "@agentblip/core";
 import type { SessionEvent, SessionEventDetail } from "@agentblip/core";
 
 /**
@@ -18,6 +18,45 @@ export function absolutePath(p: unknown, cwd: string | undefined): string | unde
 export function clip(text: unknown, max: number): string | undefined {
   if (typeof text !== "string" || !text) return undefined;
   return truncateMiddle(text, max);
+}
+
+/** Keeps the start of text (prompts and messages read from the top). */
+export function clipHead(text: unknown, max: number): string | undefined {
+  if (typeof text !== "string" || !text) return undefined;
+  return truncateHead(text, max);
+}
+
+/** An absolute transcript path from a hook payload, within the detail limit. */
+export function transcriptPathOf(value: unknown): string | undefined {
+  return typeof value === "string" && path.isAbsolute(value) && value.length <= DETAIL_LIMITS.transcriptPath
+    ? value
+    : undefined;
+}
+
+/** "mcp__claude-in-chrome__navigate" → "claude-in-chrome · navigate"; "mcp__plugin_slack_slack__send" → "slack · send". */
+export function mcpDesc(tool: string): string | undefined {
+  const m = /^mcp__(.+?)__(.+)$/.exec(tool);
+  if (!m) return undefined;
+  const parts = m[1]!.replace(/^plugin_/, "").split("_").filter(Boolean);
+  const server = parts[parts.length - 1] ?? m[1]!;
+  return `${server} · ${m[2]}`;
+}
+
+/** The host of a URL argument, or nothing (never its path or query). */
+export function urlHost(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    return new URL(value).host || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One line of at most DETAIL_LIMITS.desc chars, or nothing. */
+export function oneLine(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const line = value.replace(/\s+/g, " ").trim();
+  return line ? truncateHead(line, DETAIL_LIMITS.desc) : undefined;
 }
 
 /**
@@ -74,7 +113,7 @@ export function fitEventBody(event: SessionEvent): SessionEvent {
   if (!event.detail || size(event) <= MAX_EVENT_BYTES) return event;
   let detail: SessionEventDetail = { ...event.detail, toolResponseText: undefined };
   if (size({ ...event, detail }) <= MAX_EVENT_BYTES) return { ...event, detail };
-  detail = { ...detail, prompt: undefined, filePaths: undefined };
+  detail = { ...detail, prompt: undefined, filePaths: undefined, lastAssistantMessage: undefined };
   if (size({ ...event, detail }) <= MAX_EVENT_BYTES) return { ...event, detail };
   const { detail: _dropped, ...rest } = event;
   return rest;

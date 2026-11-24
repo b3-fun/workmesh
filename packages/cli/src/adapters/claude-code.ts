@@ -5,7 +5,18 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { DETAIL_LIMITS } from "@agentblip/core";
 import type { SessionEvent, SessionEventDetail } from "@agentblip/core";
-import { absolutePath, clip, compactDetail, responseOk, responseText } from "./detail";
+import {
+  absolutePath,
+  clip,
+  clipHead,
+  compactDetail,
+  mcpDesc,
+  oneLine,
+  responseOk,
+  responseText,
+  transcriptPathOf,
+  urlHost,
+} from "./detail";
 
 /**
  * Absolute hook invocation: GUI-launched agents don't inherit the login-shell
@@ -41,6 +52,7 @@ const hookInputSchema = z.looseObject({
   transcript_path: z.string().optional(),
   prompt: z.string().optional(),
   tool_response: z.unknown().optional(),
+  last_assistant_message: z.string().optional(),
 });
 
 /** Tools whose PreToolUse means Claude is now asking the user and blocks on the answer. */
@@ -347,6 +359,29 @@ function toolLabel(
 }
 
 /**
+ * The raw one-line description of a tool call (SPEC §9 `desc`): Bash and
+ * Agent/Task `description`, the WebSearch query, the WebFetch host (never
+ * the path), the Skill name, "server · tool" for MCP tools. Local only: the
+ * hub forwarder redacts it and sends it only at the conversation level.
+ */
+export function claudeToolDesc(toolName: string, toolInput: Record<string, unknown> | undefined): string | undefined {
+  switch (toolName) {
+    case "Bash":
+    case "Task":
+    case "Agent":
+      return oneLine(toolInput?.description);
+    case "WebSearch":
+      return oneLine(toolInput?.query);
+    case "WebFetch":
+      return urlHost(toolInput?.url);
+    case "Skill":
+      return oneLine(toolInput?.skill ?? toolInput?.name);
+    default:
+      return toolName.startsWith("mcp__") ? oneLine(mcpDesc(toolName)) : undefined;
+  }
+}
+
+/**
  * Local-only facts about one tool call (see SessionEventDetail): the tool, the
  * absolute path it touched, a Bash command, and on PostToolUse the output text
  * and success flag.
@@ -372,6 +407,7 @@ export function claudeToolDetail(
     command: isShell ? clip(toolInput?.command, DETAIL_LIMITS.command) : undefined,
     toolResponseText: text,
     ok: hookEvent === "PostToolUseFailure" ? false : post ? responseOk(toolResponse) : undefined,
+    desc: claudeToolDesc(toolName, toolInput),
   });
 }
 
@@ -392,6 +428,21 @@ export function mapHookInput(
     cwd: input.cwd && input.cwd.length <= 1024 ? input.cwd : undefined,
     ts: fallbackNow,
   };
+  // Every event carries the transcript path (local only) so the hub forwarder
+  // can tail it from the moment the session is shared.
+  const transcriptPath = transcriptPathOf(input.transcript_path);
+  const withTranscript = (detail: SessionEventDetail | undefined): SessionEventDetail | undefined =>
+    transcriptPath ? { ...(detail ?? {}), transcriptPath } : detail;
+  const event = mapClaudeEvent(input, base, opts);
+  if (!event) return null;
+  if (!transcriptPath) return event;
+  return { ...event, detail: withTranscript(event.detail ?? compactDetail({ hookEvent: input.hook_event_name.slice(0, DETAIL_LIMITS.hookEvent) })) };
+}
+
+type ClaudeHookInput = z.infer<typeof hookInputSchema>;
+type EventBase = Pick<SessionEvent, "source" | "sessionId" | "project" | "cwd" | "ts">;
+
+function mapClaudeEvent(input: ClaudeHookInput, base: EventBase, opts: MapHookOptions): SessionEvent | null {
   switch (input.hook_event_name) {
     case "SessionStart":
       return { ...base, kind: "start" };
@@ -402,7 +453,7 @@ export function mapHookInput(
         activity: "thinking",
         detail: compactDetail({
           hookEvent: "UserPromptSubmit",
-          prompt: clip(input.prompt, DETAIL_LIMITS.prompt),
+          prompt: clipHead(input.prompt, DETAIL_LIMITS.prompt),
         }),
       };
     case "PreToolUse": {
@@ -464,7 +515,14 @@ export function mapHookInput(
     }
     case "Stop":
     case "SubagentStop":
-      return { ...base, kind: "idle" };
+      return {
+        ...base,
+        kind: "idle",
+        detail: compactDetail({
+          hookEvent: input.hook_event_name,
+          lastAssistantMessage: clipHead(input.last_assistant_message, DETAIL_LIMITS.lastAssistantMessage),
+        }),
+      };
     case "SessionEnd":
       return { ...base, kind: "end" };
     default:

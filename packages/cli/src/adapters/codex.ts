@@ -6,7 +6,17 @@ import { watch } from "chokidar";
 import { z } from "zod";
 import { DETAIL_LIMITS } from "@agentblip/core";
 import type { SessionEvent, SessionEventDetail } from "@agentblip/core";
-import { absolutePath, clip, compactDetail, responseOk, responseText } from "./detail";
+import {
+  absolutePath,
+  clip,
+  clipHead,
+  compactDetail,
+  mcpDesc,
+  oneLine,
+  responseOk,
+  responseText,
+  transcriptPathOf,
+} from "./detail";
 
 const MAX_ACTIVITY_LEN = 60;
 
@@ -207,6 +217,9 @@ const codexHookInputSchema = z.looseObject({
   tool_input: z.unknown().optional(),
   tool_response: z.unknown().optional(),
   prompt: z.string().optional(),
+  transcript_path: z.string().nullish(),
+  /** Stop: the turn's final assistant text (verified in the codex 0.164 Stop input schema). */
+  last_assistant_message: z.string().nullish(),
 });
 
 /** Codex's names for a shell call: docs say "matched as Bash"; the rest are wire names seen across versions. */
@@ -318,6 +331,25 @@ function codexToolLabel(toolName: string | undefined, files: string[]): string |
   }
 }
 
+/**
+ * Raw one-line description of a Codex tool call (SPEC §9 `desc`). UNVERIFIED
+ * against live payloads: tool_input is untyped in Codex's hook schema, so
+ * this reads the fields Codex's own tool definitions use — `description`
+ * (spawn_agent and Claude-style tools), `justification` (escalated shell
+ * calls), `query` (web search), `explanation` (update_plan) — and
+ * "server · tool" for mcp__ names.
+ */
+export function codexToolDesc(toolName: string, toolInput: unknown): string | undefined {
+  if (toolName.startsWith("mcp__")) return oneLine(mcpDesc(toolName));
+  if (!toolInput || typeof toolInput !== "object" || Array.isArray(toolInput)) return undefined;
+  const r = toolInput as Record<string, unknown>;
+  for (const key of ["description", "justification", "query", "explanation"]) {
+    const line = oneLine(r[key]);
+    if (line) return line;
+  }
+  return undefined;
+}
+
 /** Local-only facts about one Codex tool call (see SessionEventDetail). */
 export function codexToolDetail(
   hookEvent: string,
@@ -352,6 +384,7 @@ export function codexToolDetail(
       command: isShell ? clip(codexShellCommand(toolInput, cwd), DETAIL_LIMITS.command) : undefined,
       toolResponseText: post && isShell ? responseText(toolResponse) : undefined,
       ok: post ? codexResponseOk(toolResponse) : undefined,
+      desc: codexToolDesc(toolName, toolInput),
     }),
   };
 }
@@ -369,6 +402,20 @@ export function mapCodexHookInput(json: unknown, fallbackNow = Date.now()): Sess
     cwd: input.cwd && input.cwd.length <= 1024 ? input.cwd : undefined,
     ts: fallbackNow,
   };
+  const mapped = mapCodexEvent(input, base);
+  const transcriptPath = transcriptPathOf(input.transcript_path);
+  if (!mapped || !transcriptPath) return mapped;
+  // Local only: lets the hub forwarder tail the rollout once the session is shared.
+  const detail = mapped.detail ?? compactDetail({ hookEvent: input.hook_event_name.slice(0, DETAIL_LIMITS.hookEvent) });
+  return { ...mapped, detail: { ...detail, transcriptPath } };
+}
+
+type CodexHookInput = z.infer<typeof codexHookInputSchema>;
+
+function mapCodexEvent(
+  input: CodexHookInput,
+  base: Pick<SessionEvent, "source" | "sessionId" | "project" | "cwd" | "ts">,
+): SessionEvent | null {
   const event = input.hook_event_name;
   switch (event) {
     case "SessionStart":
@@ -378,7 +425,7 @@ export function mapCodexHookInput(json: unknown, fallbackNow = Date.now()): Sess
         ...base,
         kind: "working",
         activity: "thinking",
-        detail: compactDetail({ hookEvent: event, prompt: clip(input.prompt, DETAIL_LIMITS.prompt) }),
+        detail: compactDetail({ hookEvent: event, prompt: clipHead(input.prompt, DETAIL_LIMITS.prompt) }),
       };
     case "PreToolUse":
     case "PostToolUse": {
@@ -404,7 +451,14 @@ export function mapCodexHookInput(json: unknown, fallbackNow = Date.now()): Sess
       return { ...base, kind: "waiting", activity: "needs my input", detail };
     }
     case "Stop":
-      return { ...base, kind: "idle" };
+      return {
+        ...base,
+        kind: "idle",
+        detail: compactDetail({
+          hookEvent: event,
+          lastAssistantMessage: clipHead(input.last_assistant_message ?? undefined, DETAIL_LIMITS.lastAssistantMessage),
+        }),
+      };
     case "SessionEnd":
       return { ...base, kind: "end" };
     default:

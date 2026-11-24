@@ -200,7 +200,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - [x] Worker relay: pairing (provisional records, delivered-grace, code normalization), Slack OAuth, status API, rate limits — 52 tests
 - [x] CLI: daemon (bearer-secret loopback API), claude-code + codex adapters, relay/slack/console sinks, 10 commands — 99 tests
 - [x] 0.6.0 (merged): hub forward + `hub` commands + Codex hooks — CLI 307 tests, core 53, worker 62
-- [x] 0.7.0 (branch `hub-conversation`, not merged/published): sharing levels, redaction, prompt/message/desc/turn capture, transcript tailing
+- [x] 0.7.0 (branch `hub-conversation`, not merged/published): sharing levels, redaction, prompt/message/desc/turn capture, transcript tailing — CLI 451 tests, core 59, worker 62
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain
 - [x] GitHub github.com/seangeng/agentblip public, CI + push-to-deploy green (secrets set)
 - [x] E2E smoke: daemon lifecycle + live relay pairing/auth verified

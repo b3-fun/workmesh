@@ -129,7 +129,14 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
           json(res, 400, { ok: false, error: "invalid JSON body" });
           return;
         }
-        const parsed = sessionEventSchema.safeParse(raw);
+        let parsed = sessionEventSchema.safeParse(raw);
+        if (!parsed.success && typeof raw === "object" && raw !== null && "detail" in raw) {
+          // A malformed local-only detail must not cost the status update:
+          // retry without it (the hub forwarder just sees less).
+          const { detail: _dropped, ...rest } = raw as Record<string, unknown>;
+          const retry = sessionEventSchema.safeParse(rest);
+          if (retry.success) parsed = retry;
+        }
         if (!parsed.success) {
           const detail = parsed.error.issues
             .map((i) => `${i.path.join(".")}: ${i.message}`)

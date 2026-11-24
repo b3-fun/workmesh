@@ -2,6 +2,7 @@ import { sessionEventSchema } from "@agentblip/core";
 import type { SessionEvent } from "@agentblip/core";
 import { mapHookInput } from "../adapters/claude-code";
 import { mapNotifyArg } from "../adapters/codex";
+import { fitEventBody } from "../adapters/detail";
 import { loadConfigSafe } from "../lib/config";
 import { ensureDaemon, postEvent } from "../lib/daemon-client";
 
@@ -55,7 +56,7 @@ export async function runHook(source: string, payload?: string): Promise<void> {
     if (!event) return;
     const config = loadConfigSafe();
     if (!(await ensureDaemon(config))) return;
-    await postEvent(config.port, event);
+    await postEvent(config.port, fitEventBody(event));
   } catch {
     // swallow everything — exit 0 below
   } finally {

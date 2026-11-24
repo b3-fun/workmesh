@@ -3,7 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { SessionEvent } from "@agentblip/core";
+import { DETAIL_LIMITS } from "@agentblip/core";
+import type { SessionEvent, SessionEventDetail } from "@agentblip/core";
+import { absolutePath, clip, compactDetail, responseOk, responseText } from "./detail";
 
 /**
  * Absolute hook invocation: GUI-launched agents don't inherit the login-shell
@@ -37,6 +39,8 @@ const hookInputSchema = z.looseObject({
   tool_input: z.record(z.string(), z.unknown()).optional(),
   notification_type: z.string().optional(),
   transcript_path: z.string().optional(),
+  prompt: z.string().optional(),
+  tool_response: z.unknown().optional(),
 });
 
 /** Tools whose PreToolUse means Claude is now asking the user and blocks on the answer. */
@@ -342,6 +346,35 @@ function toolLabel(
   }
 }
 
+/**
+ * Local-only facts about one tool call (see SessionEventDetail): the tool, the
+ * absolute path it touched, a Bash command, and on PostToolUse the output text
+ * and success flag.
+ */
+export function claudeToolDetail(
+  hookEvent: string,
+  toolName: string | undefined,
+  toolInput: Record<string, unknown> | undefined,
+  cwd: string | undefined,
+  toolResponse?: unknown,
+): SessionEventDetail | undefined {
+  if (!toolName) return compactDetail({ hookEvent });
+  const post = hookEvent === "PostToolUse" || hookEvent === "PostToolUseFailure";
+  const isShell = toolName === "Bash";
+  let text: string | undefined;
+  if (post) {
+    text = isShell ? responseText(toolResponse) : clip(toolResponse, DETAIL_LIMITS.toolResponseText);
+  }
+  return compactDetail({
+    hookEvent,
+    tool: toolName.slice(0, DETAIL_LIMITS.tool),
+    filePath: absolutePath(toolInput?.file_path ?? toolInput?.notebook_path ?? toolInput?.path, cwd),
+    command: isShell ? clip(toolInput?.command, DETAIL_LIMITS.command) : undefined,
+    toolResponseText: text,
+    ok: hookEvent === "PostToolUseFailure" ? false : post ? responseOk(toolResponse) : undefined,
+  });
+}
+
 /** Maps Claude Code hook stdin JSON to a wire SessionEvent, or null to ignore. */
 export function mapHookInput(
   json: unknown,
@@ -363,18 +396,30 @@ export function mapHookInput(
     case "SessionStart":
       return { ...base, kind: "start" };
     case "UserPromptSubmit":
-      return { ...base, kind: "working", activity: "thinking" };
-    case "PreToolUse":
+      return {
+        ...base,
+        kind: "working",
+        activity: "thinking",
+        detail: compactDetail({
+          hookEvent: "UserPromptSubmit",
+          prompt: clip(input.prompt, DETAIL_LIMITS.prompt),
+        }),
+      };
+    case "PreToolUse": {
+      const detail = claudeToolDetail("PreToolUse", input.tool_name, input.tool_input, input.cwd);
       // AskUserQuestion / ExitPlanMode open a dialog and block on the user.
       if (input.tool_name && ASKS_USER_TOOLS.has(input.tool_name)) {
-        return { ...base, kind: "waiting", activity: "needs my input" };
+        return { ...base, kind: "waiting", activity: "needs my input", detail };
       }
       return {
         ...base,
         kind: "working",
         activity: toolLabel(input.tool_name, input.tool_input)?.slice(0, 200),
+        detail,
       };
+    }
     case "PostToolUse":
+    case "PostToolUseFailure":
       // "working", not heartbeat: after a permission prompt (waiting) is
       // approved, tool completion is the first signal — it must flip the
       // state back to working. The fresh tool label avoids inheriting a
@@ -383,6 +428,13 @@ export function mapHookInput(
         ...base,
         kind: "working",
         activity: toolLabel(input.tool_name, input.tool_input)?.slice(0, 200),
+        detail: claudeToolDetail(
+          input.hook_event_name,
+          input.tool_name,
+          input.tool_input,
+          input.cwd,
+          input.tool_response,
+        ),
       };
     case "Notification": {
       // Claude Code's 60s idle reminder ("idle_prompt") fires whenever a finished

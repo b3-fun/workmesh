@@ -163,6 +163,23 @@ describe("daemon server auth", () => {
     expect(h.applied).toHaveLength(1);
   });
 
+  it("keeps an event whose local detail is malformed, minus the detail", async () => {
+    const post = (body: unknown): Promise<Response> =>
+      fetch(url("/event"), {
+        method: "POST",
+        headers: { authorization: `Bearer ${SECRET}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const ok = await post({ ...event, detail: { tool: "Edit", filePath: "/repo/a.ts" } });
+    expect(ok.status).toBe(200);
+    expect(h.applied[0]?.detail).toEqual({ tool: "Edit", filePath: "/repo/a.ts" });
+
+    const bad = await post({ ...event, detail: { tool: "x".repeat(500) } });
+    expect(bad.status).toBe(200);
+    expect(h.applied[1]).toBeDefined();
+    expect(h.applied[1]?.detail).toBeUndefined();
+  });
+
   it("includes the ownership summary in /state and /health", async () => {
     h.ownership.value = { backedOff: true, savedPrior: true, policy: "overwrite" };
 

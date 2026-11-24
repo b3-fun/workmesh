@@ -20,6 +20,47 @@ export const eventKindSchema = z.enum([
 ]);
 export type EventKind = z.infer<typeof eventKindSchema>;
 
+/**
+ * Caps for the local-only `detail` block. Hook mappers truncate to these so a
+ * hook → daemon body stays well under the daemon's 64 KB limit.
+ */
+export const DETAIL_LIMITS = {
+  hookEvent: 40,
+  tool: 64,
+  filePath: 1024,
+  filePaths: 10,
+  command: 4000,
+  prompt: 8000,
+  toolResponseText: 8000,
+} as const;
+
+/**
+ * Raw facts about one hook call, filled by the Claude Code and Codex hook
+ * mappers. LOCAL ONLY: it travels hook → daemon over loopback and is never
+ * stored on a session, formatted into a Slack status, or sent to the
+ * agentblip relay. The hub forwarder reduces it to the hub's metadata fields
+ * (tool name, repo-relative path, allow-listed command, issue ids, PR URL).
+ */
+export const sessionEventDetailSchema = z.object({
+  /** Hook that produced the event, e.g. "PreToolUse", "UserPromptSubmit". */
+  hookEvent: z.string().max(DETAIL_LIMITS.hookEvent).optional(),
+  /** Tool name as the agent reports it: "Edit", "Bash", "apply_patch". */
+  tool: z.string().max(DETAIL_LIMITS.tool).optional(),
+  /** Absolute path the tool touched (first file, for multi-file patches). */
+  filePath: z.string().max(DETAIL_LIMITS.filePath).optional(),
+  /** Every absolute path a multi-file tool touched (apply_patch). */
+  filePaths: z.array(z.string().max(DETAIL_LIMITS.filePath)).max(DETAIL_LIMITS.filePaths).optional(),
+  /** Raw shell command, truncated. */
+  command: z.string().max(DETAIL_LIMITS.command).optional(),
+  /** Raw prompt text, truncated. */
+  prompt: z.string().max(DETAIL_LIMITS.prompt).optional(),
+  /** Tool output text (shell stdout/stderr), truncated. */
+  toolResponseText: z.string().max(DETAIL_LIMITS.toolResponseText).optional(),
+  /** The tool call succeeded, when the agent reports it. */
+  ok: z.boolean().optional(),
+});
+export type SessionEventDetail = z.infer<typeof sessionEventDetailSchema>;
+
 export const sessionEventSchema = z.object({
   source: z.string().min(1).max(64), // "claude-code" | "codex" | any custom id
   sessionId: z.string().min(1).max(128),
@@ -56,8 +97,22 @@ export const sessionEventSchema = z.object({
   cwd: z.string().max(1024).optional(),
   /** Human session name, e.g. Claude Code's "documents-07". Local only, like cwd. */
   name: z.string().max(120).optional(),
+  /** Raw hook facts for the hub forwarder. Local only — see sessionEventDetailSchema. */
+  detail: sessionEventDetailSchema.optional(),
 });
 export type SessionEvent = z.infer<typeof sessionEventSchema>;
+
+/**
+ * Shortens text to at most `max` characters, keeping its start and end (a
+ * command's program and a shell output's last line both matter).
+ */
+export function truncateMiddle(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const marker = "\n…\n";
+  const room = Math.max(0, max - marker.length);
+  const head = Math.floor(room / 4);
+  return `${text.slice(0, head)}${marker}${text.slice(text.length - (room - head))}`;
+}
 
 export const slackStatusSchema = z.object({
   text: z.string().max(SLACK_STATUS_MAX_LEN),

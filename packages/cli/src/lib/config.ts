@@ -7,8 +7,9 @@ import {
   DEFAULT_STATUS_TTL_SEC,
   HUB_DEVICE_TOKEN_RE,
   hubProjectRuleSchema,
+  hubShareLevelSchema,
 } from "@agentblip/core";
-import type { FormatOptions } from "@agentblip/core";
+import type { FormatOptions, HubShareLevel } from "@agentblip/core";
 import { configPath } from "./paths";
 
 const templatesSchema = z
@@ -41,8 +42,19 @@ export const hubConfigSchema = z.object({
   /** Absolute dirs never shared, whatever their remote (`agentblip hub exclude`). */
   excludeDirs: z.array(z.string()).default([]),
   pairedAt: z.number().int().optional(),
+  /**
+   * SPEC §8 sharing level, chosen by the person (`hub connect --share`,
+   * `hub share`). Absent (0.6 pairings) means `metadata`: conversation text
+   * never leaves without an explicit choice. An unknown value reads as absent.
+   */
+  share: hubShareLevelSchema.optional().catch(undefined),
 });
 export type HubConfig = z.infer<typeof hubConfigSchema>;
+
+/** The level a hub section shares at: `metadata` unless the person chose `conversation`. */
+export function hubShareLevel(hub: Pick<HubConfig, "share"> | undefined): HubShareLevel {
+  return hub?.share ?? "metadata";
+}
 
 export const configSchema = z.object({
   mode: z.enum(["relay", "slack", "console"]).default("console"),
@@ -186,7 +198,7 @@ export interface SafeConfig {
   statusTtlSec: number;
   debounceMs: number;
   /** Hub pairing without its token; absent when not paired. */
-  hub?: { url: string; project: { id: string; name: string } };
+  hub?: { url: string; project: { id: string; name: string }; share: HubShareLevel };
 }
 
 export function safeConfig(config: Config): SafeConfig {
@@ -201,7 +213,13 @@ export function safeConfig(config: Config): SafeConfig {
     statusTtlSec: config.statusTtlSec,
     debounceMs: config.debounceMs,
     ...(config.hub
-      ? { hub: { url: config.hub.url, project: { id: config.hub.project.id, name: config.hub.project.name } } }
+      ? {
+          hub: {
+            url: config.hub.url,
+            project: { id: config.hub.project.id, name: config.hub.project.name },
+            share: hubShareLevel(config.hub),
+          },
+        }
       : {}),
   };
 }

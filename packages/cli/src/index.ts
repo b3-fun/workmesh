@@ -9,6 +9,7 @@ import {
   runHubDisconnect,
   runHubExclude,
   runHubInclude,
+  runHubShare,
   runHubStatus,
 } from "./commands/hub";
 import { runPause, runResume } from "./commands/pause";
@@ -117,7 +118,7 @@ program
 
 const hub = program
   .command("hub")
-  .description("Show your agent sessions on a team hub (Bullpen): metadata only, from repos you share");
+  .description("Show your agent sessions on a team hub (Bullpen), from repos you share: metadata, or the conversation too");
 
 hub
   .command("connect")
@@ -125,7 +126,14 @@ hub
   .argument("<url>", `hub URL, e.g. ${EXAMPLE_HUB_URL}`)
   .option("--no-open", "print the approve link without opening a browser")
   .option("--machine <name>", "name this machine on the board (default: hostname)")
+  .option("--share <level>", "conversation | metadata (asked when omitted in a terminal)")
   .action(wrap(runHubConnect));
+
+hub
+  .command("share")
+  .description("Show or set what this machine shares: conversation (prompts, agent text, redacted) or metadata")
+  .argument("[level]", "conversation | metadata")
+  .action(wrap(runHubShare));
 
 hub
   .command("status")

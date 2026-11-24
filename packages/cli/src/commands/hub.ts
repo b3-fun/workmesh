@@ -5,14 +5,15 @@ import {
   HUB_DEVICE_TOKEN_RE,
   hubPairPollResponseSchema,
   hubPairStartResponseSchema,
+  hubShareLevelSchema,
 } from "@agentblip/core";
-import type { HubPairStartResponse, HubProjectRule } from "@agentblip/core";
+import type { HubPairStartResponse, HubProjectRule, HubShareLevel } from "@agentblip/core";
 import pkg from "../../package.json";
-import { loadConfig, saveConfig } from "../lib/config";
+import { hubShareLevel, loadConfig, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { getHubState, isDaemonUp, reloadHub } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
-import { bold, cyan, dim, formatDuration, green, red, sleep, spinner, yellow } from "../lib/ui";
+import { bold, cyan, dim, formatDuration, green, red, select, sleep, spinner, yellow } from "../lib/ui";
 import { openBrowser } from "./setup";
 import type { HubState } from "../daemon/server";
 
@@ -21,6 +22,32 @@ export const EXAMPLE_HUB_URL = "https://bullpen.b3os.org";
 
 const POLL_INTERVAL_MS = 2000;
 const HTTP_TIMEOUT_MS = 10_000;
+
+/** What each sharing level sends, in the words the CLI prints (SPEC §8: "state plainly"). */
+export const SHARE_LEVEL_SUMMARY: Record<HubShareLevel, string> = {
+  metadata:
+    "metadata only: tool names, repo-relative paths, program + subcommand, issue ids, PR links. No prompt or agent text.",
+  conversation:
+    "metadata plus your prompts, the agent's text replies, a one-line description of each tool call and how long each " +
+    "turn took, from sessions running inside a shared repo. Secrets are redacted on this machine first; tool " +
+    "inputs, tool output and file contents never leave.",
+};
+
+/** Parses a `--share` / `hub share` argument. */
+export function parseShareLevel(input: string): HubShareLevel {
+  const parsed = hubShareLevelSchema.safeParse(input.trim().toLowerCase());
+  if (!parsed.success) throw new Error(`unknown sharing level "${input}" — use conversation or metadata`);
+  return parsed.data;
+}
+
+/**
+ * The level `hub connect` suggests when no `--share` was given: the one this
+ * machine already chose for this hub, else the project's `defaultShare`, else
+ * `metadata`.
+ */
+export function suggestedShare(project: HubProjectRule, previous?: HubShareLevel): HubShareLevel {
+  return previous ?? project.defaultShare ?? "metadata";
+}
 
 /** https, or http only for a hub on this machine (local dev). */
 export function resolveHubUrl(input: string): string {
@@ -158,10 +185,23 @@ function requireHub(config: Config): HubConfig {
 export interface HubConnectOptions {
   open?: boolean;
   machine?: string;
+  /** `--share conversation|metadata`; absent: ask in a TTY, else keep or use metadata. */
+  share?: string;
+  /** Injected for tests: answer the sharing question. */
+  askShare?: (suggested: HubShareLevel) => Promise<HubShareLevel>;
+}
+
+function askShareLevel(suggested: HubShareLevel): Promise<HubShareLevel> {
+  const choices: Array<{ value: HubShareLevel; label: string }> = [
+    { value: "conversation", label: `conversation — ${SHARE_LEVEL_SUMMARY.conversation}` },
+    { value: "metadata", label: `metadata — ${SHARE_LEVEL_SUMMARY.metadata}` },
+  ];
+  return select("What should this machine share with the hub?", choices, suggested === "conversation" ? 0 : 1);
 }
 
 export async function runHubConnect(url: string, opts: HubConnectOptions = {}): Promise<void> {
   const hubUrl = resolveHubUrl(url);
+  const flagShare = opts.share !== undefined ? parseShareLevel(opts.share) : undefined;
   const config = loadConfig();
   const machine = opts.machine ? machineName(opts.machine) : machineName();
   console.log(bold("agentblip hub connect"));
@@ -185,6 +225,16 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
   }
 
   const previous = config.hub?.url === hubUrl ? config.hub : undefined;
+  let share: HubShareLevel;
+  if (flagShare) {
+    share = flagShare;
+  } else {
+    const suggested = suggestedShare(result.project, previous?.share);
+    const interactive = opts.askShare !== undefined || (process.stdin.isTTY === true && process.stdout.isTTY === true);
+    // Without a terminal nobody can answer: keep this machine's earlier choice,
+    // else metadata. Conversation text needs an explicit yes.
+    share = interactive ? await (opts.askShare ?? askShareLevel)(suggested) : (previous?.share ?? "metadata");
+  }
   config.hub = {
     url: hubUrl,
     deviceId: result.deviceId,
@@ -195,6 +245,7 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
     includeDirs: previous?.includeDirs ?? [],
     excludeDirs: previous?.excludeDirs ?? [],
     pairedAt: Date.now(),
+    share,
   };
   saveConfig(config);
   const who = result.person ? ` as ${result.person.name} (${result.person.email})` : "";
@@ -205,7 +256,8 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
     `  shares sessions in repos whose origin contains ${remotes.length ? remotes.map((r) => bold(r)).join(", ") : dim("(none)")}` +
       (result.project.include.dirs.length ? ` and under ${result.project.include.dirs.join(", ")}` : ""),
   );
-  console.log(dim("  only metadata leaves this machine: tool names, repo-relative paths, program + subcommand, issue ids, PR links"));
+  console.log(`  sharing level: ${bold(share)} — ${SHARE_LEVEL_SUMMARY[share]}`);
+  console.log(dim(`  change it any time: agentblip hub share ${share === "conversation" ? "metadata" : "conversation"}`));
   const state = await reloadDaemon(config);
   if (state?.enabled) console.log(green("  the daemon is forwarding now"));
   else if (state === undefined) console.log(`  start the daemon: ${bold("agentblip start --detach")}`);
@@ -236,6 +288,7 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
           machine: hub?.machine,
           person: hub?.person,
           project: hub ? { id: hub.project.id, name: hub.project.name } : undefined,
+          share: hub ? hubShareLevel(hub) : undefined,
           include: hub ? { remotes: hub.project.include.remotes, dirs: [...hub.project.include.dirs, ...hub.includeDirs] } : undefined,
           exclude: hub?.excludeDirs,
           daemon: daemon ?? (daemonError ? { error: daemonError } : null),
@@ -255,6 +308,7 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
     ["project", `${hub.project.name} (${hub.project.id})`],
     ["paired as", hub.person ? `${hub.person.name} <${hub.person.email}> on ${hub.machine ?? "this machine"}` : (hub.machine ?? "this machine")],
     ["shares", [...hub.project.include.remotes, ...hub.project.include.dirs, ...hub.includeDirs].join(", ") || "(nothing)"],
+    ["level", `${hubShareLevel(hub)} — ${SHARE_LEVEL_SUMMARY[hubShareLevel(hub)]}`],
   ];
   if (hub.excludeDirs.length) rows.push(["never shares", hub.excludeDirs.join(", ")]);
   if (!daemon) {
@@ -282,6 +336,30 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
   }
   const width = Math.max(...rows.map(([k]) => k.length));
   for (const [k, v] of rows) console.log(`  ${dim(k.padEnd(width))}  ${v}`);
+}
+
+/** `agentblip hub share [level]`: show or change what this machine shares. */
+export async function runHubShare(level?: string): Promise<void> {
+  const config = loadConfig();
+  const hub = requireHub(config);
+  const current = hubShareLevel(hub);
+  if (level === undefined) {
+    console.log(`${bold(current)} — ${SHARE_LEVEL_SUMMARY[current]}`);
+    return;
+  }
+  const next = parseShareLevel(level);
+  config.hub = { ...hub, share: next };
+  saveConfig(config);
+  console.log(
+    next === current
+      ? green(`already sharing ${next} with ${hub.project.name}`)
+      : green(`now sharing ${next} with ${hub.project.name}`),
+  );
+  console.log(`  ${SHARE_LEVEL_SUMMARY[next]}`);
+  if (next === "conversation" && current !== "conversation") {
+    console.log(dim("  text starts from now: nothing written before this moment is sent"));
+  }
+  await reloadDaemon(config);
 }
 
 export async function runHubDisconnect(): Promise<void> {

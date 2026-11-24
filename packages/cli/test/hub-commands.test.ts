@@ -110,7 +110,7 @@ describe("hub config", () => {
     expect(loadConfig(file).hub?.deviceToken).toBe(TOKEN);
     const safe = JSON.stringify(safeConfig(loadConfig(file)));
     expect(safe).not.toContain(TOKEN);
-    expect(safeConfig(loadConfig(file)).hub).toEqual({ url: "https://bullpen.b3os.org", project: { id: "b3", name: "B3" } });
+    expect(safeConfig(loadConfig(file)).hub).toEqual({ url: "https://bullpen.b3os.org", project: { id: "b3", name: "B3" }, share: "metadata" });
   });
 
   it("a malformed hub section reads as not paired and keeps the Slack config valid", () => {

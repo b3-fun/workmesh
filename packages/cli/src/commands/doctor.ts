@@ -9,7 +9,7 @@ import {
   codexHooksPath,
   isCodexNotifyInstalled,
 } from "../adapters/codex";
-import { loadConfig, loadConfigSafe } from "../lib/config";
+import { hubShareLevel, loadConfig, loadConfigSafe } from "../lib/config";
 import type { Config } from "../lib/config";
 import { getHealth, getHubState, sinkConfigured } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
@@ -149,8 +149,23 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
         `paired with ${hub.url} (project ${hub.project.name}${hub.person ? `, as ${hub.person.name}` : ""})`,
       ),
     );
+    const level = hubShareLevel(hub);
+    checks.push(
+      ok(
+        "hub sharing",
+        level === "conversation"
+          ? "conversation — prompts, agent text, tool descriptions and turn times from shared repos, redacted on this machine"
+          : "metadata — no prompt or agent text leaves this machine (`agentblip hub share conversation` to add it)",
+      ),
+    );
     try {
       const state = await getHubState(cfg.port);
+      if (state.enabled && state.share !== undefined && state.share !== level) {
+        checks.push(warn("hub sharing", `the daemon still shares ${state.share}: run \`agentblip hub share ${level}\` again or restart it`));
+      }
+      if (state.enabled && state.share === undefined) {
+        checks.push(warn("hub forward", "the running daemon predates sharing levels — restart it: `agentblip stop && agentblip start --detach`"));
+      }
       if (!state.enabled) {
         checks.push(warn("hub forward", "the daemon isn't forwarding — restart it: `agentblip stop && agentblip start --detach`"));
       } else if (state.halted) {

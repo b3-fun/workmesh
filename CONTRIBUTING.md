@@ -106,7 +106,8 @@ Deploy and secrets:
 
 - Deploys are manual for now: `npx wrangler whoami` (must show NPC Labs `4300a93c2dcb252fa91df03f18e8e44c`, pinned in
   `apps/hub/wrangler.jsonc`), then `npm run deploy -w @workmesh/hub` (board build + `wrangler deploy` to both hosts).
-  Never run two wrangler commands at once.
+  Never run two wrangler commands at once. The hub's scripts pass `-c wrangler.jsonc`: the site build leaves a
+  `.wrangler/deploy/config.json` redirect at the repo root, which a bare `wrangler` in `apps/hub` would find and refuse.
 - The Worker script is named `bullpen` and stays so: its Durable Object holds every pairing, session and event.
 - Access covers both hosts with one audience: the board app on the whole host (npclabs.org emails) and a bypass app
   on `/relay/*` (the Worker checks device tokens). The Worker verifies the Access JWT itself.

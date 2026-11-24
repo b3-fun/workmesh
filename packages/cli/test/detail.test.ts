@@ -177,3 +177,37 @@ describe("detail never reaches the Slack status path or the agentblip relay", ()
     await pusher.shutdown();
   });
 });
+
+describe("conversation detail (local only): transcript path, Stop message, tool desc", () => {
+  it("Claude Code events carry the transcript path and a raw desc", async () => {
+    const { mapHookInput, claudeToolDesc } = await import("../src/adapters/claude-code");
+    const t = "/Users/x/.claude/projects/p/s.jsonl";
+    const start = mapHookInput({ hook_event_name: "SessionStart", session_id: "s", cwd: "/r", transcript_path: t }, 1);
+    expect(start?.detail).toEqual({ hookEvent: "SessionStart", transcriptPath: t });
+    const stop = mapHookInput({ hook_event_name: "Stop", session_id: "s", transcript_path: t, last_assistant_message: "bye" }, 1);
+    expect(stop?.detail).toEqual({ hookEvent: "Stop", lastAssistantMessage: "bye", transcriptPath: t });
+    expect(mapHookInput({ hook_event_name: "Stop", session_id: "s", transcript_path: "relative.jsonl" }, 1)?.detail).toEqual({ hookEvent: "Stop" });
+    expect(claudeToolDesc("Bash", { command: "x", description: "Run the\n tests" })).toBe("Run the tests");
+    expect(claudeToolDesc("Agent", { description: "Audit the relay" })).toBe("Audit the relay");
+    expect(claudeToolDesc("WebSearch", { query: "zod v4 strictObject" })).toBe("zod v4 strictObject");
+    expect(claudeToolDesc("WebFetch", { url: "https://docs.rs/tokio/latest/?token=x" })).toBe("docs.rs");
+    expect(claudeToolDesc("Skill", { skill: "anti-ai-slop-writer" })).toBe("anti-ai-slop-writer");
+    expect(claudeToolDesc("mcp__claude-in-chrome__navigate", {})).toBe("claude-in-chrome · navigate");
+    expect(claudeToolDesc("mcp__plugin_slack_slack__slack_send_message", {})).toBe("slack · slack_send_message");
+    expect(claudeToolDesc("Read", { file_path: "/secret" })).toBeUndefined();
+    expect(claudeToolDesc("Bash", { description: "d".repeat(2000) })?.length).toBe(1000);
+  });
+
+  it("Codex events carry transcript_path, Stop's last_assistant_message and a desc (fields unverified live)", async () => {
+    const { mapCodexHookInput, codexToolDesc } = await import("../src/adapters/codex");
+    const t = "/Users/x/.codex/sessions/2026/11/24/rollout-x-abc.jsonl";
+    const stop = mapCodexHookInput({ hook_event_name: "Stop", session_id: "abc", transcript_path: t, last_assistant_message: "done", model: "m" }, 1);
+    expect(stop?.detail).toEqual({ hookEvent: "Stop", lastAssistantMessage: "done", transcriptPath: t });
+    const nullPath = mapCodexHookInput({ hook_event_name: "Stop", session_id: "abc", transcript_path: null, last_assistant_message: null, model: "m" }, 1);
+    expect(nullPath?.detail).toEqual({ hookEvent: "Stop" });
+    expect(codexToolDesc("shell", { command: ["ls"], justification: "List files" })).toBe("List files");
+    expect(codexToolDesc("web_search", { query: "codex hooks" })).toBe("codex hooks");
+    expect(codexToolDesc("mcp__linear__get_issue", {})).toBe("linear · get_issue");
+    expect(codexToolDesc("apply_patch", "*** Begin Patch")).toBeUndefined();
+  });
+});

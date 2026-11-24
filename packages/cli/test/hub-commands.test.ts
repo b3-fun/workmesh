@@ -13,6 +13,10 @@ import {
   runHubDisconnect,
   runHubExclude,
   runHubInclude,
+  runHubShare,
+  SHARE_LEVEL_SUMMARY,
+  parseShareLevel,
+  suggestedShare,
   withDir,
 } from "../src/commands/hub";
 import { loadConfig, safeConfig, saveConfig } from "../src/lib/config";
@@ -46,6 +50,26 @@ describe("hub command helpers", () => {
     expect(withDir(hub, "/b", "include")).toMatchObject({ includeDirs: ["/a", "/b"], excludeDirs: [] });
     expect(withDir(hub, "/a", "exclude")).toMatchObject({ includeDirs: [], excludeDirs: ["/b", "/a"] });
     expect(resolveDir("~/x", "/home/me")).toBe("/home/me/x");
+  });
+});
+
+describe("sharing level helpers (SPEC §8)", () => {
+  it("parses levels and rejects anything else", () => {
+    expect(parseShareLevel("conversation")).toBe("conversation");
+    expect(parseShareLevel(" Metadata ")).toBe("metadata");
+    expect(() => parseShareLevel("everything")).toThrow(/conversation or metadata/);
+  });
+
+  it("suggests this machine's earlier choice, else the project's default, else metadata", () => {
+    expect(suggestedShare({ ...PROJECT, defaultShare: "conversation" })).toBe("conversation");
+    expect(suggestedShare({ ...PROJECT, defaultShare: "conversation" }, "metadata")).toBe("metadata");
+    expect(suggestedShare(PROJECT)).toBe("metadata");
+  });
+
+  it("states plainly what each level sends", () => {
+    expect(SHARE_LEVEL_SUMMARY.metadata).toMatch(/No prompt or agent text/);
+    expect(SHARE_LEVEL_SUMMARY.conversation).toMatch(/prompts/);
+    expect(SHARE_LEVEL_SUMMARY.conversation).toMatch(/redacted on this machine/);
   });
 });
 
@@ -178,8 +202,41 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
       await runHubExclude(path.join(tmp, "secret"));
       expect(loadConfig(file).hub).toMatchObject({ includeDirs: [path.join(tmp, "notes")], excludeDirs: [path.join(tmp, "secret")] });
 
+      // No --share and no terminal: nobody can say yes, so metadata.
+      expect(loadConfig(file).hub?.share).toBe("metadata");
+
       await runHubDisconnect();
       expect(loadConfig(file).hub).toBeUndefined();
+    } finally {
+      out.mockRestore();
+    }
+  });
+
+  it("--share sets the level; the question suggests the hub's default; hub share changes it", async () => {
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const file = path.join(tmp, "config", "agentblip", "config.json");
+      await runHubConnect(base, { open: false, share: "conversation" });
+      expect(loadConfig(file).hub?.share).toBe("conversation");
+      expect(out.mock.calls.flat().join("\n")).toContain("sharing level: ");
+
+      const asked: string[] = [];
+      await runHubConnect(base, {
+        open: false,
+        askShare: async (suggested) => {
+          asked.push(suggested);
+          return "metadata";
+        },
+      });
+      expect(asked).toEqual(["conversation"]); // this machine's earlier choice for the same hub
+      expect(loadConfig(file).hub?.share).toBe("metadata");
+
+      await runHubShare("conversation");
+      expect(loadConfig(file).hub?.share).toBe("conversation");
+      expect(out.mock.calls.flat().join("\n")).toContain("text starts from now");
+      await expect(runHubShare("all")).rejects.toThrow(/conversation or metadata/);
+      await expect(runHubConnect(base, { open: false, share: "loud" })).rejects.toThrow(/unknown sharing level/);
+      await runHubDisconnect();
     } finally {
       out.mockRestore();
     }

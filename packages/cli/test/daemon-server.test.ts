@@ -84,6 +84,19 @@ async function startServer(): Promise<TestHarness> {
       config.value = { ...config.value, ...patch };
       return config.value;
     },
+    getHub: () => ({ enabled: false }),
+    reloadHub: () => ({
+      enabled: true,
+      url: "https://bullpen.b3os.org",
+      project: { id: "b3", name: "B3" },
+      running: true,
+      halted: false,
+      queued: 0,
+      dropped: 0,
+      rejected: 0,
+      accepted: 0,
+      sharedSessions: 0,
+    }),
   });
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", resolve);
@@ -161,6 +174,18 @@ describe("daemon server auth", () => {
     });
     expect(res.status).toBe(200);
     expect(h.applied).toHaveLength(1);
+  });
+
+  it("GET /hub and POST /hub/reload require the secret and report forwarder state", async () => {
+    expect((await fetch(url("/hub"))).status).toBe(401);
+    expect((await fetch(url("/hub/reload"), { method: "POST" })).status).toBe(401);
+    const auth = { authorization: `Bearer ${SECRET}` };
+    expect(await (await fetch(url("/hub"), { headers: auth })).json()).toEqual({ enabled: false });
+    const reloaded = (await (await fetch(url("/hub/reload"), { method: "POST", headers: auth })).json()) as {
+      enabled: boolean;
+      project: { id: string };
+    };
+    expect(reloaded).toMatchObject({ enabled: true, project: { id: "b3" } });
   });
 
   it("keeps an event whose local detail is malformed, minus the detail", async () => {

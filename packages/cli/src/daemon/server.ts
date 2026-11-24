@@ -7,6 +7,10 @@ import { liveConfigPatchSchema } from "../lib/config";
 import type { LiveConfigPatch, SafeConfig } from "../lib/config";
 import { pauseRequestSchema, resolvePauseUntil } from "../lib/snooze";
 import type { OwnershipSummary } from "./pusher";
+import type { HubForwarderStatus } from "../hub/forwarder";
+
+/** GET /hub: the forwarder's status, or `enabled: false` when not paired. */
+export type HubState = ({ enabled: true } & HubForwarderStatus) | { enabled: false };
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -36,6 +40,10 @@ export interface DaemonServerDeps {
   getConfig(): SafeConfig;
   /** Apply live-tunable settings and persist them (POST /config). */
   setConfig(patch: LiveConfigPatch): SafeConfig;
+  /** Hub forwarder status (GET /hub). Optional so test harnesses can omit it. */
+  getHub?(): HubState;
+  /** Re-read the hub section from config and restart the forwarder (POST /hub/reload). */
+  reloadHub?(): HubState;
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
@@ -186,6 +194,18 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
       if (method === "POST" && url === "/resume") {
         deps.resume();
         json(res, 200, { ok: true, paused: false });
+        return;
+      }
+      if (method === "GET" && url === "/hub") {
+        json(res, 200, deps.getHub?.() ?? { enabled: false });
+        return;
+      }
+      if (method === "POST" && url === "/hub/reload") {
+        if (!deps.reloadHub) {
+          json(res, 404, { ok: false, error: "not found" });
+          return;
+        }
+        json(res, 200, deps.reloadHub());
         return;
       }
       if (method === "GET" && url === "/config") {

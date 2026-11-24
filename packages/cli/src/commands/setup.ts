@@ -32,7 +32,7 @@ import {
 const POLL_INTERVAL_MS = 2000;
 const HTTP_TIMEOUT_MS = 10_000;
 
-function openBrowser(url: string): void {
+export function openBrowser(url: string): void {
   let cmd: string;
   let args: string[];
   if (process.platform === "darwin") {

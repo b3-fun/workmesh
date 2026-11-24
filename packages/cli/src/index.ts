@@ -3,6 +3,14 @@ import pkg from "../package.json";
 import { runDoctor } from "./commands/doctor";
 import { runEmit } from "./commands/emit";
 import { runHook } from "./commands/hook";
+import {
+  EXAMPLE_HUB_URL,
+  runHubConnect,
+  runHubDisconnect,
+  runHubExclude,
+  runHubInclude,
+  runHubStatus,
+} from "./commands/hub";
 import { runPause, runResume } from "./commands/pause";
 import { runReport } from "./commands/report";
 import { runSetup } from "./commands/setup";
@@ -105,6 +113,41 @@ program
   .command("unlink")
   .description("Revoke this device on the relay and remove the saved token")
   .action(wrap(runUnlink));
+
+const hub = program
+  .command("hub")
+  .description("Show your agent sessions on a team hub (Bullpen): metadata only, from repos you share");
+
+hub
+  .command("connect")
+  .description("Pair this machine with a hub (device code, approved in the browser)")
+  .argument("<url>", `hub URL, e.g. ${EXAMPLE_HUB_URL}`)
+  .option("--no-open", "print the approve link without opening a browser")
+  .option("--machine <name>", "name this machine on the board (default: hostname)")
+  .action(wrap(runHubConnect));
+
+hub
+  .command("status")
+  .description("Pairing, project, last send, queued and dropped events, shared sessions")
+  .option("--json", "machine-readable output")
+  .action(wrap(runHubStatus));
+
+hub
+  .command("disconnect")
+  .description("Stop forwarding and remove the hub token from this machine")
+  .action(wrap(runHubDisconnect));
+
+hub
+  .command("include")
+  .description("Also share sessions and files under a directory")
+  .argument("<dir>", "directory (absolute, relative, or ~/…)")
+  .action(wrap(runHubInclude));
+
+hub
+  .command("exclude")
+  .description("Never share anything under a directory, whatever its git remote")
+  .argument("<dir>", "directory (absolute, relative, or ~/…)")
+  .action(wrap(runHubExclude));
 
 program
   .command("doctor")

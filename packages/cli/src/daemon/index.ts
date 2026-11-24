@@ -5,8 +5,9 @@ import { codexSessionsDir, createCodexWatcher } from "../adapters/codex";
 import type { CodexWatcher } from "../adapters/codex";
 import { claudeProjectsDir, createWorkflowWatcher } from "../adapters/workflow";
 import type { WorkflowWatcher } from "../adapters/workflow";
-import { formatOptionsFromConfig, safeConfig, saveConfig } from "../lib/config";
-import type { Config } from "../lib/config";
+import { formatOptionsFromConfig, readHubConfig, safeConfig, saveConfig } from "../lib/config";
+import type { Config, HubConfig } from "../lib/config";
+import { HubForwarder } from "../hub/forwarder";
 import { createDaemonSecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
 import { stateDir } from "../lib/paths";
@@ -55,15 +56,39 @@ export async function runDaemon(config: Config): Promise<void> {
     log,
   });
 
+  // Hub forward (Bullpen): runs beside the pusher, on its own timer; rebuilt
+  // when `agentblip hub connect|disconnect|include|exclude` asks for a reload.
+  let forwarder: HubForwarder | undefined;
+  const startForwarder = (hub: HubConfig | undefined): void => {
+    const previous = forwarder;
+    forwarder = undefined;
+    if (previous) void previous.stop().catch(() => {});
+    if (!hub) return;
+    forwarder = new HubForwarder({
+      url: hub.url,
+      token: hub.deviceToken,
+      rule: hub.project,
+      includeDirs: hub.includeDirs,
+      excludeDirs: hub.excludeDirs,
+      listSessions: () => store.list(),
+      getSession: (key) => store.get(key),
+      log,
+    });
+    forwarder.start();
+    log(`hub forward on: ${hub.url} (project ${hub.project.name})`);
+  };
+
   const hidden = new Set(config.hideProjects ?? []);
   const applyEvent = (event: SessionEvent): void => {
-    // A hidden project contributes no project text anywhere, its path included.
+    // A hidden project contributes no project text anywhere, its path and
+    // hook detail included.
     const clean =
       event.project !== undefined && hidden.has(event.project)
-        ? { ...event, project: undefined, cwd: undefined }
+        ? { ...event, project: undefined, cwd: undefined, detail: undefined }
         : event;
     store.apply(clean);
     pusher.notify();
+    forwarder?.observe(clean);
   };
 
   // Written before listen: the file must exist by the time /health answers,
@@ -102,8 +127,24 @@ export async function runDaemon(config: Config): Promise<void> {
       return removed;
     },
     getConfig: () => safeConfig(liveConfig),
+    getHub: () => (forwarder ? { enabled: true, ...forwarder.status() } : { enabled: false }),
+    reloadHub: () => {
+      const hub = readHubConfig();
+      if (hub === "unreadable") throw new Error("config file is unreadable — hub settings unchanged");
+      liveConfig = { ...liveConfig, hub };
+      startForwarder(hub);
+      if (!hub) log("hub forward off");
+      return forwarder ? { enabled: true, ...forwarder.status() } : { enabled: false };
+    },
     setConfig: (patch) => {
-      liveConfig = { ...liveConfig, ...patch };
+      // `agentblip hub …` writes the hub section while the daemon runs: take
+      // it from disk so saving a live patch never drops a pairing.
+      const hubOnDisk = readHubConfig();
+      liveConfig = {
+        ...liveConfig,
+        ...patch,
+        hub: hubOnDisk === "unreadable" ? liveConfig.hub : hubOnDisk,
+      };
       formatOpts = formatOptionsFromConfig(liveConfig);
       pusher.applyConfig(formatOpts, liveConfig.statusPolicy);
       saveConfig(liveConfig);
@@ -126,6 +167,7 @@ export async function runDaemon(config: Config): Promise<void> {
 
   try {
     pusher.start();
+    startForwarder(config.hub);
 
     let watcher: CodexWatcher | undefined;
     const sessionsDir = config.adapters.codex.sessionsDir ?? codexSessionsDir();
@@ -181,7 +223,7 @@ export async function runDaemon(config: Config): Promise<void> {
           // best effort
         }
         try {
-          await pusher.shutdown();
+          await Promise.all([pusher.shutdown(), forwarder?.stop()]);
         } catch {
           // best effort
         }

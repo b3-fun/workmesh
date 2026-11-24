@@ -5,6 +5,8 @@ import {
   DEFAULT_DAEMON_PORT,
   DEFAULT_DEBOUNCE_MS,
   DEFAULT_STATUS_TTL_SEC,
+  HUB_DEVICE_TOKEN_RE,
+  hubProjectRuleSchema,
 } from "@agentblip/core";
 import type { FormatOptions } from "@agentblip/core";
 import { configPath } from "./paths";
@@ -22,6 +24,25 @@ const templatesSchema = z
     waitingOnly: z.string(),
   })
   .partial();
+
+/**
+ * Hub forward (Bullpen): pairing result plus local include/exclude dirs.
+ * Holds a device token, so it lives in the 0600 config file only.
+ */
+export const hubConfigSchema = z.object({
+  url: z.url(),
+  deviceId: z.string().min(1),
+  deviceToken: z.string().regex(HUB_DEVICE_TOKEN_RE),
+  machine: z.string().max(120).optional(),
+  person: z.object({ email: z.string(), name: z.string() }).optional(),
+  project: hubProjectRuleSchema,
+  /** Absolute dirs shared on top of the project's rule (`agentblip hub include`). */
+  includeDirs: z.array(z.string()).default([]),
+  /** Absolute dirs never shared, whatever their remote (`agentblip hub exclude`). */
+  excludeDirs: z.array(z.string()).default([]),
+  pairedAt: z.number().int().optional(),
+});
+export type HubConfig = z.infer<typeof hubConfigSchema>;
 
 export const configSchema = z.object({
   mode: z.enum(["relay", "slack", "console"]).default("console"),
@@ -67,6 +88,11 @@ export const configSchema = z.object({
       workflow: { enabled: true },
     }),
   autoStartDaemon: z.boolean().default(true),
+  /**
+   * Present once paired with a hub (`agentblip hub connect`). A malformed
+   * section reads as "not paired" instead of invalidating the Slack config.
+   */
+  hub: hubConfigSchema.optional().catch(undefined),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -159,6 +185,8 @@ export interface SafeConfig {
   repoPrefix: boolean;
   statusTtlSec: number;
   debounceMs: number;
+  /** Hub pairing without its token; absent when not paired. */
+  hub?: { url: string; project: { id: string; name: string } };
 }
 
 export function safeConfig(config: Config): SafeConfig {
@@ -172,7 +200,22 @@ export function safeConfig(config: Config): SafeConfig {
     repoPrefix: config.repoPrefix,
     statusTtlSec: config.statusTtlSec,
     debounceMs: config.debounceMs,
+    ...(config.hub
+      ? { hub: { url: config.hub.url, project: { id: config.hub.project.id, name: config.hub.project.name } } }
+      : {}),
   };
+}
+
+/**
+ * The hub section as it is on disk right now: undefined when not paired,
+ * "unreadable" when the file can't be parsed (callers then keep what they have).
+ */
+export function readHubConfig(file = configPath()): HubConfig | undefined | "unreadable" {
+  try {
+    return loadConfig(file).hub;
+  } catch {
+    return "unreadable";
+  }
 }
 
 export function formatOptionsFromConfig(config: Config): FormatOptions {

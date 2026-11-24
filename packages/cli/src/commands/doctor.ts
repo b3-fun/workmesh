@@ -11,7 +11,7 @@ import {
 } from "../adapters/codex";
 import { loadConfig, loadConfigSafe } from "../lib/config";
 import type { Config } from "../lib/config";
-import { getHealth, sinkConfigured } from "../lib/daemon-client";
+import { getHealth, getHubState, sinkConfigured } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
 import { createSink } from "../sinks";
 import {
@@ -138,6 +138,36 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
       );
     } catch {
       checks.push(fail("relay", `${cfg.relayUrl} unreachable`));
+    }
+  }
+
+  if (cfg.hub) {
+    const hub = cfg.hub;
+    checks.push(
+      ok(
+        "hub",
+        `paired with ${hub.url} (project ${hub.project.name}${hub.person ? `, as ${hub.person.name}` : ""})`,
+      ),
+    );
+    try {
+      const state = await getHubState(cfg.port);
+      if (!state.enabled) {
+        checks.push(warn("hub forward", "the daemon isn't forwarding — restart it: `agentblip stop && agentblip start --detach`"));
+      } else if (state.halted) {
+        checks.push(fail("hub forward", `stopped: ${state.lastError ?? "token rejected"} — run \`agentblip hub connect ${hub.url}\``));
+      } else if (state.lastSendOk === false) {
+        checks.push(warn("hub forward", `retrying: ${state.lastError ?? "send failed"} (${state.queued} queued, ${state.dropped} dropped)`));
+      } else {
+        checks.push(
+          ok(
+            "hub forward",
+            `${state.sharedSessions} shared session(s), ${state.queued} queued, ${state.dropped} dropped` +
+              (state.lastSuccessAt ? `, last sent ${formatDuration(Date.now() - state.lastSuccessAt)} ago` : ""),
+          ),
+        );
+      }
+    } catch {
+      // daemon down: already reported above; an old daemon has no /hub
     }
   }
 

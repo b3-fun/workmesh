@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { SessionEvent, SlackStatus, StatusSnapshot } from "@agentblip/core";
 import type { OwnershipSummary } from "../daemon/pusher";
+import type { HubState } from "../daemon/server";
 import type { Config } from "./config";
 import { readDaemonSecret } from "./daemon-auth";
 import type { SnoozePreset } from "./snooze";
@@ -83,6 +84,14 @@ export function pauseDaemon(
 
 export function resumeDaemon(port: number): Promise<{ ok: boolean; paused: boolean }> {
   return daemonFetch(port, "/resume", "POST");
+}
+
+export function getHubState(port: number): Promise<HubState> {
+  return daemonFetch(port, "/hub");
+}
+
+export function reloadHub(port: number): Promise<HubState> {
+  return daemonFetch(port, "/hub/reload", "POST");
 }
 
 export function getHealth(port: number): Promise<DaemonHealth> {

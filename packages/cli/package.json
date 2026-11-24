@@ -1,6 +1,6 @@
 {
   "name": "@b3os/workmesh",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Workmesh: your team's coding agents (Claude Code, Codex) and the people they work for, on one live board. Also syncs your Slack status. Formerly agentblip.",
   "type": "module",
   "license": "MIT",
@@ -60,6 +60,7 @@
   },
   "devDependencies": {
     "@workmesh/core": "*",
+    "@workmesh/protocol": "*",
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",

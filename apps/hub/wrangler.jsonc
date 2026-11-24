@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The script keeps its first name: its Durable Object (class Project, one per project id) holds every device
+  // pairing, session and event, and a renamed script would start empty and orphan them. Everything else says Workmesh.
+  "name": "bullpen",
+  // NPC Labs. Never deploy to another account (CLAUDE.md).
+  "account_id": "4300a93c2dcb252fa91df03f18e8e44c",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-11-19",
+  // The only ways in are the Access-protected custom domains: workmesh.b3os.org, and bullpen.b3os.org, kept so relays
+  // paired there keep working (one Access audience covers both hosts).
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "workmesh.b3os.org", "custom_domain": true },
+    { "pattern": "bullpen.b3os.org", "custom_domain": true }
+  ],
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/relay/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "PROJECT", "class_name": "Project" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Project"] }],
+  // Summaries (SPEC.md §11): SUMMARY_MODEL on OpenRouter when the OPENROUTER_API_KEY secret is set, else Workers AI.
+  "ai": { "binding": "AI", "remote": true },
+  "vars": {
+    "ENVIRONMENT": "production",
+    "ACCESS_TEAM_DOMAIN": "npclabs.cloudflareaccess.com",
+    "ACCESS_AUD": "a3f9a834dccc7096ab27aa4f3470df3b5bd14618c40e641e92b751b696b70f63",
+    "SUMMARY_DAILY_CAP": "3000",
+    "SUMMARY_MODEL": "anthropic/claude-haiku-5.5",
+    "SUMMARY_MODEL_FALLBACK": "openai/gpt-6-luna"
+  },
+  "observability": { "enabled": true }
+}

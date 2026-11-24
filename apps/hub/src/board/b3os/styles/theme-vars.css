@@ -1,0 +1,191 @@
+/* =============================================================================
+   B3OS beta: the Tailwind theme (the dark variant and the @theme blocks), split out of theme.css in EXTRACT X1 so a
+   second Tailwind stylesheet (src/ds/utilities.css, the ported components') can read the same theme and print the
+   theme variables its own utilities use. Content unchanged from theme.css.
+   ========================================================================== */
+/* dark: follows data-theme (and .dark for libraries that toggle a class),
+   including nested theme islands. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *, .dark, .dark *));
+
+/* Theme-aware values: `inline` so utilities emit var(--b3-*) and flip at runtime. */
+@theme inline {
+  /* surfaces */
+  --color-bg: var(--b3-bg);
+  --color-surface: var(--b3-surface);
+  --color-surface-raised: var(--b3-surface-raised);
+  --color-surface-sunken: var(--b3-surface-sunken);
+  --color-surface-muted: var(--b3-surface-muted);
+  --color-surface-hover: var(--b3-surface-hover);
+  --color-surface-inverse: var(--b3-surface-inverse);
+  /* ink */
+  --color-ink: var(--b3-ink);
+  --color-ink-2: var(--b3-ink-2);
+  --color-ink-3: var(--b3-ink-3);
+  --color-ink-4: var(--b3-ink-4);
+  --color-ink-inverse: var(--b3-ink-inverse);
+  --color-ink-display: var(--b3-ink-display);
+  /* lines */
+  --color-line: var(--b3-line);
+  --color-line-soft: var(--b3-line-soft);
+  --color-line-strong: var(--b3-line-strong);
+  /* accent: named "brand" so it never collides with shadcn's --accent (a hover surface) */
+  --color-brand: var(--b3-accent);
+  --color-brand-strong: var(--b3-accent-strong);
+  --color-brand-text: var(--b3-accent-text);
+  --color-brand-soft: var(--b3-accent-soft);
+  --color-brand-line: var(--b3-accent-line);
+  --color-brand-ink: var(--b3-accent-ink);
+  --color-focus: var(--b3-focus);
+  /* status */
+  --color-success: var(--b3-success);
+  --color-success-soft: var(--b3-success-soft);
+  --color-success-line: var(--b3-success-line);
+  --color-success-dot: var(--b3-success-dot);
+  --color-warning: var(--b3-warning);
+  --color-warning-soft: var(--b3-warning-soft);
+  --color-warning-line: var(--b3-warning-line);
+  --color-warning-dot: var(--b3-warning-dot);
+  --color-danger: var(--b3-danger);
+  --color-danger-soft: var(--b3-danger-soft);
+  --color-danger-line: var(--b3-danger-line);
+  --color-danger-dot: var(--b3-danger-dot);
+  /* data viz */
+  --color-series-1: var(--b3-series-1);
+  --color-series-2: var(--b3-series-2);
+  --color-series-3: var(--b3-series-3);
+  --color-series-4: var(--b3-series-4);
+  --color-series-5: var(--b3-series-5);
+  --color-series-context: var(--b3-series-context);
+  --color-ramp-1: var(--b3-ramp-1);
+  --color-ramp-2: var(--b3-ramp-2);
+  --color-ramp-3: var(--b3-ramp-3);
+  --color-ramp-4: var(--b3-ramp-4);
+  --color-chart-grid: var(--b3-chart-grid);
+  /* material */
+  --color-dot: var(--b3os-dot);
+  --color-rivet: var(--b3os-rivet);
+  --color-grid-line: var(--b3os-grid-line);
+  --color-grid-node: var(--b3os-grid-node);
+  --color-tray: var(--b3os-tray);
+
+  /* type families (swap in var(--font-geist-sans) / var(--font-geist-mono) if you load Geist via next/font) */
+  --font-sans: var(--b3-font-sans);
+  --font-mono: var(--b3-font-mono);
+
+  /* shadows (all theme-aware) */
+  --shadow-soft: var(--b3os-shadow-soft);
+  --shadow-pressed: var(--b3os-shadow-pressed);
+  --shadow-card: var(--b3os-shadow-card);
+  --shadow-tile: var(--b3os-shadow-tile);
+  --shadow-float: var(--b3os-shadow-float);
+  --shadow-hero: var(--b3os-shadow-hero);
+  --shadow-overlay: var(--b3os-shadow-overlay);
+  --shadow-emboss: var(--b3os-shadow-emboss);
+  --shadow-deboss: var(--b3os-shadow-deboss);
+  --shadow-groove: var(--b3os-shadow-groove);
+  --shadow-input: var(--b3os-shadow-input);
+  --shadow-rivet: var(--b3os-shadow-rivet);
+  --shadow-node: var(--b3os-shadow-node);
+  --shadow-box: var(--b3os-shadow-box);
+
+  /* easing */
+  --ease-arrive: var(--b3-ease-arrive);
+  --ease-ui: var(--b3-ease-ui);
+  --ease-sheet: var(--b3-ease-sheet);
+  --ease-move: var(--b3-ease-move);
+  --ease-exit: var(--b3-ease-exit);
+}
+
+/* Static scales */
+@theme {
+  /* type scale: size + leading + tracking + weight in one utility */
+  /* One heading system (2026-11-07 redesign): display and H2 in one tone, sentence case, a full stop. */
+  --text-hero: clamp(2.75rem, 1.6rem + 4.6vw, 5.5rem);
+  --text-hero--line-height: 0.98;
+  --text-hero--letter-spacing: -0.045em;
+  --text-hero--font-weight: 600;
+  /* Product pages and /pricing: a left-aligned hero beside code, so one step under the homepage's display (40 → 64). */
+  --text-display: clamp(2.5rem, 1.5rem + 2.9vw, 4rem);
+  --text-display--line-height: 1;
+  --text-display--letter-spacing: -0.04em;
+  --text-display--font-weight: 600;
+  --text-h1: clamp(2rem, 1.2rem + 2.6vw, 3.25rem);
+  --text-h1--line-height: 1.04;
+  --text-h1--letter-spacing: -0.04em;
+  --text-h1--font-weight: 600;
+  --text-h2: clamp(1.75rem, 2.8vw, 2.75rem);
+  --text-h2--line-height: 1.08;
+  --text-h2--letter-spacing: -0.035em;
+  --text-h2--font-weight: 600;
+  --text-h3: 1.5rem;
+  --text-h3--line-height: 1.25;
+  --text-h3--letter-spacing: -0.02em;
+  --text-h3--font-weight: 600;
+  --text-h4: 1.25rem;
+  --text-h4--line-height: 1.3;
+  --text-h4--letter-spacing: -0.015em;
+  --text-h4--font-weight: 600;
+  --text-lead: clamp(1.0625rem, 0.95rem + 0.45vw, 1.25rem);
+  --text-lead--line-height: 1.45;
+  --text-lead--letter-spacing: -0.014em;
+  --text-lead--font-weight: 450;
+  --text-body: 1rem;
+  --text-body--line-height: 1.6;
+  --text-ui: 0.875rem;
+  --text-ui--line-height: 1.25rem;
+  --text-small: 0.8125rem;
+  --text-small--line-height: 1.125rem;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-micro: 0.6875rem;
+  --text-micro--line-height: 0.875rem;
+  --text-micro--letter-spacing: 0.08em;
+  --text-micro--font-weight: 500;
+  --text-stat: clamp(2rem, 3.4vw, 3rem);
+  --text-stat--line-height: 1;
+  --text-stat--letter-spacing: -0.03em;
+  --text-stat--font-weight: 600;
+
+  /* radii: overrides Tailwind defaults with the B3OS scale */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-3xl: 28px;
+  --radius-4xl: 32px;
+
+  /* layout */
+  --container-rail: 90rem;     /* 1440 */
+  --container-content: 70rem;  /* 1120 */
+  --container-reading: 45rem;  /* 720 */
+  --breakpoint-3xl: 120rem;    /* 1920 (b3os-web) */
+
+  /* animation */
+  --animate-fade-in-scale: fade-in-scale 250ms cubic-bezier(0.165, 0.84, 0.44, 1) both;
+  --animate-fade-in-up: fade-in-up 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-status-pulse: status-pulse 1.4s ease-in-out infinite;
+  --animate-edge-dash: edge-dash 1.5s linear infinite;
+  --animate-skeleton: skeleton 1.5s ease-in-out infinite;
+
+  @keyframes fade-in-scale {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  @keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes status-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgb(34 197 94 / 0.55); }
+    50% { box-shadow: 0 0 0 4px rgb(34 197 94 / 0); }
+  }
+  @keyframes edge-dash {
+    to { stroke-dashoffset: -20; }
+  }
+  @keyframes skeleton {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.8; }
+  }
+}

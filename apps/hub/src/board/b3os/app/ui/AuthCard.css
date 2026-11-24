@@ -1,0 +1,296 @@
+/* The auth card's body (admin redesign area 10): the original BetterAuthLoginWindow's sections inside the card's dashed
+   column, its "[OR] CONTINUE WITH" row, the logomark's glass tile and a centred head; a quiet note line with no fill.
+   In the sign-in-kit group with the card itself (vite.config.ts). */
+@layer components {
+  /* The card's top anchored where a usual card (about 660 px) sits centred, never re-centred as its height changes:
+     its head stays put while a lookup lands or a line comes and goes (the Boot mark keeps the stage's centring). */
+  .auth-stage:has(> .auth-column) {
+    align-items: start;
+    padding-top: max(24px, calc(50dvh - 330px));
+  }
+  .auth-section {
+    padding-inline: 9px;
+  }
+  .auth-section__body {
+    display: grid;
+    gap: 20px;
+    padding: 24px 32px;
+    border-inline: 1px dashed var(--ds-neutral-200);
+  }
+  :root[data-theme="dark"] .auth-section__body,
+  .dark .auth-section__body {
+    border-color: var(--ds-neutral-800);
+  }
+  @media (max-width: 639px) {
+    .auth-section__body {
+      padding: 20px 16px;
+    }
+  }
+  .auth-divider {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 32px;
+    border: 1px dashed var(--ds-neutral-200);
+  }
+  :root[data-theme="dark"] .auth-divider,
+  .dark .auth-divider {
+    border-color: var(--ds-neutral-800);
+  }
+  .auth-divider p {
+    margin: 0;
+    font: 500 var(--kit-text-caption, 12px) / 16px var(--b3-font-mono);
+    letter-spacing: 0.02em;
+    color: var(--b3-ink-3);
+    text-transform: uppercase;
+  }
+  .auth-divider__lead {
+    color: var(--b3-accent-text);
+  }
+
+  /* The head: the mark's glass tile, the title, one line, centred (the original's LogomarkTile and title). */
+  .auth-head {
+    display: grid;
+    justify-items: center;
+    gap: 20px;
+    text-align: center;
+  }
+  .auth-mark {
+    display: grid;
+    place-items: center;
+    width: 58px;
+    height: 58px;
+    border-radius: 14px;
+    color: var(--b3-ink);
+    background: color-mix(in oklab, var(--ds-surface-card) 60%, transparent);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in oklab, var(--b3-ink) 10%, transparent),
+      0 1px 2px 0 rgb(23 22 25 / 0.06),
+      0 4px 12px -4px rgb(23 22 25 / 0.08);
+    backdrop-filter: blur(8px);
+  }
+  .auth-mark[data-tone="brand"] {
+    color: var(--b3-accent-text);
+  }
+  .auth-mark[data-tone="danger"] {
+    color: var(--b3-danger-dot);
+  }
+  .auth-mark[data-tone="ok"] {
+    color: var(--b3-success-dot);
+  }
+  .auth-head__text {
+    display: grid;
+    gap: 6px;
+    justify-items: center;
+  }
+  .auth-head__title {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 0;
+    font: 600 var(--kit-text-title, 20px) / 28px var(--b3-font-sans);
+    color: var(--b3-ink);
+    text-wrap: balance;
+  }
+  .auth-head__chip {
+    vertical-align: middle;
+  }
+  .auth-head__line {
+    margin: 0;
+    max-width: 36ch;
+    font: 400 var(--kit-text-ui, 14px) / 20px var(--b3-font-sans);
+    color: var(--b3-ink-3);
+    text-wrap: pretty;
+  }
+
+  /* A method this browser signed in with last time (the original's "Last used" pill), on its button's corner. */
+  .auth-method {
+    position: relative;
+  }
+  .auth-last {
+    position: absolute;
+    top: -8px;
+    right: -6px;
+    z-index: 1;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font: 600 var(--kit-text-micro, 11px) / 14px var(--b3-font-sans);
+    color: #fff;
+    background: var(--ds-brand-500);
+    box-shadow: 0 1px 2px 0 rgb(23 22 25 / 0.2);
+    pointer-events: none;
+  }
+
+  /* A fact or a failure in one line: no fill, no border; the glyph carries the tone. */
+  .auth-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    text-align: left;
+  }
+  .auth-note__glyph {
+    flex: none;
+    margin-top: 2px;
+    color: var(--b3-ink-3);
+  }
+  .auth-note[data-tone="danger"] .auth-note__glyph {
+    color: var(--b3-danger-dot);
+  }
+  .auth-note[data-tone="warn"] .auth-note__glyph {
+    color: var(--b3-warning-dot);
+  }
+  .auth-note[data-tone="ok"] .auth-note__glyph {
+    color: var(--b3-success-dot);
+  }
+  .auth-note__body {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+  .auth-note__title {
+    margin: 0;
+    font: 500 var(--kit-text-ui, 14px) / 20px var(--b3-font-sans);
+    color: var(--b3-ink);
+  }
+  .auth-note__text {
+    margin: 0;
+    font: 400 var(--kit-text-ui, 14px) / 20px var(--b3-font-sans);
+    color: var(--b3-ink-2);
+    text-wrap: pretty;
+  }
+  .auth-note__id {
+    margin: 0;
+    font: 400 var(--kit-text-caption, 12px) / 16px var(--b3-font-mono);
+    color: var(--b3-ink-3);
+    overflow-wrap: anywhere;
+  }
+  .auth-note__action {
+    margin-top: 8px;
+  }
+
+  /* A CLI sign-in's code, large, to compare with the terminal's. */
+  .auth-code {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 16px 12px;
+    border-radius: 12px;
+    background: var(--ds-surface-sunken, var(--b3-bg));
+    box-shadow: inset 0 1px 2px 0 rgb(23 22 25 / 0.06);
+  }
+  /* The code at 32 px, to read at arm's length beside the terminal's (GitHub's device page; the judge's S4). */
+  .auth-code__value {
+    margin: 0;
+    font: 500 32px / 40px var(--b3-font-mono);
+    letter-spacing: 0.16em;
+    color: var(--b3-ink);
+  }
+  /* The lookup's bones, each in its part's own height. */
+  .auth-code__bone {
+    width: 232px;
+    max-width: 100%;
+    height: 40px;
+  }
+  .auth-bone-field {
+    height: 40px;
+  }
+  .auth-bone-button {
+    height: 44px;
+  }
+  .auth-bone-button--xl {
+    height: 48px;
+  }
+  .auth-mark-bone {
+    width: 58px;
+    height: 58px;
+  }
+  .auth-glass-bone {
+    width: 48px;
+    height: 48px;
+  }
+  /* The radii with the bone's class: the kit's sheets load with the page now (perf audit 11-23), so the bone's own 5 px
+     can arrive after these and must lose by more than order. */
+  .kit-bone.auth-bone-field {
+    border-radius: 8px;
+  }
+  .kit-bone.auth-bone-button {
+    border-radius: 10px;
+  }
+  .kit-bone.auth-mark-bone {
+    border-radius: 14px;
+  }
+  .kit-bone.auth-glass-bone {
+    border-radius: 12px;
+  }
+  @media (max-width: 767px) {
+    .auth-bone-field,
+    .auth-bone-button:not(.auth-bone-button--xl) {
+      height: 44px;
+    }
+  }
+  .auth-code__line {
+    margin: 0;
+    font: 400 var(--kit-text-small, 13px) / 18px var(--b3-font-sans);
+    color: var(--b3-ink-3);
+  }
+
+  /* Label and value rows with hairlines between, a rule on top (a sign-in's client and machine). */
+  .auth-facts {
+    display: grid;
+    margin: 0;
+    border-top: 1px solid var(--b3-line);
+  }
+  .auth-facts > div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 44px;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--b3-line-soft);
+    font: 400 var(--kit-text-ui, 14px) / 20px var(--b3-font-sans);
+  }
+  .auth-facts dt {
+    flex: none;
+    color: var(--b3-ink-3);
+  }
+  .auth-facts dd {
+    min-width: 0;
+    margin: 0;
+    color: var(--b3-ink);
+    text-align: right;
+  }
+
+  /* An outcome said with the original's animated check (approved) or a quiet glyph (denied, expired). */
+  .auth-done {
+    display: grid;
+    justify-items: center;
+    gap: 12px;
+    padding: 8px 0 4px;
+    text-align: center;
+  }
+  .auth-done p {
+    margin: 0;
+    max-width: 36ch;
+    font: 400 var(--kit-text-ui, 14px) / 20px var(--b3-font-sans);
+    color: var(--b3-ink-2);
+    text-wrap: pretty;
+  }
+  .auth-done strong {
+    display: block;
+    margin-bottom: 2px;
+    font-weight: 600;
+    color: var(--b3-ink);
+  }
+}
+@layer components {
+  /* The six-digit code: large mono digits, spaced, centred. */
+  .auth-otp {
+    font-family: var(--b3-font-mono);
+    font-size: var(--kit-text-title, 20px);
+    letter-spacing: 0.4em;
+    text-align: center;
+  }
+}

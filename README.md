@@ -322,12 +322,11 @@ Slack shows *that* you have agents running. The team board shows your whole team
 agent sessions live: who is running what, in which repo and branch, which ones wait on
 a person, and each tool call as one line. The daemon forwards what you choose to share
 to the hub you pair with, next to (never instead of) the Slack status. B3's hosted hub
-is at [bullpen.b3os.org](https://bullpen.b3os.org) (Bullpen was the hub's name before it
-joined Workmesh).
+is at [workmesh.b3os.org](https://workmesh.b3os.org).
 
 ```bash
-workmesh hub connect https://bullpen.b3os.org   # shows a code, opens the browser to approve, asks what to share
-workmesh hub connect https://bullpen.b3os.org --share conversation   # or --share metadata
+workmesh hub connect https://workmesh.b3os.org   # shows a code, opens the browser to approve, asks what to share
+workmesh hub connect https://workmesh.b3os.org --share conversation   # or --share metadata
 workmesh hub share conversation                 # change it any time (no argument: show it)
 workmesh hub status                             # paired? sharing level, last send, queued, dropped, shared sessions
 workmesh hub include ~/work/shared-notes        # also share this folder
@@ -361,7 +360,7 @@ Prompts and messages are capped at 4,000 characters.
 
 **Redaction, on your machine.** Before anything is queued, every text field and tool
 description goes through a redactor: API keys and tokens by prefix (Anthropic, OpenAI,
-GitHub, Slack, AWS, npm, Linear, Stripe, Google, Hugging Face, Bullpen hub and Workmesh relay
+GitHub, Slack, AWS, npm, Linear, Stripe, Google, Hugging Face, Workmesh hub and relay
 device tokens, and more), JWTs, PEM private keys, `Bearer`/`Basic` values and auth
 headers, values of secret-named settings (`password=`, `API_KEY:`, `--token`), URLs with
 credentials, webhooks, and long random strings become `[redacted]`; home paths become
@@ -382,6 +381,25 @@ Delivery: batched every second in requests under 256 KB, a full heartbeat every 
 up to 5,000 events (16 MB) held while the hub is unreachable, `Retry-After` honored. If
 the hub revokes the device (401) forwarding stops and `workmesh hub status` tells you
 to pair again. A hub too old to accept conversation events still gets everything else.
+
+### The hub
+
+The hub is in this repo, in [`apps/hub`](apps/hub): one Cloudflare Worker with a Durable
+Object per project that pairs machines, keeps the roster and a 7-day timeline, writes
+short summaries (now lines, turn summaries, waiting reasons, a "since you looked"
+digest), and serves the board, a live web page of everyone's sessions with each one's
+conversation a click away. People sign in to the board through Cloudflare Access; relays
+reach `/relay/*` with their own device tokens. The relay and the hub validate every
+request against one set of wire schemas, [`packages/protocol`](packages/protocol), and
+the contract they share (what may leave a machine, sharing levels, the wire format,
+summaries, the board) is [docs/SPEC.md](docs/SPEC.md).
+
+B3 runs one at `workmesh.b3os.org`; `bullpen.b3os.org`, the hub's name before it joined
+Workmesh, serves the same hub, so machines paired there keep sending. To run your own,
+deploy `apps/hub` to your Cloudflare account behind an Access application of your own
+(`npm run deploy -w @workmesh/hub` after setting the account, host, Access team domain and
+audience in `apps/hub/wrangler.jsonc`, and your project's sharing rule in
+`apps/hub/src/shared/types.ts`); [CONTRIBUTING.md](CONTRIBUTING.md) has the local setup.
 
 ## CLI reference
 

@@ -1,0 +1,130 @@
+/* The pixel grid's cells and palette (globals.css 756-880, @layer utilities), EXTRACT X2; a file of its own since X5 so
+   the console's core stylesheet (ds/core.css) loads it without the rest of signature.css (the toasts, the tab glows). */
+/* globals.css 756-880, @layer utilities */
+@layer utilities {
+  /* Pixel-grid primitive — cells are plain spans, color comes from CSS vars,
+     transitions drive the fade. Timing handled by JS. */
+  :where(.pixel-grid) {
+    --pixel-off: oklch(51.2% 0.27 268 / 0.35);
+    --pixel-on: oklch(51.2% 0.27 268);
+    --pixel-glow: oklch(51.2% 0.27 268 / 0.9);
+  }
+  .pixel-grid__cell {
+    background-color: var(--pixel-off);
+    border-radius: 1px;
+    transition:
+      background-color 0.3s ease-out,
+      box-shadow 0.3s ease-out;
+  }
+  .pixel-grid__cell.is-on {
+    background-color: var(--pixel-on);
+    box-shadow:
+      0 0 3px var(--pixel-glow),
+      0 0 6px var(--pixel-glow);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pixel-grid__cell {
+      transition: none;
+    }
+  }
+
+  /* CSS-driven twinkle — replaces PixelField's per-cell setTimeout loop.
+     Each cell gets inline animation-delay + animation-duration so phases vary;
+     keyframe shape is shared. Compositor handles it, no JS work at runtime. */
+  @keyframes pixel-grid-twinkle {
+    0%,
+    100% {
+      background-color: var(--pixel-off);
+      box-shadow: none;
+    }
+    15% {
+      background-color: var(--pixel-on);
+      box-shadow:
+        0 0 3px var(--pixel-glow),
+        0 0 6px var(--pixel-glow);
+    }
+    35% {
+      background-color: var(--pixel-off);
+      box-shadow: none;
+    }
+  }
+  .pixel-grid__cell--twinkle {
+    animation: pixel-grid-twinkle var(--twinkle-duration, 1800ms) ease-out var(--twinkle-delay, 0ms) infinite;
+    will-change: background-color, box-shadow;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pixel-grid__cell--twinkle {
+      animation: none;
+      background-color: var(--pixel-on);
+    }
+  }
+
+  /* Named palette — container-level (.pixel-grid--*) + per-cell
+     (.pixel-grid__cell--*). Values ported from 3pxgrid.com (MIT). */
+  .pixel-grid--magenta,
+  .pixel-grid__cell--magenta {
+    --pixel-off: oklch(40% 0.08 330 / 0.4);
+    --pixel-on: oklch(85% 0.25 330);
+    --pixel-glow: oklch(75% 0.3 330 / 0.9);
+  }
+  .pixel-grid--yellow,
+  .pixel-grid__cell--yellow {
+    --pixel-off: oklch(50% 0.08 90 / 0.4);
+    --pixel-on: oklch(95% 0.2 90);
+    --pixel-glow: oklch(90% 0.25 90 / 0.9);
+  }
+  .pixel-grid--green,
+  .pixel-grid__cell--green {
+    --pixel-off: oklch(40% 0.08 145 / 0.4);
+    --pixel-on: oklch(90% 0.25 145);
+    --pixel-glow: oklch(80% 0.3 145 / 0.9);
+  }
+  .pixel-grid--orange,
+  .pixel-grid__cell--orange {
+    --pixel-off: oklch(45% 0.08 50 / 0.4);
+    --pixel-on: oklch(85% 0.22 50);
+    --pixel-glow: oklch(75% 0.28 50 / 0.9);
+  }
+  .pixel-grid--blue,
+  .pixel-grid__cell--blue {
+    --pixel-off: oklch(51.2% 0.27 268 / 0.35);
+    --pixel-on: oklch(51.2% 0.27 268);
+    --pixel-glow: oklch(51.2% 0.27 268 / 0.9);
+  }
+  .pixel-grid--red,
+  .pixel-grid__cell--red {
+    --pixel-off: oklch(40% 0.08 25 / 0.4);
+    --pixel-on: oklch(70% 0.25 25);
+    --pixel-glow: oklch(60% 0.3 25 / 0.9);
+  }
+  .pixel-grid--purple,
+  .pixel-grid__cell--purple {
+    --pixel-off: oklch(40% 0.08 300 / 0.4);
+    --pixel-on: oklch(75% 0.22 300);
+    --pixel-glow: oklch(65% 0.28 300 / 0.9);
+  }
+  .pixel-grid--white,
+  .pixel-grid__cell--white {
+    --pixel-off: oklch(50% 0 0 / 0.3);
+    --pixel-on: oklch(98% 0 0);
+    --pixel-glow: oklch(95% 0 0 / 0.8);
+  }
+  .pixel-grid--teal,
+  .pixel-grid__cell--teal {
+    --pixel-off: oklch(40% 0.08 175 / 0.4);
+    --pixel-on: oklch(82% 0.18 175);
+    --pixel-glow: oklch(72% 0.24 175 / 0.9);
+  }
+  .pixel-grid--pink,
+  .pixel-grid__cell--pink {
+    --pixel-off: oklch(45% 0.08 350 / 0.4);
+    --pixel-on: oklch(80% 0.2 350);
+    --pixel-glow: oklch(70% 0.26 350 / 0.9);
+  }
+  .pixel-grid--lime,
+  .pixel-grid__cell--lime {
+    --pixel-off: oklch(45% 0.08 120 / 0.4);
+    --pixel-on: oklch(88% 0.22 120);
+    --pixel-glow: oklch(80% 0.28 120 / 0.9);
+  }
+}

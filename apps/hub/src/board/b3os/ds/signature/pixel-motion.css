@@ -1,0 +1,63 @@
+/* =============================================================================
+   The pixel language's two keyframes and their utilities, verbatim from b3-mono apps/b3os-web/app/globals.css
+   @ f50f3ba3b97e (lines 703-741), moved out of signature.css (console area 1 fix round) so the console's core
+   stylesheet (ds/core.css) carries them for the primary button's pixel arrow (DIRECTION 2) and the gallery's sheet
+   (signature.css) as before. `.animate-pixel-chase` and `.animate-pixel-pulse` are `@utility` (Tailwind 4 gives
+   variants such as group-hover only to `@utility`); the keyframes sit outside any layer.
+   ========================================================================== */
+
+/* globals.css 703-741, @layer utilities */
+/* Connector form pixel-arrow chase — staggered flash flowing toward the connector */
+@keyframes pixel-chase {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: scale(0.82);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  70% {
+    opacity: 0.7;
+    transform: scale(0.95);
+  }
+}
+
+/* Hover-triggered pixel pulse — returns to solid at cycle end so button recovers cleanly when pointer leaves. */
+@keyframes pixel-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  40% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@utility animate-pixel-chase {
+  animation: pixel-chase 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  will-change: opacity, transform;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Hover-triggered pixel pulse — returns to solid at cycle end so button recovers cleanly when pointer leaves. */
+@utility animate-pixel-pulse {
+  animation: pixel-pulse 1.1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  will-change: opacity, transform;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}

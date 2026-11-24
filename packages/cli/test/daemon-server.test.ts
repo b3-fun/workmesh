@@ -87,7 +87,7 @@ async function startServer(): Promise<TestHarness> {
     getHub: () => ({ enabled: false }),
     reloadHub: () => ({
       enabled: true,
-      url: "https://bullpen.b3os.org",
+      url: "https://workmesh.b3os.org",
       project: { id: "b3", name: "B3" },
       running: true,
       halted: false,

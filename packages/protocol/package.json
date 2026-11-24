@@ -1,0 +1,22 @@
+{
+  "name": "@workmesh/protocol",
+  "version": "0.8.0",
+  "private": true,
+  "type": "module",
+  "description": "Workmesh relay ↔ hub wire protocol: the schemas both the CLI's hub forwarder and the hub's ingest validate against",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

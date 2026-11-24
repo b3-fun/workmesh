@@ -2,7 +2,7 @@ import os from "node:os";
 import { truncateHead } from "@workmesh/core";
 
 /**
- * Secret redaction for conversation text (Bullpen SPEC §9). Runs on the
+ * Secret redaction for conversation text (docs/SPEC.md §9). Runs on the
  * machine, on every text field and `desc`, before anything is queued for the
  * hub. Each rule below has true-positive and no-mangling tests in
  * test/hub-redact.test.ts; extend both together.
@@ -216,7 +216,7 @@ const PREFIXED: Array<{ re: RegExp; when?: (token: string) => boolean }> = [
   { re: /\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b/g }, // AWS access key id
   { re: /\bnpm_[A-Za-z0-9]{30,}/g }, // npm
   { re: /\blin_(?:api|oauth)_[A-Za-z0-9]{20,}/g }, // Linear
-  { re: /\bbp_[0-9a-f]{32,}/g }, // Bullpen device token
+  { re: /\bbp_[0-9a-f]{32,}/g }, // Workmesh hub device token
   { re: /\bab_[0-9a-f]{32,}/g }, // Workmesh relay device token
   { re: /\bAIza[0-9A-Za-z_-]{35}/g }, // Google API key
   { re: /\bya29\.[0-9A-Za-z_-]{20,}/g }, // Google OAuth access token

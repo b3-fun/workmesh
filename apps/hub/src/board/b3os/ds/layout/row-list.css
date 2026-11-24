@@ -1,0 +1,159 @@
+/* Beta addition (console elegance, area 2; DIRECTION.md 1.3, 1.4 and 4): the 40 px list row. A collection is rows
+   with hairlines between them and a hover tint, no outer frame: 40 px rows on a desktop, 48 px where the pointer is a
+   finger, the column labels at 12 px medium in the tertiary ink with no strip behind them, and the first column's
+   text on the page's own left edge (the list reaches 12 px past it, so the hover tint has room around the words).
+   The table inside keeps the console's `b3os-table` class, so the phone layout (app.css "Tables on phones": under
+   640 px each row is two stacked lines) and the column labels it copies (app/ui/stackTables.ts) stay as they are; the
+   row metrics here start at 640 px, and under it only the list's edges are set.
+   This sheet loads with the ds core (core.css), before the console's: each rule weighs one class more than the
+   console's `.b3os-table` rule it replaces, so it wins without depending on the order. */
+@layer components {
+  .ds-rows {
+    position: relative;
+    overflow-x: auto;
+    margin-inline: -12px;
+  }
+  @media (min-width: 640px) {
+    .ds-rows > .b3os-table {
+      font: 400 14px / 20px var(--b3-font-sans);
+    }
+    /* The hairlines end at the text's edge (console area 2 fix, P4): the list reaches 12 px past the page column so a
+       row's hover tint has room around its words, and each rule is a 1 px line drawn 12 px in from the list's ends, so
+       its right end lines up with the page header's primary button. */
+    .ds-rows > .b3os-table th,
+    .ds-rows > .b3os-table td {
+      --ds-row-rule: var(--b3-line-soft);
+      border-bottom: 0;
+      background-image: linear-gradient(var(--ds-row-rule), var(--ds-row-rule));
+      background-repeat: no-repeat;
+      background-size: 100% 1px;
+      background-position: 0 100%;
+    }
+    .ds-rows > .b3os-table :is(th, td):first-child {
+      background-size: calc(100% - 12px) 1px;
+      background-position: 12px 100%;
+    }
+    .ds-rows > .b3os-table :is(th, td):last-child {
+      background-size: calc(100% - 12px) 1px;
+    }
+    .ds-rows > .b3os-table :is(th, td):only-child {
+      background-size: calc(100% - 24px) 1px;
+    }
+    .ds-rows > .b3os-table th {
+      --ds-row-rule: var(--b3-line);
+      height: 32px;
+      padding: 6px 12px;
+      background-color: transparent;
+      font: 500 12px / 20px var(--b3-font-sans);
+      color: var(--b3-ink-3);
+    }
+    .ds-rows > .b3os-table td {
+      height: 40px;
+      padding: 10px 12px;
+      vertical-align: middle;
+    }
+    .ds-rows > .b3os-table tbody tr:last-child td {
+      background-image: none;
+    }
+    /* The console's own hover rule (app.css) sets the background shorthand on a heavier selector, which drops the
+       rule: the row under the pointer restates it. */
+    .ds-rows > .b3os-table tbody tr:hover td {
+      background-color: var(--b3-surface-hover);
+      background-image: linear-gradient(var(--ds-row-rule), var(--ds-row-rule));
+      background-repeat: no-repeat;
+      background-size: 100% 1px;
+      background-position: 0 100%;
+    }
+    .ds-rows > .b3os-table tbody tr:hover td:first-child {
+      background-size: calc(100% - 12px) 1px;
+      background-position: 12px 100%;
+    }
+    .ds-rows > .b3os-table tbody tr:hover td:last-child {
+      background-size: calc(100% - 12px) 1px;
+    }
+    .ds-rows > .b3os-table tbody tr:hover td:only-child {
+      background-size: calc(100% - 24px) 1px;
+    }
+    .ds-rows > .b3os-table tbody tr:last-child:hover td {
+      background-image: none;
+    }
+    /* The row actions column stays pinned on the page's own ground, not a white card's. */
+    .ds-rows > .b3os-table .cell-actions,
+    .ds-rows > .b3os-table thead .cell-actions {
+      background-color: var(--b3-bg);
+    }
+    .ds-rows > .b3os-table tbody tr:hover td.cell-actions {
+      background-color: var(--b3-bg);
+      background-repeat: no-repeat;
+      background-image:
+        linear-gradient(var(--ds-row-rule), var(--ds-row-rule)),
+        linear-gradient(var(--b3-surface-hover), var(--b3-surface-hover));
+      background-size:
+        calc(100% - 12px) 1px,
+        100% 100%;
+      background-position:
+        0 100%,
+        0 0;
+    }
+    .ds-rows > .b3os-table tbody tr:last-child:hover td.cell-actions {
+      background-image: linear-gradient(var(--b3-surface-hover), var(--b3-surface-hover));
+      background-size: 100% 100%;
+    }
+  }
+  /* Where a list has no room for every column (640 to 1279 px: a laptop's window beside the sidebar), a cell marked
+     data-room="wide" steps out and its fact shows in a line the page marks data-room="mid" (console area 2 fix, F2:
+     four lists scrolled sideways inside themselves at 768 and 1024 px, their last columns cut under the actions).
+     Phones keep their stacked lines; from 1280 px every column shows. */
+  .ds-rows > .b3os-table [data-room="mid"] {
+    display: none;
+  }
+  @media (min-width: 640px) and (max-width: 1279px) {
+    .ds-rows > .b3os-table [data-room="wide"] {
+      display: none;
+    }
+    /* A cell marked data-room="fill" takes the room the others leave there and cuts its lines (its text carries the
+       whole on hover), as the console's .cell-fill does at every width (console area 3 fix: the Applications list,
+       addresses off, was 800 px in a 724 px box at 1024, its name's second line holding the column at 438 px). */
+    .ds-rows > .b3os-table td[data-room="fill"] {
+      width: 100%;
+      min-width: 12rem;
+      max-width: 0;
+    }
+    .ds-rows > .b3os-table [data-room="mid"] {
+      display: block;
+    }
+  }
+  /* A row's actions on demand (console area 5 fix, P2; DIRECTION 1.6): a list whose every row carries the same buttons
+     marks its actions cell data-reveal. From 1024 px, where a mouse points, they show while the row is under the
+     pointer or holds the focus (a Tab onto a button, or a two-press delete waiting for its second press), as Linear's
+     lists do; touch screens and narrower windows keep them shown, so either way they are one click away. */
+  @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+    .ds-rows > .b3os-table tbody td[data-reveal] > * {
+      opacity: 0;
+    }
+    .ds-rows > .b3os-table tbody tr:hover td[data-reveal] > *,
+    .ds-rows > .b3os-table tbody tr:focus-within td[data-reveal] > * {
+      opacity: 1;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .ds-rows > .b3os-table tbody td[data-reveal] > * {
+        transition: opacity 120ms ease-out;
+      }
+    }
+  }
+  /* A finger's row: 48 px. */
+  @media (pointer: coarse) and (min-width: 640px) {
+    .ds-rows > .b3os-table td {
+      height: 48px;
+      padding-block: 14px;
+    }
+  }
+  /* Phones: the rows are the console's stacked lines; the list reaches the screen's edges, so a row's tint does too,
+     and its words sit on the page's 16 px gutter (the rows' own 16 px padding). */
+  @media (max-width: 639px) {
+    .ds-rows {
+      margin-inline: -16px;
+      overflow-x: visible;
+    }
+  }
+}

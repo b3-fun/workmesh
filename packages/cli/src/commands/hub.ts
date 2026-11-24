@@ -6,8 +6,8 @@ import {
   hubPairPollResponseSchema,
   hubPairStartResponseSchema,
   hubShareLevelSchema,
-} from "@workmesh/core";
-import type { HubPairStartResponse, HubProjectRule, HubShareLevel } from "@workmesh/core";
+} from "@workmesh/protocol";
+import type { HubPairStartResponse, HubProjectRule, HubShareLevel } from "@workmesh/protocol";
 import pkg from "../../package.json";
 import { hubShareLevel, loadConfig, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
@@ -18,7 +18,7 @@ import { openBrowser } from "./setup";
 import type { HubState } from "../daemon/server";
 
 /** The team hub's address; `hub connect` takes any URL. */
-export const EXAMPLE_HUB_URL = "https://bullpen.b3os.org";
+export const EXAMPLE_HUB_URL = "https://workmesh.b3os.org";
 
 const POLL_INTERVAL_MS = 2000;
 const HTTP_TIMEOUT_MS = 10_000;

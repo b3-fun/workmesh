@@ -8,7 +8,7 @@ export default defineConfig({
   clean: true,
   minify: false,
   banner: { js: "#!/usr/bin/env node" },
-  // core is a private workspace package (and pulls in zod) — bundle both so the
-  // published CLI only depends on commander + chokidar at runtime.
-  noExternal: ["@workmesh/core"],
+  // core and protocol are private workspace packages (and pull in zod) — bundle
+  // them so the published CLI only depends on commander + chokidar at runtime.
+  noExternal: ["@workmesh/core", "@workmesh/protocol"],
 });

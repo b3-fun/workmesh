@@ -59,7 +59,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     log,
   });
 
-  // Hub forward (Bullpen): runs beside the pusher, on its own timer; rebuilt
+  // Hub forward (team hub, apps/hub): runs beside the pusher, on its own timer; rebuilt
   // when `workmesh hub connect|disconnect|include|exclude` asks for a reload.
   let forwarder: HubForwarder | undefined;
   const startForwarder = (hub: HubConfig | undefined): void => {

@@ -1,10 +1,10 @@
 import os from "node:os";
 import path from "node:path";
-import { HUB_CMD_RE, HUB_TOOL_RE } from "@workmesh/core";
+import { HUB_CMD_RE, HUB_TOOL_RE } from "@workmesh/protocol";
 
 /**
  * Pure reductions from raw hook facts to the metadata the hub may receive
- * (Bullpen SPEC §3.3). Each function returns only fixed-vocabulary strings,
+ * (docs/SPEC.md §3.3). Each function returns only fixed-vocabulary strings,
  * ids, or values that already passed an allow list.
  */
 

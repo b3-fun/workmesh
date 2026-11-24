@@ -13,7 +13,8 @@
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "paths": {
-      "@workmesh/core": ["../core/src/index.ts"]
+      "@workmesh/core": ["../core/src/index.ts"],
+      "@workmesh/protocol": ["../protocol/src/index.ts"]
     }
   }
 }

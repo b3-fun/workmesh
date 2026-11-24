@@ -2,8 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { SessionStore, hubIngestRequestSchema } from "@workmesh/core";
-import type { HubIngestRequest, HubProjectRule, HubShareLevel, SessionEvent } from "@workmesh/core";
+import { SessionStore } from "@workmesh/core";
+import { hubIngestRequestSchema } from "@workmesh/protocol";
+import type { SessionEvent } from "@workmesh/core";
+import type { HubIngestRequest, HubProjectRule, HubShareLevel } from "@workmesh/protocol";
 import { mapHookInput } from "../src/adapters/claude-code";
 import { mapCodexHookInput } from "../src/adapters/codex";
 import { HubForwarder } from "../src/hub/forwarder";
@@ -55,7 +57,7 @@ function forbidden(): string[] {
     s.awsSecret,
     s.npm.slice(4),
     s.linear.slice(8),
-    s.bullpen.slice(3),
+    s.hubToken.slice(3),
     s.relayDevice.slice(3),
     s.google.slice(4),
     s.hf.slice(3),
@@ -81,7 +83,7 @@ function run(share: HubShareLevel) {
   let now = NOW;
   const fwd = new HubForwarder({
     url: "https://hub.test",
-    token: SECRETS.bullpen,
+    token: SECRETS.hubToken,
     rule: RULE,
     listSessions: () => store.list(),
     getSession: (k) => store.get(k),
@@ -116,7 +118,7 @@ function run(share: HubShareLevel) {
       `Deploy with ANTHROPIC_API_KEY=${s.anthropic} and OPENAI_API_KEY="${s.openai}".`,
       `The db is postgres://admin:${s.pgPassword}@db.internal:5432/app, password is ${s.pgPassword}.`,
       `Use my GitHub token ${s.ghp} (and ${s.githubPat}), npm ${s.npm}, Linear ${s.linear}.`,
-      `curl -H "Authorization: Bearer ${s.bullpen}" https://bullpen.b3os.org/relay/ingest`,
+      `curl -H "Authorization: Bearer ${s.hubToken}" https://workmesh.b3os.org/relay/ingest`,
       `export AWS_ACCESS_KEY_ID=${s.awsId} AWS_SECRET_ACCESS_KEY=${s.awsSecret}`,
       `Here is the deploy key:\n${PEM}`,
       `Files are in ${home}/Documents/b3 and my password hunter2 for B3-7166.`,

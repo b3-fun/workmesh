@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { truncateHead } from "@workmesh/core";
 import {
   HUB_DESC_MAX,
   HUB_MAX_BODY_BYTES,
@@ -14,17 +15,15 @@ import {
   hubIngestRequestSchema,
   hubSessionUpsertSchema,
   isRepoRelativePath,
-  truncateHead,
-} from "@workmesh/core";
+} from "@workmesh/protocol";
+import type { AgentSession, SessionEvent } from "@workmesh/core";
 import type {
-  AgentSession,
   HubActivityEvent,
   HubEventKind,
   HubProjectRule,
   HubSessionUpsert,
   HubShareLevel,
-  SessionEvent,
-} from "@workmesh/core";
+} from "@workmesh/protocol";
 import type { z } from "zod";
 import { GitResolver } from "./git";
 import { scrubText } from "./redact";
@@ -49,7 +48,7 @@ import {
 } from "./rules";
 
 /**
- * HubForwarder: the daemon's "hub forward" output (Bullpen SPEC §3). It sees
+ * HubForwarder: the daemon's "hub forward" output (docs/SPEC.md §3). It sees
  * every applied SessionEvent (with its local-only detail) and the SessionStore,
  * reduces them to the hub's metadata fields under the §3.3 inclusion rules,
  * and POSTs batches to `<hub>/relay/ingest`.
@@ -66,7 +65,7 @@ import {
  */
 
 export interface HubForwarderOptions {
-  /** Hub base URL, e.g. https://bullpen.b3os.org */
+  /** Hub base URL, e.g. https://workmesh.b3os.org */
   url: string;
   /** Device token (bp_…). */
   token: string;

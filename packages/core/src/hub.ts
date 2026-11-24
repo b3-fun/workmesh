@@ -10,6 +10,8 @@ import { z } from "zod";
 export const HUB_WIRE_VERSION = 1;
 /** Max events in one ingest request. */
 export const HUB_MAX_EVENTS_PER_REQUEST = 500;
+/** Max session upserts in one ingest request. */
+export const HUB_MAX_SESSIONS_PER_REQUEST = 1000;
 /** Max ingest body size the hub accepts. */
 export const HUB_MAX_BODY_BYTES = 256 * 1024;
 /** Hub device tokens: bp_ + 64 lowercase hex, shown once. */
@@ -21,8 +23,28 @@ export type HubSessionState = z.infer<typeof hubSessionStateSchema>;
 export const hubEventKindSchema = z.enum(["start", "prompt", "tool", "waiting", "idle", "end"]);
 export type HubEventKind = z.infer<typeof hubEventKindSchema>;
 
+/** Program plus at most one subcommand word (the hub enforces the same pattern). */
+export const HUB_CMD_RE = /^[a-z0-9][a-z0-9._-]{0,30}( [a-z][a-z0-9:-]{0,24})?$/;
+export const HUB_ISSUE_RE = /^[A-Za-z][A-Za-z0-9]{0,9}-\d{1,6}$/;
+export const HUB_REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+export const HUB_PR_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
+export const HUB_TOOL_RE = /^[\w.:-]+$/;
+
+/** Repo-relative only: never absolute, home-relative, or escaping the repo. */
+export function isRepoRelativePath(p: string): boolean {
+  return (
+    p.length > 0 &&
+    !p.startsWith("/") &&
+    !p.startsWith("~") &&
+    !p.startsWith("\\") &&
+    !/^[A-Za-z]:[\\/]/.test(p) &&
+    !p.split(/[\\/]/).includes("..")
+  );
+}
+
 const epochMs = z.number().int().nonnegative();
-const issueList = z.array(z.string().min(1).max(40)).max(20);
+const issueList = z.array(z.string().max(24).regex(HUB_ISSUE_RE)).max(20);
+const repoName = z.string().max(200).regex(HUB_REPO_RE);
 
 export const hubSessionUpsertSchema = z.strictObject({
   key: z.string().min(1).max(200),
@@ -34,7 +56,7 @@ export const hubSessionUpsertSchema = z.strictObject({
   agents: z.number().int().min(1).max(999).optional(),
   phase: z.string().max(60).optional(),
   orchestrator: z.string().max(200).optional(),
-  repo: z.string().max(200).optional(),
+  repo: repoName.optional(),
   branch: z.string().max(200).optional(),
   issues: issueList.optional(),
   startedAt: epochMs,
@@ -48,14 +70,14 @@ export const hubActivityEventSchema = z.strictObject({
   key: z.string().min(1).max(200),
   ts: epochMs,
   kind: hubEventKindSchema,
-  tool: z.string().max(64).optional(),
+  tool: z.string().max(64).regex(HUB_TOOL_RE).optional(),
   label: z.string().max(200).optional(),
-  path: z.string().max(400).optional(),
-  cmd: z.string().max(60).optional(),
-  repo: z.string().max(200).optional(),
+  path: z.string().max(400).refine(isRepoRelativePath, "path must be repo-relative").optional(),
+  cmd: z.string().max(60).regex(HUB_CMD_RE).optional(),
+  repo: repoName.optional(),
   branch: z.string().max(200).optional(),
   issues: issueList.optional(),
-  pr: z.string().max(300).optional(),
+  pr: z.string().max(300).regex(HUB_PR_RE).optional(),
   ok: z.boolean().optional(),
 });
 export type HubActivityEvent = z.infer<typeof hubActivityEventSchema>;
@@ -64,7 +86,7 @@ export const hubIngestRequestSchema = z.strictObject({
   v: z.literal(HUB_WIRE_VERSION),
   sentAt: epochMs,
   full: z.boolean(),
-  sessions: z.array(hubSessionUpsertSchema),
+  sessions: z.array(hubSessionUpsertSchema).max(HUB_MAX_SESSIONS_PER_REQUEST),
   events: z.array(hubActivityEventSchema).max(HUB_MAX_EVENTS_PER_REQUEST),
 });
 export type HubIngestRequest = z.infer<typeof hubIngestRequestSchema>;

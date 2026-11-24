@@ -131,6 +131,12 @@ export class SessionStore {
     this.sessions.set(key, { ...s, name: meta.name });
   }
 
+  /** One live session by key (a copy), or undefined. */
+  get(key: string): AgentSession | undefined {
+    const s = this.sessions.get(key);
+    return s ? { ...s } : undefined;
+  }
+
   /** Live sessions, unsorted. Read-only view for adapters (liveness probes). */
   list(): readonly AgentSession[] {
     return [...this.sessions.values()];

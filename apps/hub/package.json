@@ -1,17 +1,17 @@
 {
-  "name": "bullpen",
+  "name": "@workmesh/hub",
   "private": true,
   "version": "0.1.0",
+  "description": "Workmesh team hub: Cloudflare Worker + Durable Object, and the board it serves",
   "type": "module",
-  "packageManager": "pnpm@11.28.10",
   "scripts": {
-    "dev": "pnpm build && wrangler dev",
+    "dev": "npm run build && wrangler dev",
     "dev:board": "vite",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.board.json && tsc -p tsconfig.scripts.json && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "cf-typegen": "wrangler types --strict-vars=false --env-file /dev/null",
-    "deploy": "pnpm build && wrangler deploy",
+    "deploy": "npm run build && wrangler deploy",
     "fake-relay": "node scripts/fake-relay.ts"
   },
   "dependencies": {

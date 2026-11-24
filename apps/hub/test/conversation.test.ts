@@ -93,7 +93,7 @@ describe("conversation devices", () => {
 
 describe("metadata devices", () => {
   it("keep no text: prompts lose it, messages are dropped, descriptions are cleared", async () => {
-    const { token, deviceId } = await pairDevice("an@npclabs.org", "an-meta");
+    const { token, deviceId } = await pairDevice("an@example.com", "an-meta");
     const res = await ingest(
       token,
       batch({

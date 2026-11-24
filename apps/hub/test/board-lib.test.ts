@@ -77,7 +77,7 @@ const ev = (over: Partial<HubEvent>): HubEvent => ({
   deviceId: "dev_A",
   id: `e${++i}`,
   hubKey: "dev_A:claude-code:s",
-  email: "sean@npclabs.org",
+  email: "sean@example.com",
   ts: i,
   kind: "tool",
   tool: null,

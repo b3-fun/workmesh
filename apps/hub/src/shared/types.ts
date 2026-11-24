@@ -149,7 +149,7 @@ export interface PairInfo {
   approvedBy: string | null;
 }
 
-/** "an@npclabs.org" -> "An". */
+/** "an@example.com" -> "An". */
 export function displayName(email: string): string {
   const local = email.split("@")[0] ?? email;
   return local.charAt(0).toUpperCase() + local.slice(1);

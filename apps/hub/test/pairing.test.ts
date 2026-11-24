@@ -21,13 +21,13 @@ describe("pairing", () => {
     const info = await call(`/api/pair/${p.code}`);
     expect(await info.json()).toMatchObject({ code: p.code, machine: "seans-mac-studio", status: "pending" });
 
-    const a = await approve(p.code, "sean@npclabs.org");
+    const a = await approve(p.code, "sean@example.com");
     expect(a.status).toBe(200);
 
     const first = (await (await poll(p)).json()) as Record<string, unknown>;
     expect(first.status).toBe("complete");
     expect(first.deviceToken).toMatch(HUB_DEVICE_TOKEN_RE);
-    expect(first.person).toEqual({ email: "sean@npclabs.org", name: "Sean" });
+    expect(first.person).toEqual({ email: "sean@example.com", name: "Sean" });
     expect(first.project).toEqual({
       id: "b3",
       name: "B3",
@@ -75,11 +75,11 @@ describe("pairing", () => {
   it("refuses unknown codes and a second approver", async () => {
     expect((await approve("ZZZZ-0000")).status).toBe(404);
     const p = await startPairing();
-    expect((await approve(p.code, "an@npclabs.org")).status).toBe(200);
-    expect((await approve(p.code, "an@npclabs.org")).status).toBe(200);
-    expect((await approve(p.code, "gio@npclabs.org")).status).toBe(409);
+    expect((await approve(p.code, "an@example.com")).status).toBe(200);
+    expect((await approve(p.code, "an@example.com")).status).toBe(200);
+    expect((await approve(p.code, "gio@example.com")).status).toBe(409);
     const done = (await (await poll(p)).json()) as { person: { email: string } };
-    expect(done.person.email).toBe("an@npclabs.org");
+    expect(done.person.email).toBe("an@example.com");
   });
 
   it("validates the start body", async () => {

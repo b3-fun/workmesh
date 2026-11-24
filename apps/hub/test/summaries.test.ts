@@ -289,7 +289,7 @@ describe("caps and failures", () => {
 
 describe("metadata-only sessions", () => {
   it("are summarized from tools, paths and commands, never from text", async () => {
-    const { token, deviceId } = await pairDevice("an@npclabs.org", "an-meta");
+    const { token, deviceId } = await pairDevice("an@example.com", "an-meta");
     const k = key();
     await ingest(
       token,
@@ -314,7 +314,7 @@ describe("metadata-only sessions", () => {
 
 describe("digest", () => {
   it("a viewer back after 30 min gets a digest built off the request path, then served from cache", async () => {
-    const viewer = `viewer${++n}@npclabs.org`;
+    const viewer = `viewer${++n}@example.com`;
     const as = { "x-dev-user-email": viewer };
     const { token } = await pairDevice();
     const k = key();

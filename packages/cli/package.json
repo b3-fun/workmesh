@@ -8,11 +8,11 @@
   "homepage": "https://agentblip.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/b3-fun/agentblip.git",
+    "url": "git+https://github.com/b3-fun/workmesh.git",
     "directory": "packages/cli"
   },
   "bugs": {
-    "url": "https://github.com/b3-fun/agentblip/issues"
+    "url": "https://github.com/b3-fun/workmesh/issues"
   },
   "bin": {
     "workmesh": "./dist/index.js",

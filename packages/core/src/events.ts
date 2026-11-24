@@ -41,7 +41,7 @@ export const DETAIL_LIMITS = {
  * Raw facts about one hook call, filled by the Claude Code and Codex hook
  * mappers. LOCAL ONLY: it travels hook → daemon over loopback and is never
  * stored on a session, formatted into a Slack status, or sent to the
- * agentblip relay. The hub forwarder reduces it to the hub's metadata fields
+ * Workmesh relay. The hub forwarder reduces it to the hub's metadata fields
  * (tool name, repo-relative path, allow-listed command, issue ids, PR URL).
  */
 export const sessionEventDetailSchema = z.object({

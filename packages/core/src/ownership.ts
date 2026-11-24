@@ -1,7 +1,7 @@
 import type { SlackStatus } from "./events";
 
 /**
- * Status ownership: agentblip must never fight the human (or another app)
+ * Status ownership: Workmesh must never fight the human (or another app)
  * for the Slack status field. Before every push the daemon reads the current
  * status and runs this pure state machine to decide what to do.
  *

@@ -29,17 +29,17 @@
     <circle cx="96" cy="150" r="19" fill="none" stroke="#2fe373" stroke-opacity="0.5" stroke-width="1.5"/>
     <circle cx="96" cy="150" r="30" fill="none" stroke="#2fe373" stroke-opacity="0.22" stroke-width="1.5"/>
 
-    <text x="150" y="166" font-size="60" font-weight="700" letter-spacing="-1.5" fill="#f4f7f5">agentblip</text>
+    <text x="150" y="166" font-size="60" font-weight="700" letter-spacing="-1.5" fill="#f4f7f5">Workmesh</text>
 
-    <text x="66" y="238" font-size="23" fill="#9db0a6">Your Slack status, synced with your AI agents.</text>
-    <text x="66" y="276" font-size="17" fill="#5f7168">Local Claude Code + Codex sessions become your team's presence.</text>
+    <text x="66" y="238" font-size="23" fill="#9db0a6">Your AI agents, live in Slack and on one board.</text>
+    <text x="66" y="276" font-size="17" fill="#5f7168">Claude Code + Codex sessions, visible to your whole team.</text>
 
     <!-- install chip -->
     <g transform="translate(66 316)">
-      <rect width="392" height="46" rx="10" fill="#0e1512" stroke="#1c2a24"/>
+      <rect width="452" height="46" rx="10" fill="#0e1512" stroke="#1c2a24"/>
       <text x="18" y="30" font-size="16" fill="#3a8f5f">$</text>
-      <text x="36" y="30" font-size="16" fill="#cdd8d2">npm i -g agentblip</text>
-      <text x="238" y="30" font-size="16" fill="#4a5a52">&amp;&amp; agentblip setup</text>
+      <text x="36" y="30" font-size="16" fill="#cdd8d2">npm i -g @b3os/workmesh</text>
+      <text x="272" y="30" font-size="16" fill="#4a5a52">&amp;&amp; workmesh setup</text>
     </g>
 
     <!-- meta -->
@@ -68,7 +68,7 @@
     </g>
     <g transform="translate(24 174)">
       <circle cx="8" cy="0" r="7" fill="#2fe373"/>
-      <text x="30" y="5" font-size="18" fill="#e7efea">agentblip: finalizing CI/CD</text>
+      <text x="30" y="5" font-size="18" fill="#e7efea">workmesh: finalizing CI/CD</text>
     </g>
     <g transform="translate(24 222)">
       <circle cx="8" cy="0" r="7" fill="#f5a524"/>

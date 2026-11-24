@@ -16,7 +16,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0 See | Every B3 session on one live board; metadata only; Access login; pairing | **done** (11-24) |
 | v0.2 Conversation + summaries | Prompts, agent messages, tool descriptions, turn durations; now lines, turn summaries, waiting reasons, digest (OpenRouter) | **done** on the hub; relay 0.7.0 merged; first `@b3os/workmesh` publish in progress |
 | v0.3 B3OS look | Board rebuilt from the B3OS console component library, exactly | **done** (11-24) |
-| v0.4 One system | Monorepo, rename to Workmesh, shared protocol package | **in progress** (relay rename on `workmesh-rename`) |
+| v0.4 One system | Monorepo, rename to Workmesh, shared protocol package | **done** (11-24); hub deploys from CI next |
 | v0.5 Multiplayer menu bar | The team in the menu bar | **next** |
 | v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **next** |
 | v1 Coordinate | Claims, file leases, hold, Linear agent identities | later |
@@ -31,15 +31,23 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
   reachable at 390 px.
 - Everything visible says Workmesh; no model or provider names in the UI.
 
-### v0.4 One system
-- Move the hub and board into this repo: `apps/hub` (Worker + Durable Object), `apps/board` (React), with git history.
-- One protocol package (`packages/protocol`): the wire schemas both the relay and the hub validate against. One SPEC.
-- Rename: repo `b3-fun/workmesh` (done), npm `@b3os/workmesh` (published from the npclabs account; the `agentblip`
-  command stays as an alias), `Workmesh.app` in the menu bar. Hub at `workmesh.b3os.org` (the bare workmesh domains are
-  taken); agentblip.com points here. Relay side renamed on branch `workmesh-rename`: code, docs, CLI dirs and env, menu
-  bar app, site copy.
-- Archive `b3-fun/bullpen` with a pointer here. `bullpen.b3os.org` stays as B3's hosted hub.
-- One CI: relay tests, hub tests, board build; hub deploys from `main`.
+### v0.4 One system (done 11-24)
+- The hub and board live in this repo under `apps/hub` (`@workmesh/hub`), with bullpen's 13 commits rewritten under
+  that prefix (`Imported-From` trailers; `docs/research.html` filtered out, it stays in Linear). The board stays inside
+  `apps/hub` rather than `apps/board`: it is built into the Worker's static assets and shares its types.
+- npm workspaces with one root lockfile (pnpm gone); one zod for relay, core, protocol and hub.
+- One protocol package (`packages/protocol`, `@workmesh/protocol`): pairing, ingest body, sessions, events, share
+  levels and limits, strict to send and tolerant to accept, from the same field rules; the copies in core and the hub
+  are gone. One SPEC (`docs/SPEC.md`), one CONTRIBUTING, the hub's agent rules in CLAUDE.md.
+- Rename: repo `b3-fun/workmesh`, npm `@b3os/workmesh` (the `agentblip` command stays as an alias), `Workmesh.app`,
+  and the hub at `workmesh.b3os.org` (the bare workmesh domains are taken) with `bullpen.b3os.org` kept as an alias so
+  paired relays keep working. The Worker script stays `bullpen` (its Durable Object holds the pairings).
+  CLI, core and protocol at 0.8.0 (not yet published).
+- Archive `b3-fun/bullpen` with a pointer here, once this is on `main`.
+- One CI: relay, core, protocol and hub tests, every typecheck, site, CLI and board builds.
+- **Next:** hub deploys from `main` in CI. Needs a Workers deploy token scoped to the NPC Labs account as its own
+  repo secret (the existing `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` pair, from July, is agentblip.com's
+  deploy); until then `npm run deploy -w @workmesh/hub` by hand.
 
 ### v0.5 Multiplayer menu bar
 - The menu bar shows the team, not only me: what needs me (my waiting agents, asks addressed to me), each person
@@ -85,8 +93,12 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
   are read, never written: the `agentblip` command alias, a one-time copy of config and state from the agentblip dirs,
   `AGENTBLIP_*` env fallbacks, hook repointing. agentblip.com and its Worker, routes and KV keep their names so the
   live site and its Slack device records survive.
+- 11-24 One public monorepo now (Sean): hub history imported under `apps/hub` without the research document (it quotes
+  teammates' Slack messages); one wire package with a strict reading for relays and a tolerant one for the hub; hub
+  served at workmesh.b3os.org and bullpen.b3os.org from the same `bullpen` Worker; hub deploys stay manual until CI
+  has an NPC Labs token.
 
 ## Links
 
 - Linear (project "B3OS Beta"): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2).
-- Live hub: https://bullpen.b3os.org
+- Live hub: https://workmesh.b3os.org (also https://bullpen.b3os.org)

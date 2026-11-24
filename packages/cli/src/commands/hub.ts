@@ -87,6 +87,8 @@ export interface PairResult {
 export interface PairOptions {
   machine: string;
   client?: string;
+  /** Sharing level, when already chosen: the hub's approve page names it (SPEC §8). */
+  share?: HubShareLevel;
   fetchImpl?: typeof fetch;
   /** Called once the hub hands out a code: show it, open the browser. */
   onCode?: (pair: HubPairStartResponse) => void;
@@ -112,6 +114,7 @@ export async function pairWithHub(hubUrl: string, opts: PairOptions): Promise<Pa
   const startRes = await postJson(fetchImpl, `${hubUrl}/relay/pair/start`, {
     machine: opts.machine,
     client: opts.client ?? `agentblip/${pkg.version}`,
+    ...(opts.share ? { share: opts.share } : {}),
   });
   if (startRes.status === 429) {
     const after = startRes.headers.get("retry-after");
@@ -209,9 +212,13 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
 
   let spin: ReturnType<typeof spinner> | undefined;
   let result: PairResult;
+  // Known before pairing (flag, or this machine's earlier choice for this hub):
+  // tell the hub so its approve page can say what will be shared.
+  const knownShare = flagShare ?? (config.hub?.url === hubUrl ? config.hub.share : undefined);
   try {
     result = await pairWithHub(hubUrl, {
       machine,
+      share: knownShare,
       onCode: (pair) => {
         console.log(`  pairing code: ${bold(pair.code)}`);
         console.log(`  approve it in your browser: ${cyan(pair.verifyUrl)}`);

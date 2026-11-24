@@ -102,6 +102,18 @@ describe("pairWithHub (SPEC §3.1)", () => {
     expect(result).toEqual({ deviceId: start.deviceId, deviceToken: TOKEN, person: { email: "sean@npclabs.org", name: "Sean" }, project: PROJECT });
   });
 
+  it("names the sharing level at pair/start when it is known", async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    await pairWithHub("https://hub", {
+      machine: "m",
+      client: "agentblip/0.7.0",
+      share: "conversation",
+      fetchImpl: fakeFetch([{ status: "complete", deviceToken: TOKEN, project: PROJECT }], calls),
+      wait: async () => {},
+    });
+    expect(calls[0]?.body).toEqual({ machine: "m", client: "agentblip/0.7.0", share: "conversation" });
+  });
+
   it("fails on expiry and on a malformed token", async () => {
     await expect(
       pairWithHub("https://hub", { machine: "m", fetchImpl: fakeFetch([{ status: "expired" }]), wait: async () => {} }),

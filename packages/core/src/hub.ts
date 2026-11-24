@@ -147,6 +147,8 @@ export type HubProjectRule = z.infer<typeof hubProjectRuleSchema>;
 export const hubPairStartRequestSchema = z.object({
   machine: z.string().min(1).max(120),
   client: z.string().min(1).max(64),
+  /** The level this machine will share, when known before pairing, so the approve page can name it. */
+  share: hubShareLevelSchema.optional(),
 });
 
 /** POST /relay/pair/start — response. */

@@ -233,3 +233,81 @@ dot). Radix primitives for dialogs and menus; no native `alert`/`confirm`. Works
 
 An opens `https://bullpen.b3os.org`, signs in with Access, and sees every B3 session Sean is running, each
 tool call within 5 seconds, with nothing from non-B3 repos and no prompt or file text anywhere in the hub's storage.
+
+---
+
+# v0.2: conversation view and summaries (Sean, 2026-11-24)
+
+Sean: "use a small llm or something to help summarize ... to improve the UX" and "show way more detail, like the
+prompts + updates as we go", like Claude Code's own transcript (prompts, the agent's text updates, grouped tool calls
+such as "Ran 2 shell commands", turn durations).
+
+## 8. Sharing levels (per device)
+
+| Level | What leaves the machine, beyond §3.3 metadata |
+|---|---|
+| `metadata` | Nothing more (v0 behavior). |
+| `conversation` | Prompt text, the agent's text messages, a one-line description per tool call, turn ends with duration. |
+
+- Chosen at `agentblip hub connect` (`--share conversation|metadata`; in a TTY without the flag, ask, default
+  `conversation` when the hub's project rule says `defaultShare: "conversation"`, which project `b3` does). Changeable
+  any time with `agentblip hub share <level>`. The approve page and the CLI both state plainly what the chosen level
+  shares, and the board marks metadata-only people.
+- Only shared sessions (§3.3 rules 1–4) send anything. A session that becomes shared mid-way sends conversation text
+  only from that moment on; nothing written before it was shared is ever sent.
+- Every ingest body carries `share`; the hub stores it per device and drops any text fields from a `metadata` device.
+
+## 9. Relay additions (agentblip)
+
+- **Redaction, on the machine, before anything is queued:** API keys and tokens (Anthropic `sk-ant-…`, OpenAI `sk-…`,
+  GitHub `ghp_/gho_/ghu_/ghs_/ghr_` and `github_pat_`, Slack `xox?-`, AWS `AKIA…`, npm `npm_…`, Linear `lin_api_…`,
+  Bullpen `bp_…`), JWTs, PEM private key blocks, `Bearer <token>`, `key|secret|token|password = value` pairs, URLs with
+  embedded credentials, and long high-entropy strings next to those words → `[redacted]`. Absolute home paths →
+  `~/…`. A unit-tested list; a privacy test feeds a corpus of real-looking secrets through the whole pipeline.
+- **Prompts:** from UserPromptSubmit `prompt` (Claude Code) and the Codex equivalent. Cap 4,000 chars (`truncated`).
+- **Agent messages:** tail the session transcript (`transcript_path` from the hook payload; Codex rollout file) from
+  a saved byte offset, read on every hook event for a shared session and on Stop, and emit each assistant text block
+  (never thinking, never tool results) as a `message` event. Cap 4,000 chars each. Main thread only in this pass;
+  subagent transcripts are skipped.
+- **Tool descriptions (`desc`, ≤ 200):** Bash `description`; Agent/Task `description`; WebSearch query; WebFetch host;
+  Skill name; MCP tools as `server · tool`. Paths and `cmd` as in §3.3.
+- **Turns:** a `turn` event at Stop with `durationMs` (from the transcript's turn-duration record when present, else
+  prompt → stop).
+
+## 10. Wire additions (still `v: 1`; all optional, old relays keep working)
+
+- Body: `share: "metadata" | "conversation"`.
+- `ActivityEvent.kind` adds `message` and `turn`.
+- `ActivityEvent` adds `text` (≤ 4,000; on `prompt` and `message`), `truncated` (bool), `desc` (≤ 200), `durationMs`.
+- The relay splits batches to stay under 256 KB.
+
+## 11. Summaries (hub)
+
+- Provider: Claude Haiku 5.5 (`claude-haiku-5-5`) through `@anthropic-ai/sdk` when the Worker secret
+  `ANTHROPIC_API_KEY` is set; otherwise Cloudflare Workers AI through an `AI` binding (a current instruct model from
+  the account's catalog that supports JSON output). One interface, chosen at runtime, logged on the board's footer.
+- Outputs, all plain text, stored in the Durable Object and pushed to boards:
+  1. **Now line** per session (≤ 90 chars): what the agent is doing right now, e.g. "Publishing agentblip 0.6.0;
+     waiting on Sean's security key". Refreshed when a turn ends, when the state changes, and at most every 30 s
+     while working with new events.
+  2. **Turn summary** (≤ 2 short sentences) when a turn ends: asked → did → result or blocker.
+  3. **Waiting reason** (≤ 80 chars) when a session enters `waiting`: what it needs from its person.
+  4. **Digest** per viewer: "Since you looked" across sessions, built from turn summaries since the viewer's last
+     visit (when > 30 min), cached 10 minutes.
+- Metadata-only sessions are summarized from tools, paths, commands and issue ids alone.
+- Guards: per-session minimum interval, skip when nothing new, a daily cap per project (default 3,000 calls), and
+  graceful degradation (no summary, never an error on the board) on refusal, rate limit or outage.
+- Transcript text is untrusted input: the system prompt treats it as data to summarize, output is structured JSON,
+  and the board renders it as text only.
+
+## 12. Board v0.2
+
+- **Conversation view** for a selected session, modeled on Claude Code's transcript: header (person, session, repo,
+  branch, state, now line, issues, PRs); turns in order, each with the prompt (full text, collapsible when long), the
+  turn summary, the agent's messages as paragraphs (safe markdown subset: code spans and blocks, bold, lists, links;
+  no raw HTML), consecutive tool calls folded into one line ("Ran 3 shell commands · Edited 2 files · Called
+  claude-in-chrome 2 times") that expands to each call's tool, desc, path or cmd and failure, and a closing line
+  "Worked for 1m 34s · 4:06 PM". New items stream in; the view follows the bottom unless the reader scrolled up.
+- **Lanes** show the now line (falling back to the activity label); **Waiting** shows the waiting reason.
+- **Digest strip** at the top when there is one; dismissible.
+- **Metadata-only** sessions show the tool timeline and say the person shares activity only.

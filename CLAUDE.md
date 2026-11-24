@@ -11,7 +11,7 @@
 - **Repo**: github.com/seangeng/agentblip (open source, MIT)
 - **npm**: `agentblip` (CLI)
 - **Status**: building
-- **Last updated**: 2026-11-24
+- **Last updated**: 2026-11-24 (0.7.0 conversation sharing)
 
 ---
 
@@ -69,7 +69,7 @@ Any tool (curl) ───┼─────────────────�
 │       └── src/
 │           ├── commands/      # setup, start, status, emit, hook, pause, unlink, doctor, hub
 │           ├── adapters/      # claude-code (hooks), codex (hooks.json + notify + watcher), workflow (ultracode journal watcher), detail (local-only hook facts)
-│           ├── hub/           # hub forward: git (.git reader), rules (SPEC §3.3 reductions), forwarder (batching/retry)
+│           ├── hub/           # hub forward: git (.git reader), rules (SPEC §3.3 reductions), redact (SPEC §9), transcript (tailer), forwarder (batching/retry)
 │           └── sinks/         # relay, slack-direct, console
 ├── apps/
 │   └── menubar/               # native SwiftUI macOS menu bar app (thin daemon client)
@@ -119,6 +119,23 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - Pairing: `agentblip hub connect <url>` (device code). Token + project rule live in `config.json` (0600) under `hub`;
   a malformed `hub` section reads as unpaired instead of breaking the Slack config.
 - Codex: `agentblip setup` merges `~/.codex/hooks.json`; `hook codex-hooks` maps it. Codex needs `/hooks` trust once.
+- Sharing level (0.7.0, SPEC §8-10): `hub.share` in config (absent = `metadata`), set by `hub connect --share` (a
+  terminal asks, suggesting the earlier choice, else the project's `defaultShare`, else metadata; no terminal keeps
+  the earlier choice or metadata) and `hub share <level>`. Every ingest body carries `share`.
+- At `conversation`, only for shared sessions whose cwd is in a shared repo (rule-4 orchestrators stay metadata):
+  prompt `text` (from UserPromptSubmit), `message` events (assistant text blocks tailed from the transcript),
+  `desc` on tool events, `turn` events with `durationMs`. `hub/redact.ts` scrubs every text and desc before it is
+  queued; home paths become `~`. Caps: text 4,000 (`truncated`), desc 200.
+- Transcript tailing (`hub/transcript.ts`): a tail starts at the file's size when the session becomes
+  conversation-shared (never earlier text); reads run async after `observe()` returns (setImmediate), complete
+  lines only, ≤ 2 MB per read, oversized lines skipped, truncation or a new inode restarts at the new end. Claude
+  Code: `transcript_path`, `assistant` text blocks (not thinking/tool_use, not sidechain, not `isApiErrorMessage`),
+  `system`/`turn_duration` (written just after the Stop hook, so a Stop waits up to 5 s for it, else prompt → stop).
+  Codex: `transcript_path` or `~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` (UUIDv7 → its day), `response_item`
+  assistant `output_text`, `event_msg` `task_complete.duration_ms`; threads only in `thread_history_*.sqlite` fall
+  back to Stop's `last_assistant_message`.
+- Batching is by size (< 256 KB, ≤ 4 requests per tick while a backlog drains, 16 MB buffer). A hub that 400s the
+  new kinds gets message/turn events held back 10 min while everything else still flows.
 
 ## KV Schema (binding: STORE)
 
@@ -154,6 +171,8 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 | 2026-11-24 | Hub forward (0.6.0): local-only `detail` on SessionEvent + `HubForwarder` beside the pusher; relay schemas mirror the hub's validation | Bullpen needs per-tool-call metadata, but the agentblip relay's privacy-by-construction must hold. Detail never reaches a session, Slack or the relay; the forwarder reduces it to allow-listed metadata, and strict schemas make extra fields unsendable |
 | 2026-11-24 | Codex lifecycle hooks via `~/.codex/hooks.json` (merge, never overwrite), notify + watcher kept as fallbacks | Codex 0.16x has Claude-Code-style hooks; payload fields verified against the JSON schemas embedded in the codex binary. Gives Codex tool-level activity and a real waiting state (`PermissionRequest`, `request_user_input`) |
 | 2026-11-24 | Git resolution reads `.git` files directly (HEAD, commondir, config) with a 5 s cache | The forwarder sits in the daemon's request path; spawning `git` per event would block it |
+| 2026-11-24 | Conversation sharing (0.7.0): opt-in `conversation` level; text only from cwd-shared sessions, from the moment they are shared; redaction on the machine before queueing | Sean asked for prompts and agent updates on the board. Rule-4 orchestrators (cwd outside shared repos) work on other repos too, so their text stays home; starting the transcript tail at the file's current end makes "nothing before sharing" structural, not a filter |
+| 2026-11-24 | Redaction tuned against real agent text (shapes only) | A pattern list alone mangled markdown labels, secret names, doc links and timestamps; a local audit over ~16.7k real assistant blocks found them without copying any content |
 | 2026-11-23 | Menu bar 0.2: grouped live list, SF Symbol template icon (orange only for needs-you), row actions, snooze; all new data via `/state` fields and daemon endpoints | Keeps the thin-client rule; roadmap in apps/menubar/README.md |
 
 ## Cloudflare Resources
@@ -180,7 +199,8 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - [x] core: events/aggregate/format/redact/slack + 19 tests
 - [x] Worker relay: pairing (provisional records, delivered-grace, code normalization), Slack OAuth, status API, rate limits — 52 tests
 - [x] CLI: daemon (bearer-secret loopback API), claude-code + codex adapters, relay/slack/console sinks, 10 commands — 99 tests
-- [x] 0.6.0 (branch `hub-forward`, not merged/published): hub forward + `hub` commands + Codex hooks — CLI 307 tests, core 53, worker 62
+- [x] 0.6.0 (merged): hub forward + `hub` commands + Codex hooks — CLI 307 tests, core 53, worker 62
+- [x] 0.7.0 (branch `hub-conversation`, not merged/published): sharing levels, redaction, prompt/message/desc/turn capture, transcript tailing
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain
 - [x] GitHub github.com/seangeng/agentblip public, CI + push-to-deploy green (secrets set)
 - [x] E2E smoke: daemon lifecycle + live relay pairing/auth verified

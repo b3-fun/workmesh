@@ -309,12 +309,14 @@ schema, event semantics, staleness rules, and adapter-writing guide:
 Slack shows *that* you have agents running. A hub shows your whole team's agent
 sessions on one live board: who is running what, in which repo and branch, which ones
 wait on a person, and each tool call as one line. agentblip is the relay: the daemon
-forwards a small set of metadata to a hub you pair with, next to (never instead of)
+forwards what you choose to share to a hub you pair with, next to (never instead of)
 the Slack status. [Bullpen](https://bullpen.b3os.org) is the first hub.
 
 ```bash
-agentblip hub connect https://bullpen.b3os.org   # shows a code, opens the browser to approve
-agentblip hub status                             # paired? last send, queued, dropped, shared sessions
+agentblip hub connect https://bullpen.b3os.org   # shows a code, opens the browser to approve, asks what to share
+agentblip hub connect https://bullpen.b3os.org --share conversation   # or --share metadata
+agentblip hub share conversation                 # change it any time (no argument: show it)
+agentblip hub status                             # paired? sharing level, last send, queued, dropped, shared sessions
 agentblip hub include ~/work/shared-notes        # also share this folder
 agentblip hub exclude ~/work/acme-private        # never share this, whatever its remote
 agentblip hub disconnect
@@ -327,21 +329,46 @@ Sessions anywhere else send nothing. A session started outside a shared repo (an
 orchestrator in `~/Documents`) shares its state, prompts (as "sent a message", no
 text), file events in shared repos, and shell commands that name a path inside one.
 
-**What leaves your machine.** Only: session state and agentblip's own activity label,
-tool names, repo-relative paths inside shared repos, `owner/name` and branch, the
-program and one subcommand of a shell command for a fixed allow list (`cargo test`,
-`git commit`, `gh pr`), issue ids for the configured keys (`B3-7166`), and PR links on
-shared repos. Never prompt text, assistant text, tool input or output, file contents,
-command arguments, environment variables or absolute paths. Every request is built
-from strict schemas, so a field outside that list can't be sent.
+**Sharing levels.** Each machine picks one, at `hub connect` or later with `hub share`:
+
+| Level | What leaves your machine |
+|---|---|
+| `metadata` | Session state and agentblip's own activity label, tool names, repo-relative paths inside shared repos, `owner/name` and branch, the program and one subcommand of a shell command for a fixed allow list (`cargo test`, `git commit`, `gh pr`), issue ids for the configured keys (`B3-7166`), and PR links on shared repos. |
+| `conversation` | All of the above, plus your prompts, the agent's text replies, a one-line description of each tool call (the Bash `description`, a web search query, a fetched URL's host, the skill or MCP server and tool name), and how long each turn took. |
+
+A pairing without a choice is `metadata`; in a terminal `hub connect` asks, suggesting
+the hub's default. Conversation text comes only from sessions whose working directory
+is in a shared repo (an orchestrator in `~/Documents` that touches a shared repo stays
+metadata-only), and only from the moment a session is shared: agentblip starts reading
+the session transcript at its current end, so nothing written earlier is ever sent.
+Agent messages are read from the transcript (Claude Code's `transcript_path`, Codex's
+rollout file; Codex threads kept only in its SQLite history fall back to the final
+message of each turn), main thread only, never thinking, tool input or tool output.
+Prompts and messages are capped at 4,000 characters.
+
+**Redaction, on your machine.** Before anything is queued, every text field and tool
+description goes through a redactor: API keys and tokens by prefix (Anthropic, OpenAI,
+GitHub, Slack, AWS, npm, Linear, Stripe, Google, Hugging Face, Bullpen and agentblip
+device tokens, and more), JWTs, PEM private keys, `Bearer`/`Basic` values and auth
+headers, values of secret-named settings (`password=`, `API_KEY:`, `--token`), URLs with
+credentials, webhooks, and long random strings become `[redacted]`; home paths become
+`~/…`. It is tested against a corpus of realistic fake secrets, and against real agent
+text for false positives. It is a safety net, not a guarantee: don't paste secrets into
+a session you share.
+
+**Never, at any level:** tool input or output, file contents, command arguments beyond
+the allow-listed subcommand, environment variables, absolute paths, or anything from a
+repo outside the sharing rule. Every request is built from strict schemas, so a field
+outside the contract can't be sent.
 
 The hook passes richer local-only detail (tool input, prompt) to the daemon over
 loopback so it can make those decisions; that detail is never stored on a session, never
 formatted into your Slack status, and never sent to the agentblip relay.
 
-Delivery: batched every second, a full heartbeat every 30 s, up to 5,000 events held
-while the hub is unreachable, `Retry-After` honored. If the hub revokes the device
-(401) forwarding stops and `agentblip hub status` tells you to pair again.
+Delivery: batched every second in requests under 256 KB, a full heartbeat every 30 s,
+up to 5,000 events (16 MB) held while the hub is unreachable, `Retry-After` honored. If
+the hub revokes the device (401) forwarding stops and `agentblip hub status` tells you
+to pair again. A hub too old to accept conversation events still gets everything else.
 
 ## CLI reference
 
@@ -357,8 +384,9 @@ while the hub is unreachable, `Retry-After` honored. If the hub revokes the devi
 | `agentblip pause [--for 30m\|1h\|tomorrow]` | Pause Slack updates without stopping the daemon; `--for` snoozes and resumes on its own (`tomorrow` = 9 AM) |
 | `agentblip resume` | Resume Slack updates |
 | `agentblip unlink` | Revoke this device's token and clear the status |
-| `agentblip hub connect <url>` | Pair this machine with a team hub (device code; `--no-open`, `--machine <name>`) |
-| `agentblip hub status [--json]` | Pairing, project, last send, queued/dropped events, shared sessions |
+| `agentblip hub connect <url>` | Pair this machine with a team hub (device code; `--share conversation\|metadata`, `--no-open`, `--machine <name>`) |
+| `agentblip hub share [level]` | Show or set what this machine shares: `conversation` or `metadata` |
+| `agentblip hub status [--json]` | Pairing, sharing level, project, last send, queued/dropped events, shared sessions |
 | `agentblip hub include <dir>` / `exclude <dir>` | Share a folder too / never share a folder |
 | `agentblip hub disconnect` | Stop forwarding and remove the hub token |
 | `agentblip doctor [--json]` | Diagnose config, daemon, hooks, hub forward, and connectivity |

@@ -303,7 +303,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     // without a restart the changes above silently never apply.
     console.log(
       yellow(
-        `daemon is running with the old config — restart it: ${bold("workmesh stop && workmesh start --detach")}`,
+        `daemon is running with the old config — restart it: ${bold("workmesh restart")}`,
       ),
     );
   }

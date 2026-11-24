@@ -3,6 +3,7 @@ import { loadConfig } from "../lib/config";
 import { isDaemonUp, spawnDetachedDaemon } from "../lib/daemon-client";
 import { logFilePath } from "../lib/paths";
 import { dim, green } from "../lib/ui";
+import { runStop } from "./stop";
 
 export interface StartOptions {
   detach?: boolean;
@@ -25,4 +26,10 @@ export async function runStart(opts: StartOptions): Promise<void> {
     return;
   }
   await runDaemon(config);
+}
+
+/** `workmesh restart`: stop (waiting for the process to exit), then start in the background. */
+export async function runRestart(): Promise<void> {
+  if (!(await runStop())) return;
+  await runStart({ detach: true });
 }

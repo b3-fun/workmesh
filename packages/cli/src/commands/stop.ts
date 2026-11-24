@@ -1,44 +1,40 @@
 import { loadConfigSafe } from "../lib/config";
 import { isDaemonUp } from "../lib/daemon-client";
-import { isProcessAlive, readPidFile, removePidFile } from "../lib/pidfile";
-import { dim, green, sleep, yellow } from "../lib/ui";
+import { STOP_GRACE_MS, stopDaemon } from "../lib/daemon-control";
+import { dim, green, yellow } from "../lib/ui";
 
-const STOP_WAIT_MS = 5000;
-
-export async function runStop(): Promise<void> {
-  const pid = readPidFile();
-  if (pid === undefined) {
-    const config = loadConfigSafe();
-    if (await isDaemonUp(config.port)) {
-      console.log(
-        yellow(
-          `a daemon is answering on 127.0.0.1:${config.port} but no pidfile was found — stop it manually`,
-        ),
-      );
+/**
+ * `workmesh stop`: returns once the daemon's process is gone (SIGKILL after
+ * 5 s), so `workmesh stop && workmesh start --detach` can't race it. Returns
+ * whether nothing is left running.
+ */
+export async function runStop(): Promise<boolean> {
+  const outcome = await stopDaemon();
+  switch (outcome.kind) {
+    case "stopped": {
+      const what = outcome.legacy ? "daemon started before the rename (agentblip)" : "daemon";
+      console.log(green(`${what} stopped (pid ${outcome.pid})`));
+      if (outcome.killed) {
+        console.log(yellow(`  it didn't exit within ${STOP_GRACE_MS / 1000}s, so it was killed; Slack clears the status when it expires`));
+      }
+      return true;
+    }
+    case "stuck":
+      console.log(yellow(`daemon (pid ${outcome.pid}) is still running after SIGKILL`));
       process.exitCode = 1;
-    } else {
-      console.log(dim("daemon not running"));
-    }
-    return;
-  }
-
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    removePidFile();
-    console.log(dim("daemon not running (stale pidfile removed)"));
-    return;
-  }
-
-  const deadline = Date.now() + STOP_WAIT_MS;
-  while (Date.now() < deadline) {
-    await sleep(100);
-    if (!isProcessAlive(pid)) {
-      removePidFile();
-      console.log(green(`daemon stopped (pid ${pid})`));
-      return;
+      return false;
+    case "stale":
+    case "not-running": {
+      const config = loadConfigSafe();
+      if (await isDaemonUp(config.port)) {
+        console.log(
+          yellow(`a daemon is answering on 127.0.0.1:${config.port} but no pidfile names it — stop it manually`),
+        );
+        process.exitCode = 1;
+        return false;
+      }
+      console.log(dim(outcome.kind === "stale" ? "daemon not running (stale pidfile removed)" : "daemon not running"));
+      return true;
     }
   }
-  console.log(yellow(`daemon (pid ${pid}) did not exit within ${STOP_WAIT_MS / 1000}s`));
-  process.exitCode = 1;
 }

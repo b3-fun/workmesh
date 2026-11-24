@@ -164,10 +164,10 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
         checks.push(warn("hub sharing", `the daemon still shares ${state.share}: run \`workmesh hub share ${level}\` again or restart it`));
       }
       if (state.enabled && state.share === undefined) {
-        checks.push(warn("hub forward", "the running daemon predates sharing levels — restart it: `workmesh stop && workmesh start --detach`"));
+        checks.push(warn("hub forward", "the running daemon predates sharing levels — restart it: `workmesh restart`"));
       }
       if (!state.enabled) {
-        checks.push(warn("hub forward", "the daemon isn't forwarding — restart it: `workmesh stop && workmesh start --detach`"));
+        checks.push(warn("hub forward", "the daemon isn't forwarding — restart it: `workmesh restart`"));
       } else if (state.halted) {
         checks.push(fail("hub forward", `stopped: ${state.lastError ?? "token rejected"} — run \`workmesh hub connect ${hub.url}\``));
       } else if (state.lastSendOk === false) {

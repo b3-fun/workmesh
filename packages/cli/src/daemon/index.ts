@@ -11,12 +11,8 @@ import { HubForwarder } from "../hub/forwarder";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
 import { stateDir } from "../lib/paths";
-import {
-  isProcessAlive,
-  readPidFile,
-  removePidFile,
-  writePidFile,
-} from "../lib/pidfile";
+import { findRunningDaemon } from "../lib/daemon-control";
+import { readPidFile, removePidFile, writePidFile } from "../lib/pidfile";
 import { createSink } from "../sinks";
 import { ClaudeLiveness, readLiveClaudeSessions } from "./claude-liveness";
 import { Pusher } from "./pusher";
@@ -25,10 +21,17 @@ import { createDaemonServer } from "./server";
 /** How often the daemon checks Claude Code's session files for liveness. */
 const CLAUDE_LIVENESS_INTERVAL_MS = 15_000;
 
+export interface RunDaemonOptions {
+  /** How long to wait for a daemon that is still shutting down. */
+  exitWaitMs?: number;
+}
+
 /** Runs the daemon in the foreground until SIGINT/SIGTERM. */
-export async function runDaemon(config: Config): Promise<void> {
-  const existingPid = readPidFile();
-  if (existingPid !== undefined && existingPid !== process.pid && isProcessAlive(existingPid)) {
+export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Promise<void> {
+  // A pidfile whose process is gone (or was reused by another program) is
+  // ignored; a daemon still shutting down gets a few seconds to finish.
+  const existingPid = await findRunningDaemon({ exitWaitMs: opts.exitWaitMs });
+  if (existingPid !== undefined) {
     throw new Error(`daemon already running (pid ${existingPid}) — \`workmesh stop\` first`);
   }
   fs.mkdirSync(stateDir(), { recursive: true });
@@ -230,7 +233,9 @@ export async function runDaemon(config: Config): Promise<void> {
         } catch {
           // best effort
         }
-        removePidFile();
+        // Only our own claim: a daemon started right after ours closed its
+        // port may already have written its pid.
+        if (readPidFile() === process.pid) removePidFile();
         process.exit(0);
       })();
     };

@@ -175,7 +175,7 @@ async function reloadDaemon(config: Config): Promise<HubState | undefined> {
   } catch (err) {
     // A daemon older than 0.6 has no /hub/reload: it needs a restart.
     console.log(yellow(`  the running daemon did not reload (${err instanceof Error ? err.message : String(err)})`));
-    console.log(yellow(`  restart it: ${bold("workmesh stop && workmesh start --detach")}`));
+    console.log(yellow(`  restart it: ${bold("workmesh restart")}`));
     return undefined;
   }
 }
@@ -321,7 +321,7 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
   if (!daemon) {
     rows.push(["daemon", daemonError ? red(daemonError) : yellow("not running — `workmesh start --detach`")]);
   } else if (!daemon.enabled) {
-    rows.push(["daemon", yellow("running without hub forward — `workmesh stop && workmesh start --detach`")]);
+    rows.push(["daemon", yellow("running without hub forward — `workmesh restart`")]);
   } else {
     const ago = (t?: number): string => (t ? `${formatDuration(Date.now() - t)} ago` : "never");
     rows.push(

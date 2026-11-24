@@ -15,7 +15,7 @@ import {
 import { runPause, runResume } from "./commands/pause";
 import { runReport } from "./commands/report";
 import { runSetup } from "./commands/setup";
-import { runStart } from "./commands/start";
+import { runRestart, runStart } from "./commands/start";
 import { runStatus } from "./commands/status";
 import { runStop } from "./commands/stop";
 import { runUnlink } from "./commands/unlink";
@@ -63,8 +63,15 @@ program
 
 program
   .command("stop")
-  .description("Stop the background daemon (clears your Slack status)")
-  .action(wrap(runStop));
+  .description("Stop the background daemon and wait for it to exit (clears your Slack status)")
+  .action(wrap(async () => {
+    await runStop();
+  }));
+
+program
+  .command("restart")
+  .description("Stop the daemon, wait for it to exit, and start it again in the background")
+  .action(wrap(runRestart));
 
 program
   .command("status")

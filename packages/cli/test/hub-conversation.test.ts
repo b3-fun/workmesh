@@ -53,7 +53,7 @@ interface Reply {
   body?: unknown;
 }
 
-function harness(over: { share?: HubShareLevel; turnRecordWaitMs?: number } = {}) {
+function harness(over: { share?: HubShareLevel; turnRecordWaitMs?: number; maxBufferBytes?: number } = {}) {
   const store = new SessionStore();
   const raw: string[] = [];
   const bodies: HubIngestRequest[] = [];
@@ -78,6 +78,7 @@ function harness(over: { share?: HubShareLevel; turnRecordWaitMs?: number } = {}
     share: over.share ?? "conversation",
     codexSessionsDir: codexSessions,
     turnRecordWaitMs: over.turnRecordWaitMs ?? 5000,
+    maxBufferBytes: over.maxBufferBytes,
   });
   const feed = (e: SessionEvent | null): void => {
     if (!e) throw new Error("mapper returned null");
@@ -398,6 +399,22 @@ describe("delivery with text", () => {
     expect(msgs).toHaveLength(200);
     expect(new Set(msgs.map((e) => e.id)).size).toBe(200);
     expect(h.fwd.status().queued).toBe(0);
+  });
+
+  it("keeps queued text under its byte cap by dropping only the oldest events", async () => {
+    const h = harness({ maxBufferBytes: 50_000 });
+    const t = transcript("cap");
+    h.claude("cap", beta, t, { hook_event_name: "UserPromptSubmit", prompt: "go" });
+    for (let i = 0; i < 30; i++) append(t, cl.text(`${i} ${"x".repeat(3900)}`, `cap-${i}`, NOW + i));
+    h.claude("cap", beta, t, { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "git status" } });
+    await h.fwd.flushTranscripts();
+    const st = h.fwd.status();
+    expect(st.dropped).toBeGreaterThan(10);
+    expect(st.dropped).toBeLessThan(25);
+    expect(st.queued + st.dropped).toBe(32);
+    await h.fwd.tick();
+    const msgs = h.events().filter((e) => e.kind === "message");
+    expect(msgs.at(-1)?.text?.startsWith("29 ")).toBe(true); // the newest survive
   });
 
   it("an older hub that 400s message/turn kinds still gets the rest, and the text is held back", async () => {

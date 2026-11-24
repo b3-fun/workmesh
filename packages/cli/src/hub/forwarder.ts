@@ -100,6 +100,8 @@ export interface HubForwarderOptions {
   turnRecordWaitMs?: number;
   /** Bytes read from one transcript per pass. Default 2 MB. */
   maxReadBytes?: number;
+  /** Queued event bytes kept while the hub is unreachable. Default 16 MB. */
+  maxBufferBytes?: number;
 }
 
 export interface HubForwarderStatus {
@@ -269,7 +271,7 @@ export class HubForwarder {
   /** JSON byte size of each queued event (batching stays under 256 KB). */
   private readonly sizes = new WeakMap<HubActivityEvent, number>();
   private queuedBytes = 0;
-  private readonly maxBufferBytes = DEFAULT_MAX_BUFFER_BYTES;
+  private readonly maxBufferBytes: number;
   private conversationHeldUntil = 0;
   private pumpRun: Promise<void> | undefined;
   private pumpAgain = false;
@@ -329,6 +331,7 @@ export class HubForwarder {
     this.codexSessionsDir = opts.codexSessionsDir ?? defaultCodexSessionsDir();
     this.turnRecordWaitMs = opts.turnRecordWaitMs ?? 5000;
     this.maxReadBytes = opts.maxReadBytes ?? MAX_READ_BYTES;
+    this.maxBufferBytes = opts.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
   }
 
   // --- lifecycle -------------------------------------------------------------
@@ -614,8 +617,14 @@ export class HubForwarder {
     this.sizes.set(ev, bytes);
     this.queue.push(ev);
     this.queuedBytes += bytes;
+    // Over the count or byte cap: drop the oldest, never the event just added.
     let over = Math.max(0, this.queue.length - this.maxBuffer);
-    while (this.queuedBytes > this.maxBufferBytes && over < this.queue.length - 1) over++;
+    let freed = 0;
+    for (let i = 0; i < over; i++) freed += this.sizes.get(this.queue[i]!) ?? 0;
+    while (this.queuedBytes - freed > this.maxBufferBytes && over < this.queue.length - 1) {
+      freed += this.sizes.get(this.queue[over]!) ?? 0;
+      over++;
+    }
     if (over > 0) this.removeQueued(this.queue.slice(0, over), true);
   }
 

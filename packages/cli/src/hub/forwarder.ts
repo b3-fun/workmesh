@@ -3,14 +3,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  HUB_DESC_MAX,
   HUB_MAX_BODY_BYTES,
+  HUB_MAX_DURATION_MS,
   HUB_MAX_EVENTS_PER_REQUEST,
   HUB_MAX_SESSIONS_PER_REQUEST,
+  HUB_TEXT_MAX,
   HUB_WIRE_VERSION,
   hubActivityEventSchema,
   hubIngestRequestSchema,
   hubSessionUpsertSchema,
   isRepoRelativePath,
+  truncateHead,
 } from "@agentblip/core";
 import type {
   AgentSession,
@@ -18,10 +22,22 @@ import type {
   HubEventKind,
   HubProjectRule,
   HubSessionUpsert,
+  HubShareLevel,
   SessionEvent,
 } from "@agentblip/core";
 import type { z } from "zod";
 import { GitResolver } from "./git";
+import { scrubText } from "./redact";
+import {
+  MAX_READ_BYTES,
+  acceptClaudeTranscript,
+  acceptCodexTranscript,
+  defaultCodexSessionsDir,
+  findCodexRollout,
+  readTail,
+  startTail,
+} from "./transcript";
+import type { TranscriptItem, TranscriptTail } from "./transcript";
 import {
   extractCmd,
   extractIssues,
@@ -41,6 +57,12 @@ import {
  * It never blocks the hook path: observe() is synchronous and cheap (cached
  * .git reads, an array push), and all network I/O runs on its own 1 s timer,
  * one request at a time, independent of the Slack pusher.
+ *
+ * At the `conversation` sharing level (SPEC §8-9) it also sends prompt text,
+ * the agent's text messages (tailed from the session transcript, from the
+ * moment the session is shared), one-line tool descriptions and turn
+ * durations: only for sessions whose cwd is in a shared repo, and only after
+ * redaction on this machine. Transcript reads are async and bounded.
  */
 
 export interface HubForwarderOptions {
@@ -70,6 +92,14 @@ export interface HubForwarderOptions {
   requestTimeoutMs?: number;
   git?: GitResolver;
   homeDir?: string;
+  /** SPEC §8 sharing level. Default `metadata`. */
+  share?: HubShareLevel;
+  /** Where Codex keeps rollout files (default ~/.codex/sessions). */
+  codexSessionsDir?: string;
+  /** How long a Stop waits for the transcript's turn-duration record. Default 5 s. */
+  turnRecordWaitMs?: number;
+  /** Bytes read from one transcript per pass. Default 2 MB. */
+  maxReadBytes?: number;
 }
 
 export interface HubForwarderStatus {
@@ -93,6 +123,12 @@ export interface HubForwarderStatus {
   /** Sessions currently shared with the hub. */
   sharedSessions: number;
   retryAt?: number;
+  /** SPEC §8 sharing level this forwarder sends at. */
+  share: HubShareLevel;
+  /** Sessions whose conversation is being sent (cwd in a shared repo, conversation level). */
+  conversationSessions: number;
+  /** The hub refused message/turn events (an older hub): they are held back until this time. */
+  conversationHeldUntil?: number;
 }
 
 /** A shared place a path resolved to. */
@@ -120,12 +156,39 @@ interface Tracked {
   last?: AgentSession;
   current?: HubSessionUpsert;
   sentJson?: string;
+  /** When this session started sending conversation text (SPEC §8: from that moment on). */
+  convoSince?: number;
+  /** Transcript tail while the conversation is shared. */
+  tail?: TranscriptTail;
+  /** New transcript bytes may be waiting. */
+  tailDirty?: boolean;
+  /** Codex: rollout lookup state when the hook gave no transcript path. */
+  rolloutSearch?: { pending: boolean; nextAt: number; tries: number };
+  /** Start of the current turn (the prompt), for the turn-duration fallback. */
+  promptAt?: number;
+  /** A Stop waiting for the transcript's turn-duration record. */
+  pendingTurn?: { stopTs: number; promptAt?: number; deadline: number };
+  /** A turn-duration record read before its Stop arrived (Codex writes it first). */
+  turnRecord?: { durationMs: number; ts?: number };
+  /** Transcript text blocks already sent (ids), bounded. */
+  sentMessages?: Set<string>;
 }
 
 const SESSION_REQUIRED = new Set(["key", "source", "state", "startedAt", "updatedAt", "stateSince"]);
 const EVENT_REQUIRED = new Set(["id", "key", "ts", "kind"]);
 const MAX_BACKOFF_MS = 60_000;
 const DEFAULT_RETRY_AFTER_MS = 30_000;
+/** Requests one tick may send while a backlog drains (the hub allows 300/min/device). */
+const MAX_REQUESTS_PER_TICK = 4;
+/** Bytes kept free in each request for JSON framing. */
+const BODY_MARGIN_BYTES = 2048;
+/** Queued event bytes kept while the hub is unreachable (text makes events large). */
+const DEFAULT_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+/** After a hub refuses message/turn events, try again this much later. */
+const CONVERSATION_HOLD_MS = 10 * 60_000;
+const CONVERSATION_KINDS: ReadonlySet<string> = new Set(["message", "turn"]);
+/** Transcript message ids remembered per session (dedupe across re-reads). */
+const MAX_SENT_MESSAGE_IDS = 2000;
 
 /**
  * Validates a record against a strict hub schema, dropping optional fields
@@ -196,9 +259,21 @@ export class HubForwarder {
   private readonly home: string;
   private readonly listSessions: () => readonly AgentSession[];
   private readonly getSession: (key: string) => AgentSession | undefined;
+  private readonly share: HubShareLevel;
+  private readonly codexSessionsDir: string;
+  private readonly turnRecordWaitMs: number;
+  private readonly maxReadBytes: number;
 
   private readonly sessions = new Map<string, Tracked>();
   private queue: HubActivityEvent[] = [];
+  /** JSON byte size of each queued event (batching stays under 256 KB). */
+  private readonly sizes = new WeakMap<HubActivityEvent, number>();
+  private queuedBytes = 0;
+  private readonly maxBufferBytes = DEFAULT_MAX_BUFFER_BYTES;
+  private conversationHeldUntil = 0;
+  private pumpRun: Promise<void> | undefined;
+  private pumpAgain = false;
+  private pumpScheduled = false;
   private readonly bootId = crypto.randomBytes(5).toString("hex");
   private seq = 0;
   private timer: NodeJS.Timeout | undefined;
@@ -250,6 +325,10 @@ export class HubForwarder {
     this.git = opts.git ?? new GitResolver({ now: this.now });
     this.listSessions = opts.listSessions;
     this.getSession = opts.getSession;
+    this.share = opts.share ?? "metadata";
+    this.codexSessionsDir = opts.codexSessionsDir ?? defaultCodexSessionsDir();
+    this.turnRecordWaitMs = opts.turnRecordWaitMs ?? 5000;
+    this.maxReadBytes = opts.maxReadBytes ?? MAX_READ_BYTES;
   }
 
   // --- lifecycle -------------------------------------------------------------
@@ -271,6 +350,7 @@ export class HubForwarder {
     await Promise.race([
       (async () => {
         await this.inFlight;
+        await this.flushTranscripts(2);
         if (this.queue.length > 0) await this.tick(true);
       })(),
       new Promise<void>((resolve) => setTimeout(resolve, flushTimeoutMs).unref?.()),
@@ -294,6 +374,9 @@ export class HubForwarder {
       sharedSessions: [...this.sessions.values()].filter((t) => t.shared && t.current?.state !== "ended")
         .length,
       retryAt: this.retryAt > this.now() ? this.retryAt : undefined,
+      share: this.share,
+      conversationSessions: [...this.sessions.values()].filter((t) => this.conversationShared(t)).length,
+      conversationHeldUntil: this.conversationHeldUntil > this.now() ? this.conversationHeldUntil : undefined,
     };
   }
 
@@ -414,6 +497,9 @@ export class HubForwarder {
     if (event.activity) t.label = { raw: event.activity, hub: label };
 
     if (!t.shared) return; // rule 3: unshared sessions send nothing
+    // Conversation bookkeeping first: a prompt that makes the session shared
+    // starts its conversation, so its own text is "from that moment on".
+    this.conversationStep(event, t);
     const ev = this.buildEvent(event, t, { sharedFiles, anyFiles: files.length > 0, ids, label });
     if (ev) this.enqueue(ev);
   }
@@ -451,13 +537,17 @@ export class HubForwarder {
     if (event.kind !== "working" || !d) return undefined; // watcher/liveness chatter: upserts cover it
 
     if (d.hookEvent === "UserPromptSubmit" || d.prompt !== undefined) {
-      // The person sent a message: the text never leaves, the ids may.
+      // The person sent a message. Metadata level (and rule-4 sessions): the
+      // text never leaves, the ids may. Conversation level: redacted text.
+      const text = this.conversationShared(t) ? scrubText(d.prompt, { home: this.home, max: HUB_TEXT_MAX }) : undefined;
       return {
         ...base,
         kind: "prompt",
         repo: (t.cwdTarget ?? t.lastTarget)?.repo,
         branch: (t.cwdTarget ?? t.lastTarget)?.branch,
         issues: ctx.ids.length ? ctx.ids : undefined,
+        text: text?.text,
+        truncated: text?.truncated || undefined,
       };
     }
     if (!d.tool) return undefined;
@@ -475,6 +565,7 @@ export class HubForwarder {
       tool: hubToolName(d.tool),
       label: ctx.label,
       ok: post ? d.ok : undefined,
+      desc: this.conversationShared(t) ? this.descOf(d.desc) : undefined,
     };
 
     if (ctx.anyFiles) {
@@ -519,11 +610,235 @@ export class HubForwarder {
       this.log("hub: dropped an event that failed the wire schema");
       return;
     }
+    const bytes = Buffer.byteLength(JSON.stringify(ev));
+    this.sizes.set(ev, bytes);
     this.queue.push(ev);
-    if (this.queue.length > this.maxBuffer) {
-      const over = this.queue.length - this.maxBuffer;
-      this.queue.splice(0, over);
-      this.dropped += over;
+    this.queuedBytes += bytes;
+    let over = Math.max(0, this.queue.length - this.maxBuffer);
+    while (this.queuedBytes > this.maxBufferBytes && over < this.queue.length - 1) over++;
+    if (over > 0) this.removeQueued(this.queue.slice(0, over), true);
+  }
+
+  /** Takes events out of the queue (sent, refused, or dropped for space). */
+  private removeQueued(events: readonly HubActivityEvent[], dropped = false): void {
+    if (events.length === 0) return;
+    const gone = new Set(events);
+    this.queue = this.queue.filter((e) => !gone.has(e));
+    for (const e of gone) this.queuedBytes -= this.sizes.get(e) ?? 0;
+    if (dropped) this.dropped += gone.size;
+  }
+
+  // --- conversation (SPEC §8-9) --------------------------------------------------
+
+  /**
+   * Conversation text flows only at the conversation level, for a shared
+   * session whose cwd is itself shared. A session shared through rule 4
+   * (cwd outside every shared repo, e.g. an orchestrator in ~/Documents)
+   * stays metadata-only: its prompts and replies are about other work too.
+   */
+  private conversationShared(t: Tracked): boolean {
+    return this.share === "conversation" && t.shared && t.cwdTarget !== undefined;
+  }
+
+  /** A tool description the hub may see: redacted, one line, ≤ 200 chars. */
+  private descOf(raw: string | undefined): string | undefined {
+    const scrubbed = scrubText(raw?.replace(/\s+/g, " "), { home: this.home })?.text;
+    if (!scrubbed) return undefined;
+    return scrubbed.length > HUB_DESC_MAX ? `${truncateHead(scrubbed, HUB_DESC_MAX - 1)}…` : scrubbed;
+  }
+
+  /** Transcript, turn and fallback bookkeeping for one observed event. */
+  private conversationStep(event: SessionEvent, t: Tracked): void {
+    if (!this.conversationShared(t)) {
+      // Left the shared repo, or never in it: forget the tail so text resumes
+      // only from the moment it is shared again.
+      t.tail = undefined;
+      t.convoSince = undefined;
+      t.pendingTurn = undefined;
+      t.promptAt = undefined;
+      return;
+    }
+    const now = this.now();
+    const ts = event.ts ?? now;
+    t.convoSince ??= ts;
+    const d = event.detail;
+    this.attachTranscript(event, t);
+    if (d?.hookEvent === "UserPromptSubmit") {
+      // A turn still waiting for its duration record ends now, with the fallback.
+      if (t.pendingTurn) t.pendingTurn.deadline = now;
+      t.promptAt = ts;
+      t.turnRecord = undefined;
+    }
+    if (d?.hookEvent === "Stop") {
+      // No tail (Codex thread in SQLite, no transcript path): the Stop
+      // payload's final message stands in, if this turn began while shared.
+      if (!t.tail && d.lastAssistantMessage && t.promptAt !== undefined && t.promptAt >= (t.convoSince ?? Infinity)) {
+        this.enqueueMessage(t, d.lastAssistantMessage, ts);
+      }
+      t.pendingTurn = { stopTs: ts, promptAt: t.promptAt, deadline: now + (t.tail ? this.turnRecordWaitMs : 0) };
+      t.promptAt = undefined;
+    }
+    if (event.kind === "end" && t.pendingTurn) t.pendingTurn.deadline = now;
+    t.tailDirty = true;
+    this.schedulePump();
+  }
+
+  /** Starts (or moves) the session's transcript tail from the file's current end. */
+  private attachTranscript(event: SessionEvent, t: Tracked): void {
+    const codex = event.source === "codex";
+    const raw = event.detail?.transcriptPath;
+    const file = codex ? acceptCodexTranscript(raw, event.sessionId) : acceptClaudeTranscript(raw);
+    if (file) {
+      if (t.tail?.path !== file) t.tail = startTail(file, codex ? "codex" : "claude-code");
+      return;
+    }
+    if (!codex || t.tail) return;
+    // Codex without a transcript path: look for the rollout file (async).
+    const search = (t.rolloutSearch ??= { pending: false, nextAt: 0, tries: 0 });
+    const now = this.now();
+    if (search.pending || now < search.nextAt || search.tries >= 20) return;
+    search.pending = true;
+    search.tries += 1;
+    const id = event.sessionId;
+    void findCodexRollout(this.codexSessionsDir, id)
+      .then((found) => {
+        search.pending = false;
+        if (!found) {
+          // Newer Codex keeps threads in SQLite: no file to tail. The Stop
+          // payload's last message is the fallback.
+          search.nextAt = this.now() + 30_000;
+          return;
+        }
+        if (!t.tail && this.conversationShared(t)) {
+          t.tail = startTail(found, "codex");
+          t.tailDirty = true;
+        }
+      })
+      .catch(() => {
+        search.pending = false;
+        search.nextAt = this.now() + 30_000;
+      });
+  }
+
+  private enqueueMessage(t: Tracked, raw: string, ts: number): void {
+    const text = scrubText(raw, { home: this.home, max: HUB_TEXT_MAX });
+    if (!text) return;
+    this.enqueue({
+      key: t.key,
+      ts: Math.round(ts),
+      kind: "message",
+      text: text.text,
+      truncated: text.truncated || undefined,
+      repo: t.cwdTarget?.repo,
+      branch: t.cwdTarget?.branch,
+    });
+  }
+
+  private emitTurn(t: Tracked, stopTs: number, durationMs: number | undefined): void {
+    const ms = durationMs !== undefined && durationMs >= 0 && durationMs <= HUB_MAX_DURATION_MS ? Math.round(durationMs) : undefined;
+    this.enqueue({
+      key: t.key,
+      ts: Math.round(stopTs),
+      kind: "turn",
+      durationMs: ms,
+      repo: t.cwdTarget?.repo,
+      branch: t.cwdTarget?.branch,
+    });
+  }
+
+  private handleItem(t: Tracked, item: TranscriptItem): void {
+    if (!this.conversationShared(t)) return;
+    if (item.kind === "message") {
+      const seen = (t.sentMessages ??= new Set());
+      if (seen.has(item.id)) return;
+      seen.add(item.id);
+      if (seen.size > MAX_SENT_MESSAGE_IDS) seen.delete(seen.values().next().value as string);
+      this.enqueueMessage(t, item.text, item.ts ?? this.now());
+      return;
+    }
+    if (t.pendingTurn) {
+      this.emitTurn(t, t.pendingTurn.stopTs, item.durationMs);
+      t.pendingTurn = undefined;
+      t.turnRecord = undefined;
+    } else {
+      t.turnRecord = { durationMs: item.durationMs, ts: item.ts };
+    }
+  }
+
+  /** Stops past their wait: the record never came, so prompt → stop it is. */
+  private finalizeTurns(now: number): void {
+    for (const t of this.sessions.values()) {
+      const p = t.pendingTurn;
+      if (!p || now < p.deadline) continue;
+      t.pendingTurn = undefined;
+      if (!this.conversationShared(t)) continue;
+      let ms: number | undefined;
+      if (t.turnRecord && (p.promptAt === undefined || (t.turnRecord.ts ?? p.stopTs) >= p.promptAt)) {
+        ms = t.turnRecord.durationMs;
+      } else if (p.promptAt !== undefined) {
+        ms = p.stopTs - p.promptAt;
+      }
+      t.turnRecord = undefined;
+      this.emitTurn(t, p.stopTs, ms);
+    }
+  }
+
+  /** Runs a transcript pass soon, off the hook response path. */
+  private schedulePump(): void {
+    if (this.pumpScheduled) return;
+    this.pumpScheduled = true;
+    setImmediate(() => {
+      this.pumpScheduled = false;
+      void this.pump();
+    });
+  }
+
+  /** One transcript pass at a time; a request during a pass queues one more. */
+  private pump(): Promise<void> {
+    if (this.pumpRun) {
+      this.pumpAgain = true;
+      return this.pumpRun;
+    }
+    this.pumpRun = this.pumpOnce()
+      .catch((err: unknown) => this.log(`hub: transcript read failed: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => {
+        this.pumpRun = undefined;
+        if (this.pumpAgain) {
+          this.pumpAgain = false;
+          this.schedulePump();
+        }
+      });
+    return this.pumpRun;
+  }
+
+  /** Reads each dirty tail once (≤ maxReadBytes each), then settles due turns. */
+  private async pumpOnce(): Promise<void> {
+    for (const t of [...this.sessions.values()]) {
+      if (!t.tail || (!t.tailDirty && !t.pendingTurn)) continue;
+      t.tailDirty = false;
+      const tail = t.tail;
+      const res = await readTail(tail, this.maxReadBytes);
+      if (t.tail !== tail) continue; // moved while reading
+      if (res.reset) this.log(`hub: a transcript was ${res.reset}; reading from its new end`);
+      for (const item of res.items) this.handleItem(t, item);
+      if (res.more) {
+        t.tailDirty = true;
+        this.pumpAgain = true;
+      }
+    }
+    this.finalizeTurns(this.now());
+  }
+
+  /** Test and shutdown hook: transcript passes until nothing is left (bounded). */
+  async flushTranscripts(maxPasses = 50): Promise<void> {
+    for (let i = 0; i < maxPasses; i++) {
+      await this.pump();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const busy = [...this.sessions.values()].some((t) => t.tailDirty || t.rolloutSearch?.pending);
+      if (!busy && !this.pumpRun && !this.pumpScheduled) {
+        this.finalizeTurns(this.now());
+        return;
+      }
     }
   }
 
@@ -605,43 +920,95 @@ export class HubForwarder {
 
   private async tickUnsafe(force: boolean): Promise<void> {
     if (this.halted) return;
+    // Transcript reads first (bounded, async), so a turn's last message rides
+    // in the same batch as its turn event.
+    if ([...this.sessions.values()].some((t) => t.tailDirty || t.pendingTurn)) await this.pump();
     const now = this.now();
     if (now < this.retryAt) return;
     this.reconcile(now);
-    const full = now - this.lastFullAt >= this.heartbeatMs;
-    const changed: Array<[Tracked, string]> = [];
-    for (const t of this.sessions.values()) {
-      if (!t.shared || !t.current) continue;
-      const json = JSON.stringify(t.current);
-      if (json !== t.sentJson || (full && t.current.state !== "ended")) changed.push([t, json]);
-    }
-    if (!full && !force && changed.length === 0 && this.queue.length === 0) return;
-
-    changed.sort((a, b) => (b[0].current?.updatedAt ?? 0) - (a[0].current?.updatedAt ?? 0));
-    const batchSessions = changed.slice(0, HUB_MAX_SESSIONS_PER_REQUEST);
-    let n = Math.min(this.queue.length, this.maxEvents);
-    let body = "";
-    for (;;) {
-      const req = hubIngestRequestSchema.safeParse({
-        v: HUB_WIRE_VERSION,
-        sentAt: now,
-        full,
-        sessions: batchSessions.map(([t]) => t.current),
-        events: this.queue.slice(0, n),
-      });
-      if (!req.success) {
-        // Every record was validated on its way in; this is a bug guard.
-        this.log(`hub: batch failed the wire schema, dropping it: ${req.error.issues[0]?.message ?? ""}`);
-        this.rejected += n;
-        this.queue.splice(0, n);
-        for (const [t, json] of batchSessions) t.sentJson = json;
-        return;
+    for (let round = 0; round < MAX_REQUESTS_PER_TICK; round++) {
+      const full = round === 0 && now - this.lastFullAt >= this.heartbeatMs;
+      const changed: Array<[Tracked, string]> = [];
+      for (const t of this.sessions.values()) {
+        if (!t.shared || !t.current) continue;
+        const json = JSON.stringify(t.current);
+        if (json !== t.sentJson || (full && t.current.state !== "ended")) changed.push([t, json]);
       }
-      body = JSON.stringify(req.data);
-      if (Buffer.byteLength(body) <= HUB_MAX_BODY_BYTES || n === 0) break;
-      n = Math.floor(n / 2);
+      if (!full && !(force && round === 0) && changed.length === 0 && this.queue.length === 0) return;
+      const more = await this.sendOnce(now, full, changed);
+      if (!more || this.queue.length === 0 || this.halted) return;
     }
-    const sentIds = new Set(this.queue.slice(0, n).map((e) => e.id));
+  }
+
+  /**
+   * Picks the events for one request: oldest first, under the event cap and
+   * the 256 KB body limit, message/turn events skipped while an older hub is
+   * refusing them.
+   */
+  private pickEvents(budgetBytes: number, now: number): { events: HubActivityEvent[]; held: HubActivityEvent[] } {
+    const holding = now < this.conversationHeldUntil;
+    const events: HubActivityEvent[] = [];
+    const held: HubActivityEvent[] = [];
+    let bytes = 0;
+    for (const e of this.queue) {
+      if (events.length >= this.maxEvents) break;
+      if (holding && CONVERSATION_KINDS.has(e.kind)) {
+        held.push(e);
+        continue;
+      }
+      const size = (this.sizes.get(e) ?? Buffer.byteLength(JSON.stringify(e))) + 1;
+      if (bytes + size > budgetBytes && events.length > 0) break;
+      events.push(e);
+      bytes += size;
+    }
+    return { events, held };
+  }
+
+  /** One ingest request. True when it succeeded (the caller may send another). */
+  private async sendOnce(now: number, fullWanted: boolean, changed: Array<[Tracked, string]>): Promise<boolean> {
+    changed.sort((a, b) => (b[0].current?.updatedAt ?? 0) - (a[0].current?.updatedAt ?? 0));
+    const limit = HUB_MAX_BODY_BYTES - BODY_MARGIN_BYTES;
+    // Sessions first: they are small, and a full heartbeat must list them all.
+    let batchSessions = changed.slice(0, HUB_MAX_SESSIONS_PER_REQUEST);
+    let full = fullWanted && batchSessions.length === changed.length;
+    const frame = (sessions: Array<[Tracked, string]>, isFull: boolean): number =>
+      Buffer.byteLength(
+        JSON.stringify({ v: HUB_WIRE_VERSION, sentAt: now, share: this.share, full: isFull, sessions: sessions.map(([t]) => t.current), events: [] }),
+      );
+    let overhead = frame(batchSessions, full);
+    while (overhead > limit / 2 && batchSessions.length > 1) {
+      // A huge session set: send part now, the full heartbeat on a later tick.
+      batchSessions = batchSessions.slice(0, Math.ceil(batchSessions.length / 2));
+      full = false;
+      overhead = frame(batchSessions, false);
+    }
+    const { events, held } = this.pickEvents(limit - overhead, now);
+    if (held.length > 0) {
+      // An older hub refused these kinds; it may be upgraded later, but text
+      // waiting for it must not pile up. Count and drop.
+      this.removeQueued(held);
+      this.rejected += held.length;
+    }
+    // Oldest first by time: transcript messages are read a beat after the
+    // hook events around them.
+    const ordered = [...events].sort((a, b) => a.ts - b.ts);
+    const req = hubIngestRequestSchema.safeParse({
+      v: HUB_WIRE_VERSION,
+      sentAt: now,
+      share: this.share,
+      full,
+      sessions: batchSessions.map(([t]) => t.current),
+      events: ordered,
+    });
+    if (!req.success) {
+      // Every record was validated on its way in; this is a bug guard.
+      this.log(`hub: batch failed the wire schema, dropping it: ${req.error.issues[0]?.message ?? ""}`);
+      this.rejected += events.length;
+      this.removeQueued(events);
+      for (const [t, json] of batchSessions) t.sentJson = json;
+      return false;
+    }
+    const body = JSON.stringify(req.data);
 
     this.lastSendAt = now;
     let res: Response;
@@ -654,21 +1021,23 @@ export class HubForwarder {
       });
     } catch (err) {
       this.fail(`hub unreachable: ${err instanceof Error ? err.message : String(err)}`, now);
-      return;
+      return false;
     }
 
     if (res.ok) {
-      let accepted = sentIds.size;
+      let accepted = events.length;
       try {
         const parsed = (await res.json()) as { accepted?: unknown };
         if (typeof parsed.accepted === "number") accepted = parsed.accepted;
       } catch {
         // body is informational
       }
-      this.queue = this.queue.filter((e) => !sentIds.has(e.id));
+      this.removeQueued(events);
       for (const [t, json] of batchSessions) {
         t.sentJson = json;
-        if (t.current?.state === "ended") this.sessions.delete(t.key);
+        if (t.current?.state === "ended") {
+          this.sessions.delete(t.key);
+        }
       }
       if (full) this.lastFullAt = now;
       this.accepted += accepted;
@@ -677,7 +1046,7 @@ export class HubForwarder {
       this.lastSendOk = true;
       this.lastSuccessAt = now;
       this.lastError = undefined;
-      return;
+      return true;
     }
 
     this.lastSendOk = false;
@@ -694,37 +1063,49 @@ export class HubForwarder {
         `hub: ${this.url} rejected this device's token (401): forwarding stopped. ` +
           `Run \`agentblip hub connect ${this.url}\` to pair this machine again.`,
       );
-      return;
+      return false;
     }
     if (res.status === 429) {
       const wait = parseRetryAfter(res.headers.get("retry-after"), now);
       this.retryAt = now + wait;
       this.lastError = `rate limited (429), retrying in ${Math.round(wait / 1000)}s`;
       this.log(`hub: ${this.lastError}`);
-      return;
+      return false;
     }
     if (res.status === 400) {
+      const convo = events.filter((e) => CONVERSATION_KINDS.has(e.kind));
+      if (convo.length > 0 && now >= this.conversationHeldUntil) {
+        // Likely a hub from before SPEC §10 (its kind enum has no message or
+        // turn): drop those, hold them back for a while, resend the rest.
+        this.conversationHeldUntil = now + CONVERSATION_HOLD_MS;
+        this.removeQueued(convo);
+        this.rejected += convo.length;
+        this.lastError = `hub rejected conversation events (400), holding them for ${CONVERSATION_HOLD_MS / 60_000} min: ${detail}`;
+        this.log(`hub: ${this.lastError}`);
+        return false;
+      }
       // The hub rejects the whole request; resending it would loop forever.
-      this.queue = this.queue.filter((e) => !sentIds.has(e.id));
-      this.rejected += sentIds.size;
+      this.removeQueued(events);
+      this.rejected += events.length;
       for (const [t, json] of batchSessions) t.sentJson = json;
       if (full) this.lastFullAt = now;
       this.lastError = `hub rejected a batch (400): ${detail}`;
       this.log(`hub: ${this.lastError}`);
-      return;
+      return false;
     }
     if (res.status === 413) {
-      if (n > 1) {
-        this.maxEvents = Math.max(1, Math.floor(n / 2));
+      if (events.length > 1) {
+        this.maxEvents = Math.max(1, Math.floor(events.length / 2));
       } else {
-        this.queue = this.queue.filter((e) => !sentIds.has(e.id));
-        this.rejected += sentIds.size;
+        this.removeQueued(events);
+        this.rejected += events.length;
       }
       this.lastError = "batch too large (413), sending smaller batches";
       this.log(`hub: ${this.lastError}`);
-      return;
+      return false;
     }
     this.fail(`hub responded ${res.status}${detail ? `: ${detail}` : ""}`, now);
+    return false;
   }
 
   private fail(message: string, now: number): void {

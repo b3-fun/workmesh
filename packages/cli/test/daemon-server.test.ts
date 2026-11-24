@@ -96,6 +96,8 @@ async function startServer(): Promise<TestHarness> {
       rejected: 0,
       accepted: 0,
       sharedSessions: 0,
+      share: "metadata",
+      conversationSessions: 0,
     }),
   });
   await new Promise<void>((resolve) => {

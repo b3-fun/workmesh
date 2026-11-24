@@ -5,7 +5,7 @@ import { codexSessionsDir, createCodexWatcher } from "../adapters/codex";
 import type { CodexWatcher } from "../adapters/codex";
 import { claudeProjectsDir, createWorkflowWatcher } from "../adapters/workflow";
 import type { WorkflowWatcher } from "../adapters/workflow";
-import { formatOptionsFromConfig, readHubConfig, safeConfig, saveConfig } from "../lib/config";
+import { formatOptionsFromConfig, hubShareLevel, readHubConfig, safeConfig, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
 import { createDaemonSecret } from "../lib/daemon-auth";
@@ -73,9 +73,11 @@ export async function runDaemon(config: Config): Promise<void> {
       listSessions: () => store.list(),
       getSession: (key) => store.get(key),
       log,
+      share: hubShareLevel(hub),
+      codexSessionsDir: config.adapters.codex.sessionsDir,
     });
     forwarder.start();
-    log(`hub forward on: ${hub.url} (project ${hub.project.name})`);
+    log(`hub forward on: ${hub.url} (project ${hub.project.name}, sharing ${hubShareLevel(hub)})`);
   };
 
   const hidden = new Set(config.hideProjects ?? []);

@@ -11,6 +11,6 @@ agentblip status           # see live sessions and what your status would say
 
 Privacy by construction: the local daemon is the only thing that sees raw session data — the relay only ever receives the final pre-formatted status text. Granularity levels (`off` / `presence` / `count` / `activity`) control how much your status reveals, and a rolling expiration auto-clears your status if the daemon dies.
 
-Docs, self-hosting, and source: [agentblip.com](https://agentblip.com) · [github.com/seangeng/agentblip](https://github.com/seangeng/agentblip)
+Docs, self-hosting, and source: [agentblip.com](https://agentblip.com) · [github.com/b3-fun/agentblip](https://github.com/b3-fun/agentblip)
 
 MIT © Sean Geng

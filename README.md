@@ -4,11 +4,11 @@
 
 <p>
 <a href="https://www.npmjs.com/package/agentblip"><img src="https://img.shields.io/npm/v/agentblip" alt="npm"></a>
-<a href="https://github.com/seangeng/agentblip/actions/workflows/ci.yml"><img src="https://github.com/seangeng/agentblip/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://github.com/b3-fun/agentblip/actions/workflows/ci.yml"><img src="https://github.com/b3-fun/agentblip/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
 </p>
 
-<p><strong><a href="https://agentblip.com">agentblip.com</a> · <a href="https://www.npmjs.com/package/agentblip">npm</a> · <a href="https://github.com/seangeng/agentblip">GitHub</a></strong></p>
+<p><strong><a href="https://agentblip.com">agentblip.com</a> · <a href="https://www.npmjs.com/package/agentblip">npm</a> · <a href="https://github.com/b3-fun/agentblip">GitHub</a></strong></p>
 
 <img src="assets/demo.gif" alt="agentblip in action: your Slack status updates as your agents work" width="760">
 

@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import { Blip } from "./Blip";
 
-export const GITHUB_URL = "https://github.com/seangeng/agentblip";
+export const GITHUB_URL = "https://github.com/b3-fun/agentblip";
 export const NPM_URL = "https://www.npmjs.com/package/agentblip";
 
 export function SiteHeader() {

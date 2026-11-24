@@ -7,7 +7,7 @@ Thanks for helping. This is a small, sharp codebase — the goal is to keep it t
 Node.js 20+ (CI runs 22):
 
 ```bash
-git clone https://github.com/seangeng/agentblip.git
+git clone https://github.com/b3-fun/agentblip.git
 cd agentblip
 npm ci
 npm run dev        # Worker + React Router site (relay + landing/pair pages)

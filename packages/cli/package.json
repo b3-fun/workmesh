@@ -8,11 +8,11 @@
   "homepage": "https://agentblip.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/seangeng/agentblip.git",
+    "url": "git+https://github.com/b3-fun/agentblip.git",
     "directory": "packages/cli"
   },
   "bugs": {
-    "url": "https://github.com/seangeng/agentblip/issues"
+    "url": "https://github.com/b3-fun/agentblip/issues"
   },
   "bin": {
     "agentblip": "./dist/index.js"

@@ -8,7 +8,7 @@
 
 - **Product**: agentblip — your Slack status, synced with your local AI agent sessions. Each session is a blip on your team's radar: "claude agent working", "3 agents working", "claude: finalizing CI/CD".
 - **Domain**: agentblip.com
-- **Repo**: github.com/seangeng/agentblip (open source, MIT)
+- **Repo**: github.com/b3-fun/agentblip (open source, MIT)
 - **npm**: `agentblip` (CLI)
 - **Status**: building
 - **Last updated**: 2026-11-24 (0.7.0 conversation sharing)
@@ -202,7 +202,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - [x] 0.6.0 (merged): hub forward + `hub` commands + Codex hooks — CLI 307 tests, core 53, worker 62
 - [x] 0.7.0 (branch `hub-conversation`, not merged/published): sharing levels, redaction, prompt/message/desc/turn capture, transcript tailing — CLI 451 tests, core 59, worker 62
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain
-- [x] GitHub github.com/seangeng/agentblip public, CI + push-to-deploy green (secrets set)
+- [x] GitHub github.com/b3-fun/agentblip public, CI + push-to-deploy green (secrets set)
 - [x] E2E smoke: daemon lifecycle + live relay pairing/auth verified
 
 ### Pending (needs Sean)

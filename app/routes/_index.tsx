@@ -11,7 +11,7 @@ const DESCRIPTION =
   "agentblip watches your local Claude Code and Codex sessions and keeps your Slack status honest — “claude agent working”, “3 agents working”. Local-first, MIT.";
 const URL = "https://agentblip.com/";
 const MENUBAR_ZIP =
-  "https://github.com/seangeng/agentblip/releases/latest/download/agentblip-menubar-macos.zip";
+  "https://github.com/b3-fun/agentblip/releases/latest/download/agentblip-menubar-macos.zip";
 
 export function meta(_: Route.MetaArgs) {
   return [

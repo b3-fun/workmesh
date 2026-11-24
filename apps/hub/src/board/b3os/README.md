@@ -1,7 +1,7 @@
 # B3OS console components, vendored
 
 The board is a B3OS console surface built from the console's own component library. Everything in this folder except
-the files listed under "Bullpen's own" is a verbatim copy, at the same path, of `b3-fun/b3os-beta`
+the files listed under "Workmesh's own" is a verbatim copy, at the same path, of `b3-fun/b3os-beta`
 `apps/web/src/` at **`65e00f860`** (origin/main, 2026-11-24). Paths mirror the source, so every relative import
 resolves unchanged. Do not edit these files; take a newer copy instead:
 
@@ -20,11 +20,11 @@ What came over is the import closure of these entries (85 files): the foundation
 Also from the same commit: `apps/web/public/assets/fonts/*.woff2` (Inter Display, Open Runde) and the three brand
 masks in `apps/web/public/brand/`, in `src/board/public/`.
 
-## Bullpen's own
+## Workmesh's own
 
 | File | Why |
 |---|---|
-| `api/client.ts` | Shim: `ApiError` and `describeError` as the console's, for Bullpen's hub (`{ error }` bodies, `cf-ray` as the request id). |
+| `api/client.ts` | Shim: `ApiError` and `describeError` as the console's, for the Workmesh hub (`{ error }` bodies, `cf-ray` as the request id). |
 | `app/Shell.tsx` | Shim: the two names the auth card imports (`ThemeSwitch`, and `MockRibbon`, which draws nothing: no mock mode). |
 | `content/site.ts` | Shim: `B3IQ_URL`. |
 | `ds/lib/icons.tsx` | Shim: the eight licensed icons the vendored files name, re-exported from `vendor/`. |
@@ -33,5 +33,12 @@ masks in `apps/web/public/brand/`, in `src/board/public/`.
 The npm packages the vendored files import are pinned in `package.json` at the beta's versions (wouter, Radix, vaul,
 NumberFlow, clsx, tailwind-merge, class-variance-authority, web-haptics, tw-animate-css, Geist).
 
-Bullpen's board itself (`src/board/components`, `src/board/shell`) is drawn from these components and classes; the
+Workmesh's board itself (`src/board/components`, `src/board/shell`) is drawn from these components and classes; the
 design rules it follows are the console's (`apps/web/docs/design-rules.md` at the same commit).
+
+## Licenses
+
+The fonts (Inter Display, Open Runde) are under the SIL Open Font License. The eight icons in
+`vendor/nucleo-ui-outline-18/` are Nucleo icons, under Nucleo's license, not this repo's MIT license: Nucleo allows up
+to 100 of its icons in publicly accessible source files; don't reuse them outside Workmesh, and don't add them past
+that limit.

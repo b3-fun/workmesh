@@ -1,29 +1,21 @@
-# Bullpen
+# Workmesh hub
 
-Everyone's coding agents and the people they work for, on one live board. Working name.
+The team hub: a Cloudflare Worker with one Durable Object per project (pairing, ingest, the roster and timeline,
+summaries) and the board it serves. Relays reach `/relay/*` with device tokens; the board and `/api/*` sit behind
+Cloudflare Access. B3's hub is at <https://workmesh.b3os.org> (and `bullpen.b3os.org`, its first name).
 
-Each teammate's machine runs a relay ([agentblip](https://github.com/b3-fun/agentblip)) that sends metadata about
-their Claude Code and Codex sessions to one hub per project. The hub (a Cloudflare Worker and Durable Object) keeps
-the roster and timeline and serves the board. Linear stays the system of record.
-
-- Build contract: [SPEC.md](SPEC.md)
-- Research behind it: [docs/research.html](docs/research.html)
-
-Live at <https://bullpen.b3os.org>, behind Cloudflare Access (npclabs.org). Relays reach `/relay/*` with device tokens.
-
-## Develop
+- Contract: [docs/SPEC.md](../../docs/SPEC.md). Wire schemas: [packages/protocol](../../packages/protocol).
+- Develop, deploy, secrets and privacy rules: [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ```sh
-pnpm install
 cp .dev.vars.example .dev.vars    # DEV_USER_EMAIL skips Access locally; never in production
-pnpm dev                          # builds the board, then wrangler dev on http://localhost:8787
-node scripts/fake-relay.ts        # synthetic sessions for Sean, An and Gio against localhost
-pnpm typecheck && pnpm test
+npm run dev                       # builds the board, then wrangler dev on http://localhost:8787
+npm run fake-relay                # synthetic sessions for several people against localhost
+npm test && npm run typecheck && npm run build
+npx wrangler whoami && npm run deploy   # NPC Labs only; both hosts
 ```
 
-## Deploy
-
-```sh
-npx wrangler whoami               # must show NPC Labs 4300a93c2dcb252fa91df03f18e8e44c
-pnpm run deploy                   # vite build + wrangler deploy to bullpen.b3os.org
-```
+Layout: `src/worker` (Hono routes, `project.ts` the Durable Object, `ingest.ts`, `access.ts`, `summaries/`),
+`src/board` (React board; `b3os/` is vendored from the B3OS console, see its README), `src/shared` (types the Worker
+and board share), `test` (Vitest in workerd), `scripts/fake-relay.ts`. The Worker script is named `bullpen` on purpose
+(its Durable Object holds every pairing).

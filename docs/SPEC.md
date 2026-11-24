@@ -1,33 +1,39 @@
-# Bullpen v0 ("See"): build contract
+# Workmesh team hub: build contract
 
-Bullpen (working name) is a hub where every teammate's coding agents and the people they work for share one live
-board. v0 is read-only visibility: every Claude Code and Codex session that Sean, An and Gio run on B3 repos shows on
-one board, with each tool call as a metadata line within 5 seconds. Linear stays the team's system of record.
+Workmesh (named Bullpen until 2026-11-24) is a hub where every teammate's coding agents and the people they work for
+share one live board. v0 is read-only visibility: every Claude Code and Codex session that Sean, An and Gio run on B3
+repos shows on one board, with each tool call as a metadata line within 5 seconds. Linear stays the team's system of
+record.
 
 Linear: parent B3-7165, this phase B3-7166 (project "B3OS Beta"). Research behind it: the Linear document
 "Research: multiplayer agents".
 
-Two halves, built against this file:
+Three parts of one repo, `b3-fun/workmesh`, built against this file (§14 has the layout):
 
-| Half | Where | What |
+| Part | Where | What |
 |---|---|---|
-| Relay | `seangeng/agentblip` (MIT, already installed on Sean's Mac) | A generic "hub forward" output in agentblip's daemon, plus Codex hook support and a `hub` command group. |
-| Hub + board | this repo, `b3-fun/bullpen` | Cloudflare Worker + one Durable Object per project, and the board (React SPA) served by the same Worker. |
+| Relay | `packages/cli` (`@b3os/workmesh`, formerly agentblip) | A generic "hub forward" output in the daemon, plus Codex hook support and a `hub` command group. |
+| Protocol | `packages/protocol` (`@workmesh/protocol`) | §3 and §10 as code: the wire schemas both sides validate against. |
+| Hub + board | `apps/hub` (`@workmesh/hub`) | Cloudflare Worker + one Durable Object per project, and the board (React SPA) served by the same Worker. |
 
-If this file and the code disagree, fix one of them in the same change.
+If this file and the code disagree, fix one of them in the same change. Sections 1–13 were written while the hub was
+Bullpen and the relay was agentblip, in separate repos; where they say agentblip, read the Workmesh CLI.
 
 ---
 
 ## 1. Deployment facts (fixed)
 
-- Cloudflare account: NPC Labs `4300a93c2dcb252fa91df03f18e8e44c`. Pin `account_id` in `wrangler.jsonc`. Never deploy
-  to another account.
-- Worker name `bullpen`, host `https://bullpen.b3os.org` (Workers custom domain on the NPC Labs zone `b3os.org`).
-  `workers_dev` and `preview_urls` are off, so the only way in is the Access-protected custom domain.
-- Cloudflare Access (team domain `npclabs.cloudflareaccess.com`) is already configured on `bullpen.b3os.org`:
-  - App "Bullpen board" on the whole host: allow emails at `npclabs.org`. AUD tag
+- Cloudflare account: NPC Labs `4300a93c2dcb252fa91df03f18e8e44c`. Pin `account_id` in `apps/hub/wrangler.jsonc`.
+  Never deploy to another account.
+- Host `https://workmesh.b3os.org`, and `https://bullpen.b3os.org` kept as an alias so relays paired there keep
+  working (both Workers custom domains on the NPC Labs zone `b3os.org`). `workers_dev` and `preview_urls` are off, so
+  the only ways in are the Access-protected custom domains.
+- Worker script name `bullpen`: its Durable Object holds every pairing, session and event, and a Worker under a new
+  name would start with an empty one. Keep the name.
+- Cloudflare Access (team domain `npclabs.cloudflareaccess.com`) is configured on both hosts, one audience:
+  - The board app on the whole host: allow emails at `npclabs.org`. AUD tag
     `a3f9a834dccc7096ab27aa4f3470df3b5bd14618c40e641e92b751b696b70f63`.
-  - App "Bullpen relay" on `/relay/*`: bypass (no Access login). The Worker authenticates these requests with device
+  - The relay app on `/relay/*`: bypass (no Access login). The Worker authenticates these requests with device
     tokens.
 - The Worker MUST verify the Access JWT itself on every `/api/*` request (header `Cf-Access-Jwt-Assertion`,
   RS256, keys from `https://npclabs.cloudflareaccess.com/cdn-cgi/access/certs`, `aud` = the board AUD above, `iss` =
@@ -53,10 +59,10 @@ v0 has one project, id `b3`, name "B3". Its sharing rule (sent to relays at pair
 
 All relay endpoints live under `/relay/*`, JSON bodies, max 256 KB per request.
 
-### 3.1 Pairing (device-code flow, same shape as agentblip's Slack pairing)
+### 3.1 Pairing (device-code flow, same shape as the relay's Slack pairing)
 
-`POST /relay/pair/start` `{ "machine": "seans-mac-studio", "client": "agentblip/0.6.0" }`
-→ `{ "code": "ABCD-1234", "deviceId": "dev_<ulid>", "pollSecret": "<32 hex>", "verifyUrl": "https://bullpen.b3os.org/pair?code=ABCD-1234", "expiresInSec": 600 }`
+`POST /relay/pair/start` `{ "machine": "seans-mac-studio", "client": "workmesh/0.8.0" }`
+→ `{ "code": "ABCD-1234", "deviceId": "dev_<ulid>", "pollSecret": "<32 hex>", "verifyUrl": "https://workmesh.b3os.org/pair?code=ABCD-1234", "expiresInSec": 600 }`
 
 The person opens `verifyUrl` (Access login), sees "Connect *seans-mac-studio* to B3 as *Sean*?", and approves:
 `POST /api/pair/approve { "code": "ABCD-1234" }` (Access-authenticated).
@@ -93,7 +99,7 @@ expiresAt, approvedBy }`.
 | `source` | string ≤ 64 | `claude-code`, `codex`, `workflow`, or a custom id |
 | `name` | string ≤ 120, opt | session name, e.g. Claude Code's `documents-07` |
 | `state` | `working` \| `waiting` \| `idle` \| `ended` | `waiting` = blocked on its own person |
-| `activity` | string ≤ 200, opt | agentblip's label: "editing vm.rs", "running commands", "needs my input" |
+| `activity` | string ≤ 200, opt | the relay's label: "editing vm.rs", "running commands", "needs my input" |
 | `background` | bool, opt | working only on its own background shells/subagents |
 | `agents` | int 1–999, opt | concurrent agents this session represents (workflow fan-out) |
 | `phase` | string ≤ 60, opt | orchestrator phase label |
@@ -112,7 +118,7 @@ expiresAt, approvedBy }`.
 | `ts` | epoch ms | |
 | `kind` | `start` \| `prompt` \| `tool` \| `waiting` \| `idle` \| `end` | `prompt` = the person sent a message (text never sent) |
 | `tool` | string ≤ 64, opt | tool name only: `Edit`, `Bash`, `apply_patch`, `shell` |
-| `label` | string ≤ 200, opt | agentblip activity label |
+| `label` | string ≤ 200, opt | the relay's activity label |
 | `path` | string ≤ 400, opt | repo-relative path, only inside an included repo |
 | `cmd` | string ≤ 60, opt | program and allow-listed subcommand only, e.g. `cargo test`, `gh pr create` |
 | `repo`, `branch` | string, opt | repo the event touched |
@@ -138,7 +144,7 @@ Order of checks: `413`, then `401` for a missing or malformed token, then `400`,
 token. `429` after 300 requests per device per minute. On `full: true`, the device's sessions that are missing from
 `sessions` and not already ended are marked `ended`.
 
-### 3.3 What may leave a machine (relay rules, enforced in agentblip)
+### 3.3 What may leave a machine (relay rules, enforced in `packages/cli`)
 
 The relay sends **only** the fields above. Never: prompt text, assistant text, tool input or output, file contents,
 full commands or arguments beyond the allow-listed subcommand, environment variables, absolute paths, or anything
@@ -200,7 +206,7 @@ up to 5,000 events in memory and resend (dedupe makes resends safe); beyond that
 
 ## 5. Board (v0)
 
-Read the mock in `docs/research.html` (section "The board"). Three columns, left to right:
+The mock is in the Linear document "Research: multiplayer agents" (section "The board"). Three columns, left to right:
 
 1. **Waiting on a person**: sessions in `waiting`, the viewer's own first, with how long they have waited.
 2. **People**: one lane per person (Sean, An, Gio), their sessions grouped by repo: state dot, session name, activity,
@@ -213,23 +219,23 @@ Top bar: project name, counts (agents working, waiting on people, people online)
 with the one command to run). `/pair?code=…` is the approve page. Empty state explains how to connect the first
 machine.
 
-Design (v0.1): the B3 brand used in `docs/research.html`. Superseded by §13: the board is a B3OS console surface.
+Design (v0.1): the B3 brand used in the research document. Superseded by §13: the board is a B3OS console surface.
 
-## 6. Relay (agentblip) changes
+## 6. Relay changes (then agentblip, now `packages/cli`)
 
 - `SessionEvent` gains an optional local-only `detail` (`tool`, `filePath` absolute, `command` raw, `prompt` raw,
   `toolResponseText` truncated, `ok`) filled by the Claude Code and Codex hook mappers. It travels hook → daemon on
-  loopback only, never to Slack or the agentblip relay, and the forwarder reduces it to the hub fields above.
+  loopback only, never to Slack or the Slack-status relay, and the forwarder reduces it to the hub fields above.
 - New `HubForwarder` in the daemon, enabled when config has `hub`. It runs beside the Slack pusher and never blocks it.
-- `agentblip hub connect <url>` (pairing), `agentblip hub status`, `agentblip hub disconnect`,
-  `agentblip hub include <dir>` / `exclude <dir>`.
+- `workmesh hub connect <url>` (pairing), `workmesh hub status`, `workmesh hub disconnect`,
+  `workmesh hub include <dir>` / `exclude <dir>`.
 - Codex: install hooks into `~/.codex/hooks.json` (merge, never overwrite existing entries) for SessionStart,
   UserPromptSubmit, PreToolUse, PostToolUse, Stop and SessionEnd, mapped like Claude Code. Keep the `notify` path as
   a fallback.
 
 ## 7. Done means
 
-An opens `https://bullpen.b3os.org`, signs in with Access, and sees every B3 session Sean is running, each
+An opens `https://workmesh.b3os.org`, signs in with Access, and sees every B3 session Sean is running, each
 tool call within 5 seconds, with nothing from non-B3 repos and no prompt or file text anywhere in the hub's storage.
 
 ---
@@ -247,9 +253,9 @@ such as "Ran 2 shell commands", turn durations).
 | `metadata` | Nothing more (v0 behavior). |
 | `conversation` | Prompt text, the agent's text messages, a one-line description per tool call, turn ends with duration. |
 
-- Chosen at `agentblip hub connect` (`--share conversation|metadata`; in a TTY without the flag, ask, default
+- Chosen at `workmesh hub connect` (`--share conversation|metadata`; in a TTY without the flag, ask, default
   `conversation` when the hub's project rule says `defaultShare: "conversation"`, which project `b3` does). Changeable
-  any time with `agentblip hub share <level>`. The approve page and the CLI both state plainly what the chosen level
+  any time with `workmesh hub share <level>`. The approve page and the CLI both state plainly what the chosen level
   shares, and the board marks metadata-only people.
 - Hub side: `POST /relay/pair/start` takes an optional `share` (the level the relay will use) so the approve page can
   name it; `GET /api/pair/:code` returns it as `share` (null when the relay didn't say). The poll's `project` carries
@@ -261,11 +267,11 @@ such as "Ran 2 shell commands", turn durations).
   only from that moment on; nothing written before it was shared is ever sent.
 - Every ingest body carries `share`; the hub stores it per device and drops any text fields from a `metadata` device.
 
-## 9. Relay additions (agentblip)
+## 9. Relay additions
 
 - **Redaction, on the machine, before anything is queued:** API keys and tokens (Anthropic `sk-ant-…`, OpenAI `sk-…`,
   GitHub `ghp_/gho_/ghu_/ghs_/ghr_` and `github_pat_`, Slack `xox?-`, AWS `AKIA…`, npm `npm_…`, Linear `lin_api_…`,
-  Bullpen `bp_…`), JWTs, PEM private key blocks, `Bearer <token>`, `key|secret|token|password = value` pairs, URLs with
+  hub device tokens `bp_…`), JWTs, PEM private key blocks, `Bearer <token>`, `key|secret|token|password = value` pairs, URLs with
   embedded credentials, and long high-entropy strings next to those words → `[redacted]`. Absolute home paths →
   `~/…`. A unit-tested list; a privacy test feeds a corpus of real-looking secrets through the whole pipeline.
 - **Prompts:** from UserPromptSubmit `prompt` (Claude Code) and the Codex equivalent. Cap 4,000 chars (`truncated`).
@@ -296,9 +302,9 @@ such as "Ran 2 shell commands", turn durations).
 
 ## 11. Summaries (hub)
 
-- Provider, chosen at runtime behind one interface (`src/worker/summaries/provider.ts`):
+- Provider, chosen at runtime behind one interface (`apps/hub/src/worker/summaries/provider.ts`):
   1. **OpenRouter** when the Worker secret `OPENROUTER_API_KEY` is set: `POST https://openrouter.ai/api/v1/chat/completions`
-     over plain fetch, headers `HTTP-Referer: https://bullpen.b3os.org` and `X-Title: Bullpen`. Model from the var
+     over plain fetch, headers `HTTP-Referer: https://workmesh.b3os.org` and `X-Title: Workmesh`. Model from the var
      `SUMMARY_MODEL`, default `anthropic/claude-haiku-5.5` ($0.10 / $0.50 per M tokens in November 2026, structured
      outputs); `SUMMARY_MODEL_FALLBACK` (comma-separated, default `openai/gpt-6-luna`) becomes OpenRouter's `models`
      fallback list. Requests use `response_format: json_schema` (strict) with `provider.require_parameters` and
@@ -355,10 +361,10 @@ As built (v0.2):
   (the lanes give up width); at 400 px the columns stack and the conversation scrolls on its own. The live tail
   shows one-line previews of prompts and messages and "turn ended · 1m 34s" rows.
 - Prompts render verbatim (pre-wrapped, collapsed past 8 lines or 600 chars, "Cut at 4,000 characters" when
-  `truncated`). Messages render through `src/board/lib/markdown.ts`: paragraphs, headings as bold lines, fenced
+  `truncated`). Messages render through `apps/hub/src/board/lib/markdown.ts`: paragraphs, headings as bold lines, fenced
   code, inline code, bold, italics, nested lists, quotes, simple tables; links only for http(s) and mailto, opened
   with `target="_blank" rel="noopener noreferrer"`; everything else is text nodes, never HTML.
-- Tool folds (`src/board/lib/transcript.ts`) group by kind in order of first appearance: shell commands, edited and
+- Tool folds (`apps/hub/src/board/lib/transcript.ts`) group by kind in order of first appearance: shell commands, edited and
   read files (distinct paths), searches, web searches and fetches, agents, plan updates, skills, MCP calls per
   server, other tools by name; a failed call turns the fold's marker red and adds "· N failed".
 - A now line written before the session's current working or waiting state began (a new turn whose refresh hasn't
@@ -379,15 +385,14 @@ design principles", "copy it exactly, extracting components".
 
 - **Name:** the system (relay, hub and board) is **Workmesh** (Sean, 2026-11-24, tying in with B3IQ's Workcell). Every
   user-visible "Bullpen" on the board reads "Workmesh"; the connect dialog shows `npm i -g @b3os/workmesh` and
-  `workmesh hub connect <this host>`. The host stays `bullpen.b3os.org`, and code identifiers, the repo and the Worker
-  keep their names until the move to `workmesh.b3os.org` and `b3-fun/workmesh`.
+  `workmesh hub connect <this host>`. (The host, repo and code names followed in v0.4, §14.)
 
-- **Built from the console's components, not redrawn.** `src/board/b3os/` is a verbatim copy, at the same paths, of
+- **Built from the console's components, not redrawn.** `apps/hub/src/board/b3os/` is a verbatim copy, at the same paths, of
   b3os-beta `apps/web/src/` at `65e00f860` (the foundation kit, signature pixel pieces, primitives, the console's
   `primitives.tsx`, `AuthCard`, `ThemeSwitch`, `Icon`, and its stylesheets and tokens), plus four marked shims; its
   README lists what came over and how to refresh it. The design rules are the console's
   (`apps/web/docs/design-rules.md` at that commit).
-- **Shell:** the console's `app-shell`: sidebar (wordmark and "Bullpen" chip, Connect a machine as the glossy create
+- **Shell:** the console's `app-shell`: sidebar (wordmark and "Workmesh" chip, Connect a machine as the glossy create
   button, nav with the sliding pill and a pixel grid that plays on the hovered row: Board, Machines, then People, one
   row per person narrowing the board), Dark mode switch, account card; the page on the raised stage with its footer
   (the live connection's status on the left). Under 1024 px a sticky top bar and the sidebar in a drawer. Light by
@@ -415,3 +420,40 @@ design principles", "copy it exactly, extracting components".
   `InlineError` with the request id (`cf-ray`) and Retry; empty states offer one way to start.
 - **Removed:** the footer naming the summary model (nothing in the UI names a model or vendor), the digest banner, left
   and top accent bars.
+
+---
+
+# v0.4: one system, one repo (Sean, 2026-11-24)
+
+Sean chose a single public monorepo: the relay, the hub and the board in `b3-fun/workmesh`, under one name.
+
+## 14. Layout, protocol and hosts
+
+- **Repo:** `b3-fun/workmesh` (public, MIT), npm workspaces with one root lockfile:
+
+  | Path | Package | What |
+  |---|---|---|
+  | `packages/cli` | `@b3os/workmesh` (published) | The relay: CLI, daemon, hooks, hub forwarder, Slack sinks |
+  | `packages/core` | `@workmesh/core` (private) | Session model, aggregation, Slack status formatting |
+  | `packages/protocol` | `@workmesh/protocol` (private) | The relay ↔ hub wire format (§3, §8, §10) |
+  | `apps/hub` | `@workmesh/hub` (private) | This hub: Worker, Durable Object, board, summaries |
+  | `apps/menubar` | (SwiftPM) | Workmesh.app, the menu bar client of the daemon |
+  | `app/`, `src/`, `workers/` | root | agentblip.com: the site and the Slack-status relay Worker |
+
+  The hub came over from `b3-fun/bullpen` (now archived) with its history; each imported commit carries an
+  `Imported-From: b3-fun/bullpen@<sha>` trailer. The research document stays in Linear ("Research: multiplayer
+  agents"); it quotes teammates and is not in the repo.
+- **One protocol:** `packages/protocol` is the code form of §3.1–3.2 and §10. Each body has two readings from the same
+  field rules. The relay builds what it sends from the strict schemas (unknown keys fail, no `null`, integer epoch
+  ms, `cmd` with one subcommand word, text ≤ 4,000 and `desc` ≤ 200). The hub reads with the accept schemas (§3.2's
+  hub-side validation: unknown keys dropped, `null` as absent, fractional ms rounded, `cmd` with up to two subcommand
+  words, text ≤ 16,000 and `desc` ≤ 1,000 for the hub to cut after its redaction pass). A body the strict schemas
+  accept parses unchanged under the accept schemas, and both name the same fields; the protocol's tests hold both. A
+  wire change is one edit there, and both sides' tests run against it.
+- **Hosts:** `https://workmesh.b3os.org` is the hub's address in the board, the docs and the CLI's examples.
+  `https://bullpen.b3os.org` serves the same Worker, so relays paired there keep sending without re-pairing; a
+  pairing's verify URL names the host the relay asked. The Worker script stays `bullpen` (§1). Device tokens keep
+  their `bp_` prefix.
+- **Deploys:** the hub deploys by hand from `main` (`npm run deploy -w @workmesh/hub`, wrangler OAuth on an NPC Labs
+  account) until CI has an NPC Labs Workers token. CI runs every workspace's tests and typecheck, the CLI build, the
+  site build and the board build. agentblip.com still deploys from CI on every push to `main`.

@@ -1,4 +1,4 @@
-# CLAUDE.md — agentblip
+# CLAUDE.md — Workmesh
 
 > Single source of truth for AI-assisted development. Keep updated as work progresses.
 
@@ -6,12 +6,12 @@
 
 ## Project Overview
 
-- **Product**: agentblip — your Slack status, synced with your local AI agent sessions. Each session is a blip on your team's radar: "claude agent working", "3 agents working", "claude: finalizing CI/CD".
-- **Domain**: agentblip.com
-- **Repo**: github.com/b3-fun/agentblip (open source, MIT)
-- **npm**: `agentblip` (CLI)
+- **Product**: Workmesh (formerly agentblip) — your team's coding agents, live on one board and in your Slack status. Each session is a blip on your team's radar: "claude agent working", "3 agents working", "claude: finalizing CI/CD". This repo is the relay side (CLI, daemon, hooks, menu bar app, site + Slack relay); the team hub (Bullpen) is moving in.
+- **Domain**: agentblip.com (kept; the Worker script, routes and KV keep their agentblip names so the live site and device records survive)
+- **Repo**: github.com/b3-fun/workmesh (open source, MIT; renamed from b3-fun/agentblip, old URLs redirect)
+- **npm**: `@b3os/workmesh` (bins `workmesh` and the `agentblip` alias), published from the npclabs npm account
 - **Status**: building
-- **Last updated**: 2026-11-24 (0.7.0 conversation sharing)
+- **Last updated**: 2026-11-24 (rename to Workmesh)
 
 ---
 
@@ -26,7 +26,7 @@
 | Styling | Tailwind CSS v4 | `@tailwindcss/vite` |
 | Validation | Zod v4 | Wire contracts in `packages/core/src/events.ts` |
 | Storage | Cloudflare KV only | Pairing codes (TTL) + device records. No D1, no ORM |
-| CLI | Commander.js + tsup | ESM single-file bundle, published as `agentblip` |
+| CLI | Commander.js + tsup | ESM single-file bundle, published as `@b3os/workmesh` |
 | Tests | Vitest | Pure-logic units in core + worker lib |
 
 ---
@@ -36,7 +36,7 @@
 ```
 Claude Code hooks ─┐
 Codex watcher ─────┤   POST /event      ┌────────────────────┐  POST /api/status   ┌──────────────┐
-Any tool (curl) ───┼──────────────────▶ │ agentblip daemon   │ ───────────────────▶│ relay Worker │──▶ Slack API
+Any tool (curl) ───┼──────────────────▶ │ workmesh daemon    │ ───────────────────▶│ relay Worker │──▶ Slack API
                    │  localhost:4519    │ SessionStore →     │  pre-formatted      │ (or direct   │   users.profile.set
                    └                    │ formatStatus →sink │  SlackStatus only   │  Slack sink) │
                                         └────────────────────┘                     └──────────────┘
@@ -65,16 +65,17 @@ Any tool (curl) ───┼─────────────────�
 ├── packages/
 │   ├── core/                  # @workmesh/core — shared, dependency-light (zod only)
 │   │   └── src/               # events (zod wire contracts), aggregate, format, redact
-│   └── cli/                   # `agentblip` npm CLI (daemon + adapters + sinks)
+│   └── cli/                   # @b3os/workmesh npm CLI (daemon + adapters + sinks)
 │       └── src/
-│           ├── commands/      # setup, start, status, emit, hook, pause, unlink, doctor, hub
+│           ├── commands/      # setup, start/restart, stop, status, emit, hook, pause, unlink, doctor, hub
+│           ├── lib/           # config, paths + names (workmesh dirs, legacy agentblip names), migrate (one-time copy), daemon-control (stop/start pidfile logic)
 │           ├── adapters/      # claude-code (hooks), codex (hooks.json + notify + watcher), workflow (ultracode journal watcher), detail (local-only hook facts)
 │           ├── hub/           # hub forward: git (.git reader), rules (SPEC §3.3 reductions), redact (SPEC §9), transcript (tailer), forwarder (batching/retry)
 │           └── sinks/         # relay, slack-direct, console
 ├── apps/
 │   └── menubar/               # native SwiftUI macOS menu bar app (thin daemon client)
-│       ├── Sources/AgentblipMenuBar/  # App, AppModel(poll loop), DaemonClient, Models, StatusIcon, MenuContent, SessionRow, Notifier
-│       └── scripts/make-app.sh        # SwiftPM build → agentblip.app (LSUIElement)
+│       ├── Sources/WorkmeshMenuBar/   # App, AppModel(poll loop), DaemonClient, Models, StatusIcon, MenuContent, SessionRow, Notifier
+│       └── scripts/make-app.sh        # SwiftPM build → Workmesh.app (LSUIElement)
 └── docs/                      # SELF_HOSTING.md, INTEGRATIONS.md, slack-app-manifest
 ```
 
@@ -95,7 +96,7 @@ Any tool (curl) ───┼─────────────────�
 - `POST /pause` — empty body pauses until resumed; `{for: "30m"|"1h"|"tomorrow"}` or `{until}` snoozes, the pusher's sweep tick auto-resumes (`lib/snooze.ts`); `/state.pausedUntil`
 - `POST /sessions/dismiss {key}` — drops a session (`SessionStore.remove`); it returns with its next event
 - `GET /config` — token-free `safeConfig` view · `POST /config` — live-tune `granularity`/`statusPolicy`/`showProject`/`repoPrefix` (validated by `liveConfigPatchSchema`, applied via `pusher.applyConfig()`, persisted). Used by the menu bar app.
-- `GET /hub` — hub forwarder status (`{enabled:false}` when not paired) · `POST /hub/reload` — re-read the config's `hub` section and restart the forwarder (used by `agentblip hub connect|disconnect|include|exclude`)
+- `GET /hub` — hub forwarder status (`{enabled:false}` when not paired) · `POST /hub/reload` — re-read the config's `hub` section and restart the forwarder (used by `workmesh hub connect|disconnect|include|exclude`)
 - `/state` sessions are `SessionView`s: `stateSince`, `background`, `cwd`, `name` (local only), `subagents` + `foldedInto` (fan-out folding). Keep it additive: the menu bar app and Sean's desk clock (~/dev/studio-pixbar) both read it.
 
 Wire contracts: `packages/core/src/events.ts` (zod schemas, shared CLI ↔ Worker). Hub wire format: `packages/core/src/hub.ts`.
@@ -106,19 +107,19 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 `SPEC.md` §3 in `b3-fun/bullpen`; hub at https://bullpen.b3os.org).
 
 - Hook mappers fill a local-only `SessionEvent.detail` (tool, absolute path, raw command, raw prompt, truncated shell
-  output, ok). It goes hook → daemon on loopback only; `SessionStore` never copies it, so Slack and the agentblip relay
+  output, ok). It goes hook → daemon on loopback only; `SessionStore` never copies it, so Slack and the Workmesh relay
   never see it (tested in `test/detail.test.ts`).
 - `HubForwarder` (`packages/cli/src/hub/forwarder.ts`) runs when config has `hub`. `observe()` is sync and cheap;
   network runs on its own 1 s timer. Inclusion: path → git root + origin (read from `.git`, no subprocess, worktrees →
   main repo), shared when origin contains an `include.remotes` entry or sits under an include dir; `hub exclude` dirs
-  beat everything. Sessions in an unshared cwd follow SPEC rule 4. Labels are reduced to agentblip's fixed vocabulary;
+  beat everything. Sessions in an unshared cwd follow SPEC rule 4. Labels are reduced to Workmesh's fixed vocabulary;
   `cmd` is program + one subcommand from an allow list; issues/PRs are extracted locally.
 - Every record is validated against strict schemas that mirror the hub's own validation; a bad optional field is
   dropped rather than costing the batch a 400. Full heartbeat every 30 s, 5,000-event buffer, stable ids, backoff,
   `Retry-After`, halt on 401.
-- Pairing: `agentblip hub connect <url>` (device code). Token + project rule live in `config.json` (0600) under `hub`;
+- Pairing: `workmesh hub connect <url>` (device code). Token + project rule live in `config.json` (0600) under `hub`;
   a malformed `hub` section reads as unpaired instead of breaking the Slack config.
-- Codex: `agentblip setup` merges `~/.codex/hooks.json`; `hook codex-hooks` maps it. Codex needs `/hooks` trust once.
+- Codex: `workmesh setup` merges `~/.codex/hooks.json`; `hook codex-hooks` maps it. Codex needs `/hooks` trust once.
 - Sharing level (0.7.0, SPEC §8-10): `hub.share` in config (absent = `metadata`), set by `hub connect --share` (a
   terminal asks, suggesting the earlier choice, else the project's `defaultShare`, else metadata; no terminal keeps
   the earlier choice or metadata) and `hub share <level>`. Every ingest body carries `share`.
@@ -156,29 +157,32 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 | 2026-07-06 | Rolling `status_expiration` (5 min default) | Dead daemon → status auto-clears; no stale "working" lies |
 | 2026-07-06 | Hook/adapter events → tiny localhost HTTP API | One integration surface; Claude Code hooks, Codex, and any custom tool all speak the same `POST /event` |
 | 2026-07-07 | macOS menu bar app is a thin native SwiftUI client of the daemon's loopback API (apps/menubar), NOT a reimplementation | Preserves DRY — all logic stays in core/daemon; app is presentation+control only. SwiftPM executable + make-app.sh bundle (no Xcode/pbxproj), so it builds from CLI. Needed a live `GET`/`POST /config` on the daemon so the app retunes settings without a restart |
-| 2026-07-08 | Fan-out reporting: a session carries an `agents` count + `phase`; `StatusSnapshot.agentCount` = Σ agents over working sessions is what "N agents working" shows. `agentblip report` is the orchestrator wrapper | Claude Code hooks fire per session and expose no subagent/workflow count (verified live: a 10-agent workflow folds into one session). Self-reporting is the only way to make the "N agents working" headline true for ultracode/CI fan-out. Plain sessions unchanged (agentCount == working) |
-| 2026-07-08 | Workflow watcher adapter (packages/cli/src/adapters/workflow.ts) polls Claude Code's `~/.claude/projects/**/subagents/workflows/*/journal.jsonl` (started − result = live agents) and auto-reports each ultracode workflow as a `workflow:<runId>` session | Ships in the CLI so *every* user gets accurate "N agents working" for ultracode with zero setup — the only automatic route, since agentblip can't change the Workflow tool itself. Poll-based (bounded cost over the deep tree), pure `stepWorkflows`/`liveAgentCount` for testability, degrades to no-op on missing dir/format. Verified live: 5-agent workflow → "5 agents · running a workflow" → drained → cleared |
+| 2026-07-08 | Fan-out reporting: a session carries an `agents` count + `phase`; `StatusSnapshot.agentCount` = Σ agents over working sessions is what "N agents working" shows. `workmesh report` is the orchestrator wrapper | Claude Code hooks fire per session and expose no subagent/workflow count (verified live: a 10-agent workflow folds into one session). Self-reporting is the only way to make the "N agents working" headline true for ultracode/CI fan-out. Plain sessions unchanged (agentCount == working) |
+| 2026-07-08 | Workflow watcher adapter (packages/cli/src/adapters/workflow.ts) polls Claude Code's `~/.claude/projects/**/subagents/workflows/*/journal.jsonl` (started − result = live agents) and auto-reports each ultracode workflow as a `workflow:<runId>` session | Ships in the CLI so *every* user gets accurate "N agents working" for ultracode with zero setup — the only automatic route, since Workmesh can't change the Workflow tool itself. Poll-based (bounded cost over the deep tree), pure `stepWorkflows`/`liveAgentCount` for testability, degrades to no-op on missing dir/format. Verified live: 5-agent workflow → "5 agents · running a workflow" → drained → cleared |
 | 2026-07-06 | npm workspaces (core, cli) + root Worker app | Matches newest house projects (littledemo, motioness); core stays source-only, bundled by consumers |
 | 2026-07-06 | RR7 SSR framework mode | Current house standard (extractvibe, stackhooks, ogrender) |
 | 2026-07-06 | Static OG image v1 (no satori) | One marketing page; not worth the wasm weight yet |
 | 2026-07-06 | Daemon port 4519 | Unassigned range, no common collisions |
-| 2026-07-06 | Daemon loopback API requires an auto-generated bearer secret (`~/.local/state/agentblip/daemon.secret`, 0600) on `/event` `/state` `/pause` `/resume`; `/health` open | localhost isn't a trust boundary — blocks other local users and browser-based (DNS-rebinding) event injection |
+| 2026-07-06 | Daemon loopback API requires an auto-generated bearer secret (`~/.local/state/workmesh/daemon.secret`, 0600) on `/event` `/state` `/pause` `/resume`; `/health` open | localhost isn't a trust boundary — blocks other local users and browser-based (DNS-rebinding) event injection |
 | 2026-07-06 | Pairing handover: plaintext device token only in the pair record (≤15 min, single-use + 60s delivered-grace); device records provisional (24h TTL) until first authenticated use | Keeps privacy claims strictly true; abandoned pairings self-clean |
-| 2026-07-06 | Status ownership protocol: new `users.profile:read` user scope; daemon reads current status before each push, core `planStatusUpdate()` (packages/core/src/ownership.ts) decides push/restore/clear/skip; `statusPolicy: "respect"` (default) never overwrites a foreign status and resumes when it clears, `"overwrite"` saves the displaced status and restores it on clear; a manual mid-session change always wins; tokens without the read scope degrade to legacy blind pushes (`readable:false`) | agentblip must never clobber a status it didn't set; the status field is shared with the human and other apps |
+| 2026-07-06 | Status ownership protocol: new `users.profile:read` user scope; daemon reads current status before each push, core `planStatusUpdate()` (packages/core/src/ownership.ts) decides push/restore/clear/skip; `statusPolicy: "respect"` (default) never overwrites a foreign status and resumes when it clears, `"overwrite"` saves the displaced status and restores it on clear; a manual mid-session change always wins; tokens without the read scope degrade to legacy blind pushes (`readable:false`) | Workmesh must never clobber a status it didn't set; the status field is shared with the human and other apps |
 
 | 2026-11-23 | Claude Code `idle_prompt` is "needs my input" only when the turn ended by asking: the hook reads the transcript tail (64 KB → 1 MB) for the last assistant text (question mark, ask phrases, "## Needs your OK" headings, negation-aware) or an unanswered AskUserQuestion/ExitPlanMode; otherwise idle/"done"; background work → working/background; unreadable → waiting | The idle reminder fires for every unanswered turn, so Slack/menu bar/desk clock said "waiting on me" for turns waiting on a colleague. ~1 ms on 400 MB transcripts |
 | 2026-11-23 | Daemon liveness probe over `~/.claude/sessions/<pid>.json` every 15s (`daemon/claude-liveness.ts`): reap a session seen alive then gone > 2 min; `SessionStore.touch` working sessions Claude reports busy/shell; annotate session names | Crashed sessions never send SessionEnd. Never reaps a session it never saw alive (older Claude Code, other config dirs). `touch` is separate from `updatedAt` so a probe can't make apply() drop a real hook event as out-of-order |
-| 2026-11-24 | Hub forward (0.6.0): local-only `detail` on SessionEvent + `HubForwarder` beside the pusher; relay schemas mirror the hub's validation | Bullpen needs per-tool-call metadata, but the agentblip relay's privacy-by-construction must hold. Detail never reaches a session, Slack or the relay; the forwarder reduces it to allow-listed metadata, and strict schemas make extra fields unsendable |
+| 2026-11-24 | Hub forward (0.6.0): local-only `detail` on SessionEvent + `HubForwarder` beside the pusher; relay schemas mirror the hub's validation | Bullpen needs per-tool-call metadata, but the Workmesh relay's privacy-by-construction must hold. Detail never reaches a session, Slack or the relay; the forwarder reduces it to allow-listed metadata, and strict schemas make extra fields unsendable |
 | 2026-11-24 | Codex lifecycle hooks via `~/.codex/hooks.json` (merge, never overwrite), notify + watcher kept as fallbacks | Codex 0.16x has Claude-Code-style hooks; payload fields verified against the JSON schemas embedded in the codex binary. Gives Codex tool-level activity and a real waiting state (`PermissionRequest`, `request_user_input`) |
 | 2026-11-24 | Git resolution reads `.git` files directly (HEAD, commondir, config) with a 5 s cache | The forwarder sits in the daemon's request path; spawning `git` per event would block it |
 | 2026-11-24 | Conversation sharing (0.7.0): opt-in `conversation` level; text only from cwd-shared sessions, from the moment they are shared; redaction on the machine before queueing | Sean asked for prompts and agent updates on the board. Rule-4 orchestrators (cwd outside shared repos) work on other repos too, so their text stays home; starting the transcript tail at the file's current end makes "nothing before sharing" structural, not a filter |
 | 2026-11-24 | Redaction tuned against real agent text (shapes only) | A pattern list alone mangled markdown labels, secret names, doc links and timestamps; a local audit over ~16.7k real assistant blocks found them without copying any content |
+| 2026-11-24 | Rename to Workmesh (Sean): `@b3os/workmesh` (bins `workmesh` + `agentblip` alias), `@workmesh/core`, `~/.config/workmesh` + `~/.local/state/workmesh`, `WORKMESH_*` env, `Workmesh.app` / `org.npclabs.workmesh.menubar`, repo b3-fun/workmesh. Old names are read, never written: every CLI start copies a missing config.json / daemon.secret / ownership.json from the agentblip dirs (≤ 0600, no clobber, old kept); `AGENTBLIP_*` env fallbacks; hook installers recognise agentblip/crewblip/workmesh commands and repoint them; the daemon mirrors its secret to the old state dir while it exists (older menu bar app, desk clock, hooks of an old checkout). Worker name, routes, KV and agentblip.com unchanged | Ties in with B3IQ's Workcell; one name for relay + hub. Renaming the Worker would orphan the live site and its device records; copying (not moving) keeps a rollback path |
+| 2026-11-24 | `stop` returns only after the daemon exits (SIGTERM, 5 s, SIGKILL); a starting daemon ignores a pidfile whose process is gone or isn't ours (`ps` command line), and waits for one still shutting down; a daemon removes the pidfile only if it still names itself; `workmesh restart` | `stop && start --detach` raced a daemon still clearing its status: the hook-spawned or explicit start saw the live pid and died, leaving nothing running |
 | 2026-11-23 | Menu bar 0.2: grouped live list, SF Symbol template icon (orange only for needs-you), row actions, snooze; all new data via `/state` fields and daemon endpoints | Keeps the thin-client rule; roadmap in apps/menubar/README.md |
 
 ## Cloudflare Resources
 
 | Resource | Binding | Notes |
 |---|---|---|
+| Worker | — | script name `agentblip` (kept through the Workmesh rename; routes agentblip.com + www) |
 | KV | STORE | id in wrangler.jsonc (create per-deploy) |
 | Var | BASE_URL | https://agentblip.com |
 | Var | SLACK_CLIENT_ID | public by design |
@@ -202,7 +206,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - [x] 0.6.0 (merged): hub forward + `hub` commands + Codex hooks — CLI 307 tests, core 53, worker 62
 - [x] 0.7.0 (branch `hub-conversation`, not merged/published): sharing levels, redaction, prompt/message/desc/turn capture, transcript tailing — CLI 451 tests, core 59, worker 62
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain
-- [x] GitHub github.com/b3-fun/agentblip public, CI + push-to-deploy green (secrets set)
+- [x] GitHub github.com/b3-fun/workmesh public, CI + push-to-deploy green (secrets set)
 - [x] E2E smoke: daemon lifecycle + live relay pairing/auth verified
 
 ### Pending (needs Sean)
@@ -220,6 +224,10 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - Deployed to agentblip.com (KV cb8fd24c…, secrets set; SLACK_CLIENT_SECRET is a placeholder until the Slack app exists)
 - Next: Slack app creds, npm publish, real-world dogfood with Claude Code hooks
 
+### 2026-11-24 — Renamed to Workmesh
+- Repo b3-fun/workmesh, npm `@b3os/workmesh`, `@workmesh/core`, workmesh config/state dirs with a one-time copy from agentblip's, `WORKMESH_*` env, Workmesh.app, site copy (team board section); `stop` waits for exit, `restart` added
+- Kept on purpose: the `agentblip` bin alias, reads of the old dirs/env/hook commands, agentblip.com and the Worker/KV names
+
 ## Roadmap
 
-`ROADMAP.md` is the project roadmap (Workmesh: agentblip + the Bullpen hub, becoming one system). Update it in the same PR as any work that changes an item's status, and log product decisions there.
+`ROADMAP.md` is the project roadmap (Workmesh: the relay, formerly agentblip, plus the Bullpen hub, becoming one system). Update it in the same PR as any work that changes an item's status, and log product decisions there.

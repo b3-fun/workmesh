@@ -1,4 +1,4 @@
-# Contributing to agentblip
+# Contributing to Workmesh
 
 Thanks for helping. This is a small, sharp codebase — the goal is to keep it that way.
 
@@ -7,8 +7,8 @@ Thanks for helping. This is a small, sharp codebase — the goal is to keep it t
 Node.js 20+ (CI runs 22):
 
 ```bash
-git clone https://github.com/b3-fun/agentblip.git
-cd agentblip
+git clone https://github.com/b3-fun/workmesh.git
+cd workmesh
 npm ci
 npm run dev        # Worker + React Router site (relay + landing/pair pages)
 ```
@@ -30,8 +30,10 @@ app/               React Router v7 site (landing, /pair, privacy)
 packages/core/     @workmesh/core — zod wire contracts (events.ts), session
                    aggregation (aggregate.ts), status formatting (format.ts).
                    The shared contract: CLI and Worker both import from here.
-packages/cli/      the `agentblip` npm package — daemon, commands,
-                   adapters (claude-code, codex), sinks (relay, slack, console)
+packages/cli/      the @b3os/workmesh npm package (command `workmesh`) — daemon,
+                   commands, adapters (claude-code, codex), hub forward,
+                   sinks (relay, slack, console)
+apps/menubar/      Workmesh.app, the SwiftUI menu bar client of the daemon
 docs/              SELF_HOSTING.md, INTEGRATIONS.md, slack-app-manifest.json
 ```
 
@@ -44,7 +46,8 @@ npm run build       # Worker/site build
 npm run build -w @b3os/workmesh   # CLI build
 ```
 
-All four must pass — CI runs exactly these.
+All four must pass — CI runs exactly these. Touching the menu bar app? Also
+`cd apps/menubar && ./scripts/make-app.sh` (macOS only, not in CI).
 
 ## PRs
 

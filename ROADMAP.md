@@ -15,8 +15,8 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 |---|---|---|
 | v0 See | Every B3 session on one live board; metadata only; Access login; pairing | **done** (11-24) |
 | v0.2 Conversation + summaries | Prompts, agent messages, tool descriptions, turn durations; now lines, turn summaries, waiting reasons, digest (OpenRouter) | **done** on the hub; relay 0.7.0 merged; first `@b3os/workmesh` publish in progress |
-| v0.3 B3OS look | Board rebuilt from the B3OS console component library, exactly | **in progress** |
-| v0.4 One system | Monorepo, rename to Workmesh, shared protocol package | **next** |
+| v0.3 B3OS look | Board rebuilt from the B3OS console component library, exactly | **done** (11-24) |
+| v0.4 One system | Monorepo, rename to Workmesh, shared protocol package | **in progress** (relay rename on `workmesh-rename`) |
 | v0.5 Multiplayer menu bar | The team in the menu bar | **next** |
 | v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **next** |
 | v1 Coordinate | Claims, file leases, hold, Linear agent identities | later |
@@ -25,17 +25,19 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 
 ## Next up, in detail
 
-### v0.3 B3OS look (in progress)
-- Board vendors the B3OS console library (b3os-beta `apps/web/src/ds`, tokens, fonts) and follows its design rules:
-  skeleton reveal, no banners, no accent borders, everything reachable at 390 px.
-- No model or provider names in the UI.
+### v0.3 B3OS look (done 11-24)
+- Board rebuilt from 85 vendored b3os-beta console files (`src/board/b3os` at 65e00f860), deployed as Worker version
+  64de1c82. It follows the console's design rules: skeleton reveal, no banners, no accent borders, everything
+  reachable at 390 px.
+- Everything visible says Workmesh; no model or provider names in the UI.
 
 ### v0.4 One system
 - Move the hub and board into this repo: `apps/hub` (Worker + Durable Object), `apps/board` (React), with git history.
 - One protocol package (`packages/protocol`): the wire schemas both the relay and the hub validate against. One SPEC.
-- Rename: repo `b3-fun/workmesh`, npm `@b3os/workmesh` (published from the npclabs account; the `agentblip` command
-  stays as an alias), `Workmesh.app` in the menu bar. Hub at `workmesh.b3os.org` (the bare workmesh domains are taken);
-  agentblip.com points here.
+- Rename: repo `b3-fun/workmesh` (done), npm `@b3os/workmesh` (published from the npclabs account; the `agentblip`
+  command stays as an alias), `Workmesh.app` in the menu bar. Hub at `workmesh.b3os.org` (the bare workmesh domains are
+  taken); agentblip.com points here. Relay side renamed on branch `workmesh-rename`: code, docs, CLI dirs and env, menu
+  bar app, site copy.
 - Archive `b3-fun/bullpen` with a pointer here. `bullpen.b3os.org` stays as B3's hosted hub.
 - One CI: relay tests, hub tests, board build; hub deploys from `main`.
 
@@ -77,6 +79,12 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 - 11-24 Board design is the B3OS console's, copied exactly from its component library.
 - 11-24 agentblip moved to b3-fun; agentblip and Bullpen become one system in one public monorepo.
 - 11-24 Name: Workmesh (Sean), to tie in with Workcell. npm `@b3os/workmesh` under the B3OS scope, published by npclabs.
+- 11-24 Repo renamed to b3-fun/workmesh; Access apps renamed and cover workmesh.b3os.org + bullpen.b3os.org (same AUD);
+  Worker script name stays `bullpen` because its Durable Object holds the pairings.
+- 11-24 Relay renamed everywhere (code, docs, `~/.config/workmesh`, `WORKMESH_*`, `Workmesh.app`, site copy). Old names
+  are read, never written: the `agentblip` command alias, a one-time copy of config and state from the agentblip dirs,
+  `AGENTBLIP_*` env fallbacks, hook repointing. agentblip.com and its Worker, routes and KV keep their names so the
+  live site and its Slack device records survive.
 
 ## Links
 

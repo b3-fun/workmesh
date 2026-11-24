@@ -1,21 +1,21 @@
-# Integrating with agentblip
+# Integrating with Workmesh
 
-The daemon's localhost HTTP API is agentblip's stable public interface. Claude Code
-hooks, the Codex adapter, and `agentblip emit` all speak it — and so can anything you
+The daemon's localhost HTTP API is Workmesh's stable public interface. Claude Code
+hooks, the Codex adapter, and `workmesh emit` all speak it — and so can anything you
 build. If your tool can make an HTTP request, it can be a blip.
 
 ## The daemon API
 
 Loopback only, default `http://127.0.0.1:4519` (`port` in
-`~/.config/agentblip/config.json`).
+`~/.config/workmesh/config.json`).
 
 Every endpoint except `GET /health` requires the daemon's local API secret as a
 bearer token. The daemon generates the secret automatically and stores it with
-`0600` permissions at `~/.local/state/agentblip/daemon.secret` (`XDG_STATE_HOME`
+`0600` permissions at `~/.local/state/workmesh/daemon.secret` (`XDG_STATE_HOME`
 respected). Grab it in one line:
 
 ```bash
-AUTH="authorization: Bearer $(cat ~/.local/state/agentblip/daemon.secret)"
+AUTH="authorization: Bearer $(cat ~/.local/state/workmesh/daemon.secret)"
 ```
 
 | Method & path | Body | Purpose |
@@ -32,7 +32,7 @@ AUTH="authorization: Bearer $(cat ~/.local/state/agentblip/daemon.secret)"
 
 `GET /state` returns the daemon's full view, including an `ownership` block — the
 state of the [status-ownership machine](../packages/core/src/ownership.ts) that keeps
-agentblip from overwriting a Slack status it didn't set:
+Workmesh from overwriting a Slack status it didn't set:
 
 ```json
 {
@@ -44,9 +44,9 @@ agentblip from overwriting a Slack status it didn't set:
         "sessionId": "abc123",
         "state": "working",
         "activity": "editing format.ts",
-        "project": "agentblip",
-        "cwd": "/Users/you/code/agentblip",
-        "name": "agentblip-3f",
+        "project": "workmesh",
+        "cwd": "/Users/you/code/workmesh",
+        "name": "workmesh-3f",
         "agents": 1,
         "subagents": 0,
         "startedAt": 1751830000000,
@@ -113,7 +113,7 @@ while snoozed.
 `GET /state`'s snapshot reports both `working` (number of working *sessions*) and
 `agentCount` (sum of each working session's `agents`). "N agents working" uses
 `agentCount`, so one session that reports `agents: 5` shows as five. The
-[`agentblip report`](#) command is the friendly wrapper for this — see the README's
+[`workmesh report`](#) command is the friendly wrapper for this — see the README's
 "Report a fan-out" section.
 
 Well-known sources get friendly display names in status text (`claude-code` →
@@ -168,7 +168,7 @@ Start working:
 
 ```bash
 curl -s -X POST http://127.0.0.1:4519/event \
-  -H "authorization: Bearer $(cat ~/.local/state/agentblip/daemon.secret)" \
+  -H "authorization: Bearer $(cat ~/.local/state/workmesh/daemon.secret)" \
   -H "content-type: application/json" \
   -d '{"source":"my-agent","sessionId":"run-42","kind":"working","activity":"training model","project":"acme-api"}'
 ```
@@ -177,7 +177,7 @@ Finish:
 
 ```bash
 curl -s -X POST http://127.0.0.1:4519/event \
-  -H "authorization: Bearer $(cat ~/.local/state/agentblip/daemon.secret)" \
+  -H "authorization: Bearer $(cat ~/.local/state/workmesh/daemon.secret)" \
   -H "content-type: application/json" \
   -d '{"source":"my-agent","sessionId":"run-42","kind":"end"}'
 ```
@@ -189,7 +189,7 @@ blip() {
   local label="$1"; shift
   local sid="shell-$$-$RANDOM"
   local url="http://127.0.0.1:4519/event"
-  local state="${XDG_STATE_HOME:-$HOME/.local/state}/agentblip"
+  local state="${XDG_STATE_HOME:-$HOME/.local/state}/workmesh"
   local auth="authorization: Bearer $(cat "$state/daemon.secret")"
   curl -s -o /dev/null -X POST "$url" -H "$auth" -H "content-type: application/json" \
     -d "{\"source\":\"shell\",\"sessionId\":\"$sid\",\"kind\":\"working\",\"activity\":\"$label\",\"project\":\"$(basename "$PWD")\"}"
@@ -203,8 +203,8 @@ blip() {
 blip "running the eval suite" npm test
 ```
 
-For shell scripting without hand-rolled curl, `agentblip emit` wraps `POST /event`,
-and `agentblip hook <source>` adapts hook JSON on stdin into events.
+For shell scripting without hand-rolled curl, `workmesh emit` wraps `POST /event`,
+and `workmesh hook <source>` adapts hook JSON on stdin into events.
 
 ## Writing an adapter
 
@@ -228,7 +228,7 @@ implementations.
 ## Workflow watcher (ultracode fan-out)
 
 Claude Code fires hooks per session, so a single session that fans out into an
-ultracode `Workflow` can't tell agentblip how many agents are running. The daemon's
+ultracode `Workflow` can't tell Workmesh how many agents are running. The daemon's
 `workflow` adapter fills that gap: it polls Claude Code's per-workflow journals
 (`~/.claude/projects/**/subagents/workflows/*/journal.jsonl`), where each agent writes
 a `started` line on spawn and a `result` line on finish. Live agents = `started −

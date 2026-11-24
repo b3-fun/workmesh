@@ -1,16 +1,25 @@
-# agentblip
+# Workmesh
 
-Your Slack status, synced with your local AI agent sessions. Each Claude Code, Codex, or custom agent session becomes a blip on your team's radar: `claude agent working`, `3 agents working`, `claude: finalizing CI/CD`.
+Your team's coding agents (Claude Code, Codex, anything that can make an HTTP request), live on one board and in your Slack status. Formerly `agentblip`: that command still works as an alias, and an agentblip install's config, pairings and hooks carry over on first run.
 
 ```sh
 npm install -g @b3os/workmesh
-agentblip setup            # pair with Slack, pick a privacy level, install hooks
-agentblip start --detach   # run the sync daemon
-agentblip status           # see live sessions and what your status would say
+workmesh setup --hooks-only      # install Claude Code + Codex hooks
+workmesh start --detach          # run the daemon in the background
+workmesh hub connect <url>       # join your team's board (approve in the browser)
 ```
 
-Privacy by construction: the local daemon is the only thing that sees raw session data — the relay only ever receives the final pre-formatted status text. Granularity levels (`off` / `presence` / `count` / `activity`) control how much your status reveals, and a rolling expiration auto-clears your status if the daemon dies.
+Want your Slack status too? Run `workmesh setup` (pairs Slack, picks how much your status says, installs the hooks). Then:
 
-Docs, self-hosting, and source: [agentblip.com](https://agentblip.com) · [github.com/b3-fun/agentblip](https://github.com/b3-fun/agentblip)
+```sh
+workmesh status                  # live sessions and what your status would say
+workmesh hub share conversation  # or metadata: what your team's board gets
+workmesh restart                 # after a config change
+workmesh doctor                  # check everything
+```
+
+Privacy by construction: the local daemon is the only thing that sees raw session data. The Slack relay only ever receives the final status text, and a rolling expiration clears it if the daemon dies. The team board gets sessions from the repos your team shares, at the level you pick (`metadata`, or `conversation` with prompts and agent replies), redacted on your machine before anything is queued.
+
+Docs, self-hosting, and source: [github.com/b3-fun/workmesh](https://github.com/b3-fun/workmesh) · [agentblip.com](https://agentblip.com)
 
 MIT © Sean Geng

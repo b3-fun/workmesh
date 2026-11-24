@@ -1,4 +1,4 @@
-# Self-hosting agentblip
+# Self-hosting Workmesh
 
 The relay is a single Cloudflare Worker with one KV namespace and two secrets. No
 database, no queue, no cron. Cloudflare's free tier covers a team comfortably.
@@ -30,8 +30,8 @@ What the relay stores (KV only):
 ## 1. Fork and clone
 
 ```bash
-git clone https://github.com/<you>/agentblip.git
-cd agentblip
+git clone https://github.com/<you>/workmesh.git
+cd workmesh
 npm ci
 npx wrangler login
 ```
@@ -61,13 +61,13 @@ Copy the generated id into `wrangler.jsonc`:
    **Client Secret**.
 
 The app requests two user scopes: `users.profile:write` (set your status) and
-`users.profile:read` (read the current status before each update, so agentblip never
+`users.profile:read` (read the current status before each update, so Workmesh never
 overwrites a status it didn't set). It can touch your status and nothing else.
 
 > **Upgrading an existing install?** The `users.profile:read` scope is new. Update
 > your Slack app's manifest at [api.slack.com/apps](https://api.slack.com/apps) (your
 > app → **App Manifest** page) to match `docs/slack-app-manifest.json`, then have
-> users re-pair (`agentblip unlink && agentblip setup`) so their tokens carry the new
+> users re-pair (`workmesh unlink && workmesh setup`) so their tokens carry the new
 > scope. Tokens without it keep working, but degrade to the old blind-push behavior —
 > the relay reports `readable: false` and the daemon can't respect existing statuses.
 
@@ -116,20 +116,21 @@ Pushes to `main` auto-deploy via `.github/workflows/deploy.yml` once you add
 ## 7. Point the CLI at your relay
 
 ```bash
-agentblip setup --relay-url https://your.domain
+workmesh setup --relay-url https://your.domain
 ```
 
-Or run plain `agentblip setup`, choose **relay** at the mode select
+Or run plain `workmesh setup`, choose **relay** at the mode select
 (relay / slack / console), and enter `https://your.domain` at the **Relay URL**
-prompt (it defaults to `https://agentblip.com`). The `AGENTBLIP_RELAY_URL`
-environment variable overrides the configured `relayUrl` at runtime.
+prompt (it defaults to `https://agentblip.com`). The `WORKMESH_RELAY_URL`
+environment variable overrides the configured `relayUrl` at runtime (the
+pre-rename `AGENTBLIP_RELAY_URL` still works when it is unset).
 
 Everyone on your team does the same — one relay serves any number of devices and
 Slack users.
 
 ## No server at all: direct mode
 
-If even a dumb relay is more infrastructure than you want, `agentblip setup` offers
+If even a dumb relay is more infrastructure than you want, `workmesh setup` offers
 direct mode: the daemon calls Slack's API from your machine using a user token from
 your own Slack app (same manifest, minus the redirect URL plumbing). Nothing sits
 between you and Slack.

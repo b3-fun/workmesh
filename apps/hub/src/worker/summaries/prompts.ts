@@ -128,7 +128,8 @@ export function activityBlock(events: EventInfo[], person: string, budget = CONT
     if (!line) continue;
     if (used + line.length + 1 > budget) {
       const first = events[0] && eventLine(events[0], person, 600);
-      if (first && i > 0 && used + first.length < budget + 600) lines.push(first, "…");
+      // Lines are collected newest first, so this reads "prompt, …, newest lines" once reversed.
+      if (first && i > 0 && used + first.length < budget + 600) lines.push("…", first);
       break;
     }
     lines.push(line);

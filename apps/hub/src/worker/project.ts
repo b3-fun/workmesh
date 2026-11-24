@@ -406,6 +406,8 @@ export class Project extends DurableObject<Env> {
   /** undefined: choose from env. Tests set a fake (or null) here. */
   private providerOverride: SummaryProvider | null | undefined;
   private providerFromEnv: SummaryProvider | null | undefined;
+  /** Test hook: jobs run only when runSummaries is called, never from a real alarm. */
+  private manualSummaries = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -944,7 +946,7 @@ export class Project extends DurableObject<Env> {
       this.setMeta("next_prune_at", now + HOUR);
     }
     try {
-      await this.runSummaries(now);
+      if (!this.manualSummaries) await this.runSummaries(now);
     } catch (err) {
       console.error("summaries failed", err instanceof Error ? err.message : String(err));
     }
@@ -953,6 +955,7 @@ export class Project extends DurableObject<Env> {
 
   private nextAlarmAt(): number {
     const prune = Number(this.meta("next_prune_at") ?? 0) || Date.now() + HOUR;
+    if (this.manualSummaries) return prune;
     const job = this.sql.exec<{ d: number | null }>("SELECT MIN(due_at) AS d FROM summary_jobs").one().d;
     return job == null ? prune : Math.min(prune, job);
   }
@@ -994,8 +997,9 @@ export class Project extends DurableObject<Env> {
   }
 
   /** Test hook: a fake provider, or null for summaries off; undefined goes back to env. */
-  setSummaryProvider(p: SummaryProvider | null | undefined): void {
+  setSummaryProvider(p: SummaryProvider | null | undefined, opts: { manual?: boolean } = {}): void {
     this.providerOverride = p;
+    this.manualSummaries = opts.manual ?? false;
   }
 
   private enqueue(triggers: Map<string, Trigger>, now: number): void {

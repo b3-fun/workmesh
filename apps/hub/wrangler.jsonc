@@ -20,7 +20,7 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Project"] }],
   // Summaries (SPEC.md §11): SUMMARY_MODEL on OpenRouter when the OPENROUTER_API_KEY secret is set, else Workers AI.
-  "ai": { "binding": "AI" },
+  "ai": { "binding": "AI", "remote": true },
   "vars": {
     "ENVIRONMENT": "production",
     "ACCESS_TEAM_DOMAIN": "npclabs.cloudflareaccess.com",

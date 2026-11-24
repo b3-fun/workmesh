@@ -353,6 +353,9 @@ export class HubForwarder {
     await Promise.race([
       (async () => {
         await this.inFlight;
+        // Turns still waiting for their record end now, with what is known.
+        const now = this.now();
+        for (const t of this.sessions.values()) if (t.pendingTurn) t.pendingTurn.deadline = now;
         await this.flushTranscripts(2);
         if (this.queue.length > 0) await this.tick(true);
       })(),
@@ -774,11 +777,15 @@ export class HubForwarder {
     }
   }
 
-  /** Stops past their wait: the record never came, so prompt → stop it is. */
+  /**
+   * Settles Stops: at once when the turn's record is already in hand (Codex
+   * writes task_complete before its Stop hook), else after the wait, falling
+   * back to prompt → stop when the record never came.
+   */
   private finalizeTurns(now: number): void {
     for (const t of this.sessions.values()) {
       const p = t.pendingTurn;
-      if (!p || now < p.deadline) continue;
+      if (!p || (now < p.deadline && !t.turnRecord)) continue;
       t.pendingTurn = undefined;
       if (!this.conversationShared(t)) continue;
       let ms: number | undefined;

@@ -351,6 +351,21 @@ describe("Codex (recorded-style payloads and rollout lines)", () => {
     fs.rmSync(f);
   });
 
+  it("a task_complete read before the Stop hook ends the turn at Stop, without the wait", async () => {
+    const h = harness({ turnRecordWaitMs: 60_000 });
+    const id = "019ab5c2-6000-7000-8000-00000000aaaa";
+    const f = path.join(codexSessions, `rollout-y-${id}.jsonl`);
+    fs.writeFileSync(f, "");
+    h.codex(id, beta, f, { hook_event_name: "UserPromptSubmit", prompt: "go" });
+    append(f, cx.assistant("done", "q1", NOW + 10), cx.taskComplete(4321, NOW + 20));
+    // the rollout watcher's "working" event makes the daemon read before Stop arrives
+    h.codex(id, beta, f, { hook_event_name: "PreToolUse", tool_name: "update_plan", tool_input: {} });
+    await h.fwd.flushTranscripts();
+    h.codex(id, beta, f, { hook_event_name: "Stop", last_assistant_message: "done" });
+    await h.send();
+    expect(h.events(`codex:${id}`).filter((e) => e.kind === "turn")).toEqual([expect.objectContaining({ durationMs: 4321 })]);
+  });
+
   it("a thread with no rollout file (SQLite history) falls back to Stop's last_assistant_message", async () => {
     const h = harness();
     const id = "019ab5c2-2000-7000-8000-0000000051e7";
@@ -379,6 +394,20 @@ describe("Codex (recorded-style payloads and rollout lines)", () => {
     const all = h.raw.join("\n");
     expect(all).not.toContain("BEFORE_SHARE_TEXT");
     expect(all).not.toContain("SUBAGENT_ROLLOUT_TEXT");
+  });
+});
+
+describe("forwarder restarts (hub share, hub connect)", () => {
+  it("stop() settles a turn still waiting for its record and sends it", async () => {
+    const h = harness({ turnRecordWaitMs: 60_000 });
+    const t = transcript("restart");
+    h.claude("restart", beta, t, { hook_event_name: "UserPromptSubmit", prompt: "go" });
+    h.advance(2000);
+    h.claude("restart", beta, t, { hook_event_name: "Stop" });
+    await h.send();
+    expect(h.events().some((e) => e.kind === "turn")).toBe(false);
+    await h.fwd.stop();
+    expect(h.events().find((e) => e.kind === "turn")).toMatchObject({ durationMs: 2000 });
   });
 });
 

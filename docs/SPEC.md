@@ -12,7 +12,7 @@ https://workmesh.b3os.org; the hosted hub's code and internals are private (§14
 | Hub | hosted by B3 (private) | Pairs machines, keeps what they share, writes summaries, serves the board. |
 
 If this file and the code disagree, fix one of them in the same change. Section numbers are stable because code cites
-them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22, §25, §27, §28) covered the hub's internals, which moved to the
+them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22, §25, §27, §28, §32–34, §37) covered the hub's internals, which moved to the
 hosted hub's own docs. Sections 1–13 were written while the hub was Bullpen and the relay was agentblip; where they say
 agentblip, read the Workmesh CLI.
 
@@ -46,6 +46,11 @@ What a hub may learn from a machine, and what it does with it. Each rule points 
   for an action the person gated for their own agents, a few words naming it (`gh pr merge 212 --merge in
   b3-fun/b3os-beta`), redacted first. A relay starts an agent for a handoff only once its person accepted it, or by
   their own policy for one they sent themselves (§31).
+- **Memory (v3, §35)** sends what an agent or person writes down on purpose for the team (a memory's title, body,
+  scope, links; a reason to retire one; a search query), at either sharing level, redacted first. An agent's memory
+  reaches other agents only after a person accepts it (or its own person chose to accept their agents' memories). A
+  hub may propose memories from a finished session's shared turn summaries, only for devices at `conversation`; a
+  person accepts each one, and going back to `metadata` deletes the proposals drawn from that device's sessions.
 - **Redaction on the machine**, before anything is queued (§9): keys, tokens, JWTs, private keys, credentials in URLs
   and secret-valued settings become `[redacted]`, home paths `~/…`. The hub blanks obvious secrets again before it
   stores text (§10).
@@ -969,6 +974,110 @@ command run; a waiter that can't reach the daemon ends.
   the hub still accepts its token (`--repair` pairs again; `--share` sets the level either way).
 
 ---
+
+# v3 Memory: the team's shared knowledge base (Sean, 2026-11-25)
+
+Sean's first ask (11-24) was agents across several people working toward a shared long-horizon goal "with humans in
+the loop, and potentially shared knowledge base". Until now that knowledge was v1's notes: one-word tags, no search,
+no review. Memory makes it a knowledge base: decisions, conventions, gotchas, rules and facts that people and their
+agents write down, a person accepts, and every agent gets the relevant ones at the start of a session and can search.
+All of it is new endpoints and one optional sync field beside v1 and v2: an older hub answers `404` and sends no
+`memory`, and a relay then keeps v1's notes (§23, §31).
+
+## 35. Memory endpoints
+
+Code form: `packages/protocol/src/memory.ts` (two readings per body, §14). Auth, keys and status codes as in §21: the
+device token names the person, requests carry ingest keys, answers carry hub keys.
+
+| Endpoint | Body | Answer |
+|---|---|---|
+| `POST /relay/memories` | `{ action: "remember", sessionKey?, kind, title: 1..120, body?: ≤ 2000, scope?: { repo, paths?: ≤ 20 globs }, links?: { issues?, prs? }, tags?: ≤ 10 words, supersedes?: id }` | `{ ok: true, memory }` |
+| `POST /relay/memories` | `{ action: "forget", sessionKey?, id, reason?: ≤ 500 }` | `{ ok: true, memory }`; `404` no such memory; `409` `{ ok: false, error }` nothing to retire |
+| `POST /relay/memories` | `{ action: "used", sessionKey, ids: 1..50, how: "start" }` | `{ ok: true }` |
+| `POST /relay/recall` | `{ sessionKey?, query: 1..500, repo?, paths?: ≤ 20, kinds?, limit?: 1..20 (default 8) }` | `{ ok: true, memories: [Memory & { score }] }`, best first |
+| `GET /relay/memories` | | `{ ok: true, rev, memories: [Brief] }` (every accepted memory, newest first, ≤ 500) |
+
+- **Memory** = `{ id, kind, title, body, scope?, links?, tags?, by: { person, sessionKey?, sessionName? }, origin?,
+  status, supersedes?, supersededBy?, retire?, createdAt, updatedAt, usedAt?, uses? }`.
+  - `id` is short and per project, `m` and a number (`m12`), for people and agents to cite.
+  - `kind`: `decision` (a choice made and why), `convention` (how the team does a thing), `gotcha` (a trap hit and
+    how it was solved), `rule` (must or must never), `fact` (anything else worth knowing).
+  - `scope` absent: the whole project. `{ repo }`: that repo. `{ repo, paths }`: those paths or globs in it, in
+    lease-path syntax (§21).
+  - `links`: Linear issue ids, GitHub PR links (`https://github.com/owner/name/pull/N`; a relay reads
+    `owner/name#N` as one), and the hub keys of the sessions it came from (the hub fills these in).
+  - `origin`: `agent` (an agent's `remember`), `person` (the board, a terminal, Ask on a person's confirm), `session`
+    (the hub proposed it from a finished session, below), `note` (a v1 note).
+  - `status`: `proposed` → `accepted` | `rejected`; an accepted memory becomes `superseded` when a memory naming it in
+    `supersedes` is accepted (`supersededBy` points at the newer one), or `retired` when a `forget` takes effect.
+    `retire` = `{ by, reason?, ts }` is a pending `forget` on an accepted memory, which stays accepted meanwhile. People
+    decide on the board (accept, edit, reject, retire, restore); relays only propose.
+  - `usedAt` and `uses`: when an agent last had it (at a session's start, or in a recall's answer), and how often.
+- **Who decides.** The hub takes the person from the device token. A memory written with no `sessionKey` is the
+  person's own (a terminal) and is `accepted`; one written by an agent session is `proposed`, unless its person turned
+  on "accept my agents' memories" (on the hub; off by default) and it doesn't supersede someone else's memory. A
+  `forget` follows the same rule (an agent's on a memory its own person wrote, with that setting on, retires it at
+  once; anyone else's is a proposal), and an agent's `forget` of its own person's proposal withdraws it (`rejected`).
+  Only accepted memories reach agents: the brief, recall answers and the notes list below never carry a proposed,
+  rejected, superseded or retired one.
+- **Recall** searches titles, bodies, tags and links of accepted memories (B3's hub: SQLite full-text search with
+  bm25). Memories scoped to the asker's `repo` rank first (those whose paths cover one of the asker's `paths` above
+  them), project-wide ones next, other repos' last. Each hit counts as a use for the asking session.
+- **The brief** is what a relay needs to pick a new session's memories without a network call in the hook path:
+  every accepted memory with its body cut to 600 characters, `scope`, linked `issues`, `tags`, `by.person`,
+  `updatedAt`. `GET /relay/sync` (§21) gains `memory: { rev }`, which moves whenever the accepted set changes (an
+  accept, an edit, a supersede, a retire, a restore); a relay fetches the brief when it moves. Absent: this hub has
+  no memory.
+- **Notes are memories.** On a hub with memory, `POST /relay/notes` (§21) writes a memory under the same rule: tag
+  `rule` or `convention` (or their plurals) gives that kind, else `fact`; the first line is the title (cut at 120),
+  the rest the body; the other tags stay tags. Sync's `notes` lists accepted memories in the note shape (text = title,
+  a blank line and the body; tags = the kind and the memory's tags), so a 0.11 relay keeps putting rules and
+  conventions in its sessions.
+- **Proposed from sessions.** A hub may read a finished top-level session's shared turn summaries (§Privacy rules:
+  conversation-level devices only, never metadata) and propose at most two memories when something durable was
+  learned (a decision made, a gotcha hit and solved, a convention a person stated). These are always `proposed`,
+  attributed to the session's person and linked to the session, redacted as summaries are. B3's hub: one setting per
+  project, on by default.
+- **Privacy.** Title, body, scope, links, a `forget`'s reason and a recall's query are written on purpose by an agent
+  or a person, so they are sent at either sharing level, redacted on the machine first (§9); the hub blanks obvious
+  secrets again before storing them (§10). Memories are shown to the project's signed-in members and its relays. A
+  device that goes back to `metadata` keeps the memories people accepted; the proposals the hub drew from its sessions
+  are deleted.
+
+## 36. The relay side (`packages/cli`, 0.12.0)
+
+- **Sync.** When a sync carries `memory.rev` and it differs from the brief's, the daemon fetches `GET /relay/memories`
+  (at most every 10 s; errors back off as for sync) and keeps the brief in memory. A `404` on any memory endpoint means
+  "this hub has no memory" for 10 minutes, without touching v1 or v2.
+- **Session start** (`daemon/memory.ts`; replaces §31's notes block when the hub has memory). The note a shared
+  top-level session gets once (§23) carries the accepted memories that matter here, at most 20 lines with their
+  headings, each with its id so the agent can cite it:
+  - Where: the session's repo and repo-relative directory (from its cwd), its branch, and the issues it is about (the
+    person's open claims, and issue ids in the branch name: `sean/b3-7201-memory` → `B3-7201`).
+  - A memory applies when it is project-wide or scoped to this repo; other repos' memories never come in (a session
+    outside every shared repo gets project-wide ones only).
+  - Rules and conventions that apply always come first (this repo's, those whose paths cover the directory first),
+    up to 10. Then decisions, gotchas and facts by relevance: linked to one of the session's issues (+3), scoped to
+    this repo (+2), paths covering the directory (+1; paths elsewhere in the repo −1), a word of the branch or an
+    issue id in its title or body (+1 each, at most 2); those scoring 2 or more, best first, newer first on a tie, up
+    to 8. What didn't fit is counted ("…and 4 more: `recall`").
+  - Each line: `- [m12] gotcha: <title> — <the body's first sentence> (Sean)`, at most 240 characters.
+  - Then a `used` report for the ids it put in (in the background; a failure is dropped).
+- **MCP** (`mcp/server.ts`, through `POST /coord/op` as every tool):
+  - `remember { kind, title, body?, scope?: "repo" | "project", paths?, issues?, prs?, tags?, supersedes? }`: scope
+    defaults to the session's repo when it is in a shared one, else the project; `paths` are repo-relative (or
+    absolute, made relative); the answer says whether it was proposed (and who reviews it) or accepted.
+  - `recall { query, kinds?, limit?, repo? }`: the session's repo and directory go along as `repo` and `paths`; the
+    answer lists each hit as `[m12] gotcha · b3-fun/workmesh · Sean, 3 days ago`, its title and body.
+  - `forget { id, reason }`.
+  - `note` becomes `remember` (kind `fact`, or `rule`/`convention` from a tag; first line the title) and `notes` lists
+    the brief (newest first; `tag` matches a kind or a tag), both as before on a hub without memory.
+  - `recall` and `notes` pass a hold (§23), as reads.
+- **CLI.** `workmesh remember <title…> [--kind] [--body] [--project | --repo] [--path …] [--issue …] [--pr …]
+  [--supersedes]`, `workmesh recall <words…> [--kind …] [--limit]`, `workmesh forget <id> [--reason]`, `workmesh
+  memories` (the brief); from a terminal outside an agent session these are the person's own words (§35: accepted at
+  once).
+- Text (title, body, reason, query) is redacted on the machine (§9) before it is sent.
 
 # Keeping current (relay 0.12.0, Sean 2026-11-25)
 

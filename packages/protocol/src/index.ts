@@ -779,3 +779,6 @@ export * from "./delegate.js";
 
 // Ask (SPEC §29): an agent's question about the team's agents, answered by the hub.
 export * from "./ask.js";
+
+// v3 Memory (SPEC §35): the team's shared knowledge base; sync gains `memory.rev`.
+export * from "./memory.js";

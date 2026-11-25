@@ -2,6 +2,7 @@ import { z } from "zod";
 import { HUB_ISSUE_RE, HUB_REPO_RE } from "./fields.js";
 import { isLeasePath, LEASE_PATH_MAX } from "./lease-paths.js";
 import { hubSyncDelegateAcceptSchema, hubSyncDelegateSchema } from "./delegate.js";
+import { hubSyncMemoryAcceptSchema, hubSyncMemorySchema } from "./memory.js";
 
 /**
  * v1 Coordinate (docs/SPEC.md §21): leases, claims, messages, notes, holds, and the one read that carries them all
@@ -425,7 +426,9 @@ export const hubSyncResponseSchema = z.object({
   notes: z.array(hubNoteSchema).max(HUB_SYNC_MAX_NOTES).optional(),
   /** Files sessions edited in the last 10 minutes (one row per session and path, newest). */
   edits: z.array(hubRecentEditSchema).max(2000).optional(),
-}).extend(hubSyncDelegateSchema.shape);
+})
+  .extend(hubSyncDelegateSchema.shape)
+  .extend(hubSyncMemorySchema.shape);
 export type HubSyncResponse = z.infer<typeof hubSyncResponseSchema>;
 
 const rosterStateAccept = z.enum(["working", "waiting", "idle", "ended", "offline"]).catch("idle");
@@ -493,7 +496,9 @@ export const hubSyncAcceptSchema = z.object({
     }),
     2000,
   ),
-}).extend(hubSyncDelegateAcceptSchema.shape);
+})
+  .extend(hubSyncDelegateAcceptSchema.shape)
+  .extend(hubSyncMemoryAcceptSchema.shape);
 export type HubSyncAccepted = z.infer<typeof hubSyncAcceptSchema>;
 
 /** `POST /relay/inbox/ack` → 200 `{ ok: true }`. */

@@ -28,6 +28,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); agents' `ask` tool and `workmesh ask` in 0.11.x |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **done** (11-25): wire #22 (SPEC §30), relay #23 + #26 in **0.11.0** (npm, GitHub release v0.11.0), hub and board workmesh-cloud #12; follow-ups (approval → the agent carries on, a live two-person handoff) in 0.11.x |
 | Onboarding hardening | First run solid on macOS and Linux: lingering so an SSH box stays online after logout, no half-installed systemd unit, `init` checks the hub heard from the machine, `doctor` names why a machine shows offline, one pairing per machine (the same hub under two addresses, a re-pair retires the old device), "online, no agents running" and "paired, never connected" on the board; a Docker smoke test (Node 20/22/24, with and without systemd, over SSH) | **in review** (11-25): relay 0.11.1 (not published), hub workmesh-cloud |
+| v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **in progress** (11-25): wire (SPEC §35–36) |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -273,8 +274,30 @@ this". Wire: SPEC §26.
   and leave the board); the board says "online, no agents running" and "paired, never connected" (with `workmesh
   doctor` as the next step).
 
+### v3 Memory (Linear B3-7203, in progress 11-25)
+
+Sean's first ask (11-24) was agents working toward a shared goal "with humans in the loop, and potentially shared
+knowledge base". v1's notes were the start of it (one-word tags, no search, no review). Memory makes it a knowledge
+base people trust. Contract: SPEC §35 (wire) and §36 (relay).
+- **Items:** `decision`, `convention`, `gotcha`, `rule`, `fact`; a title, a body up to 2,000 characters, a scope
+  (project, a repo, or path globs in it), links (Linear issues, PRs, the sessions it came from), who wrote it (person
+  and agent), short ids to cite (`m12`), edit history, and when an agent last used it.
+- **People in the loop:** an agent's `remember` is a proposal until a person accepts it (a person may accept their own
+  agents' memories without review; off by default); only accepted memories reach agents. `forget` proposes retiring
+  one; a newer memory can supersede an older one.
+- **Agents:** MCP `remember`, `recall` (search, this repo first) and `forget`, and the CLI's `remember`, `recall`,
+  `forget`, `memories`; `note` keeps working as a `fact`. At the start of a shared session the relay puts in the
+  accepted memories that matter there: rules and conventions always, decisions, gotchas and facts by repo, path,
+  branch and claimed issue, at most 20 lines, each with its id.
+- **Next:** relay 0.12.0, then the hub and board (Memory tab, Needs-you cards, Settings, Ask, proposals from finished
+  sessions, notes migrated).
+
 ## Decision log
 
+- 11-25 Memory: agents propose, people accept; only accepted memories reach agents, and a hub's own proposals from
+  finished sessions are never accepted without a person. A person may let their own agents' memories through, never
+  someone else's (superseding or retiring a teammate's memory is always a proposal). Session start picks from a brief
+  the relay caches (no network call in the hook path), never from other repos.
 - 11-25 An approval is consent for one exact command: the gate lets the command it was asked for through once, within
   30 minutes, and a rerun asks again. The wake quotes that command and names who decided; a person with gates has
   their agents told at session start that such an approval is their consent. The gate, not the notice, is the check,
@@ -362,5 +385,5 @@ this". Wire: SPEC §26.
 
 ## Links
 
-- Linear (project "Workmesh", team NPC Labs): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2).
+- Linear (project "Workmesh", team NPC Labs): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2), B3-7203 (v3 Memory).
 - Live hub: https://workmesh.b3os.org (also https://bullpen.b3os.org)

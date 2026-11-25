@@ -154,7 +154,7 @@ function hub() {
   };
 }
 
-const me = { name: "Sean", email: "sean@example.com", github: "seangeng" };
+const me = { name: "Sean", email: "sean@example.com" };
 
 function teamBody() {
   const now = Date.now();

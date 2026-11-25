@@ -233,6 +233,14 @@ agent's text updates, grouped tool calls such as "Ran 2 shell commands", turn du
   dropped, and boards get `{type:"purge", deviceId}`.
 - Only shared sessions (§3.3 rules 1–4) send anything. A session that becomes shared mid-way sends conversation text
   only from that moment on; nothing written before it was shared is ever sent.
+- Sharing is sticky by default: once a session is shared it stays shared for the rest of its life, so a session whose
+  cwd is outside every shared repo (an orchestrator in `~/Documents`) that touched a shared repo once also sends its
+  later turns, including work on other repos. `hub.stickyShare: false` in the relay's config (`workmesh hub sticky
+  off`) makes such a session unshared again at each new prompt; it is shared again only by a turn that touches a
+  shared repo (a file there, or a shell command naming a shared root it has seen), and that turn's prompt, which came
+  first, is not sent. Sessions whose cwd is in a shared repo, and subagents and workflow agents started while their
+  parent was shared, are not affected. Nothing changes on the wire: the session just stops appearing in the relay's
+  heartbeats until it is shared again.
 - Every ingest body carries `share`; the hub stores it per device and drops any text fields from a `metadata` device.
 
 ## 9. Relay additions

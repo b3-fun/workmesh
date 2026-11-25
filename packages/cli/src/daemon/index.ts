@@ -5,7 +5,7 @@ import { codexSessionsDir, createCodexWatcher } from "../adapters/codex";
 import type { CodexWatcher } from "../adapters/codex";
 import { claudeProjectsDir, createWorkflowWatcher } from "../adapters/workflow";
 import type { WorkflowWatcher } from "../adapters/workflow";
-import { formatOptionsFromConfig, hubShareLevel, readHubConfig, safeConfig, saveConfig } from "../lib/config";
+import { formatOptionsFromConfig, hubShareLevel, hubStickyShare, readHubConfig, safeConfig, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
 import { TeamPoller } from "../hub/team";
@@ -86,6 +86,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       getSession: (key) => store.get(key),
       log,
       share: hubShareLevel(hub),
+      stickyShare: hubStickyShare(hub),
       codexSessionsDir: config.adapters.codex.sessionsDir,
       github: githubLogin ?? hub.github,
     });

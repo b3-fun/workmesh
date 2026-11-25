@@ -40,18 +40,31 @@ export const hubConfigSchema = z.object({
   pairedAt: z.number().int().optional(),
   /**
    * SPEC §8 sharing level, chosen by the person (`hub connect --share`,
-   * `hub share`). Absent (0.6 pairings) means `metadata`: conversation text
-   * never leaves without an explicit choice. An unknown value reads as absent.
+   * `hub share`). Absent (0.6 pairings, a connect with no terminal and no
+   * `--share`) means `conversation`, the default since 0.7 (Sean, 11-24): see
+   * hubShareLevel. An unknown value reads as absent.
    */
   share: hubShareLevelSchema.optional().catch(undefined),
+  /**
+   * Whether a session stays shared for the rest of its life once it touches a
+   * shared repo (SPEC §8). Absent or true: yes (the default). False
+   * (`hub sticky off`): a session whose cwd is outside every shared repo is
+   * shared turn by turn, only for turns that touch a shared repo.
+   */
+  stickyShare: z.boolean().optional().catch(undefined),
   /** v0.6: the person's GitHub login, read from `gh` at `hub connect` (an avatar on the board and menu bar). */
   github: z.string().regex(HUB_GITHUB_LOGIN_RE).optional().catch(undefined),
 });
 export type HubConfig = z.infer<typeof hubConfigSchema>;
 
-/** The level a hub section shares at: `metadata` unless the person chose `conversation`. */
+/** The level a hub section shares at: `conversation` unless the person chose `metadata`. */
 export function hubShareLevel(hub: Pick<HubConfig, "share"> | undefined): HubShareLevel {
   return hub?.share ?? "conversation"; // max sharing by default (Sean, 11-24)
+}
+
+/** Whether shared sessions stay shared once they touch a shared repo (default true). */
+export function hubStickyShare(hub: Pick<HubConfig, "stickyShare"> | undefined): boolean {
+  return hub?.stickyShare ?? true;
 }
 
 export const configSchema = z.object({

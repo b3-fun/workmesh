@@ -11,6 +11,7 @@ import {
   runHubInclude,
   runHubShare,
   runHubStatus,
+  runHubSticky,
 } from "./commands/hub";
 import { runPause, runResume } from "./commands/pause";
 import { runReport } from "./commands/report";
@@ -156,6 +157,12 @@ hub
   .description("Show or set what this machine shares: conversation (prompts, agent text, redacted) or metadata")
   .argument("[level]", "conversation | metadata")
   .action(wrap(runHubShare));
+
+hub
+  .command("sticky")
+  .description("Show or set whether a session stays shared after it touches a shared repo (on, the default) or is shared turn by turn (off)")
+  .argument("[value]", "on | off")
+  .action(wrap(runHubSticky));
 
 hub
   .command("status")

@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { SessionStore } from "@workmesh/core";
 import { hubIngestRequestSchema } from "@workmesh/protocol";
 import type { SessionEvent } from "@workmesh/core";
-import type { HubIngestRequest, HubProjectRule } from "@workmesh/protocol";
+import type { HubIngestRequest, HubProjectRule, HubShareLevel } from "@workmesh/protocol";
 import { mapHookInput } from "../src/adapters/claude-code";
 import { mapCodexHookInput, mapNotifyArg } from "../src/adapters/codex";
 import { HubForwarder, parseRetryAfter } from "../src/hub/forwarder";
@@ -73,7 +73,9 @@ interface Reply {
   body?: unknown;
 }
 
-function harness(over: { maxBuffer?: number; url?: string; useRealFetch?: boolean } = {}) {
+function harness(
+  over: { maxBuffer?: number; url?: string; useRealFetch?: boolean; share?: HubShareLevel; stickyShare?: boolean } = {},
+) {
   const store = new SessionStore();
   const bodies: HubIngestRequest[] = [];
   const raw: string[] = [];
@@ -92,7 +94,8 @@ function harness(over: { maxBuffer?: number; url?: string; useRealFetch?: boolea
     url: over.url ?? "https://hub.test",
     token: TOKEN,
     rule: RULE,
-    share: "metadata", // these tests cover the metadata-level rules (SPEC §3.3)
+    share: over.share ?? "metadata", // these tests cover the metadata-level rules (SPEC §3.3)
+    stickyShare: over.stickyShare,
     includeDirs: [notes],
     excludeDirs: [priv],
     listSessions: () => store.list(),
@@ -205,6 +208,55 @@ describe("HubForwarder inclusion (SPEC §3.3 rules 1-4)", () => {
       branch: "sean/b3-7166-relay",
     });
     expect(h.upserts("claude-code:w1")[0]).toMatchObject({ repo: "b3-fun/b3os-beta", branch: "sean/b3-7166-relay" });
+  });
+
+  describe("sticky sharing (SPEC §8)", () => {
+    /** An orchestrator in ~/Documents: turn 1 reads a B3 file, turn 2 is personal work, turn 3 is B3 again. */
+    const threeTurns = async (stickyShare?: boolean) => {
+      const h = harness({ share: "conversation", stickyShare });
+      const id = `st-${String(stickyShare)}`;
+      h.claude(id, docs, { hook_event_name: "SessionStart" });
+      h.claude(id, docs, { hook_event_name: "UserPromptSubmit", prompt: "TURN_ONE review the spec" });
+      h.claude(id, docs, { hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: path.join(beta, "SPEC.md") } });
+      h.claude(id, docs, { hook_event_name: "Stop" });
+      h.claude(id, docs, { hook_event_name: "UserPromptSubmit", prompt: "TURN_TWO my side project" });
+      h.claude(id, docs, {
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command: `ls ${salience}`, description: "TURN_TWO_DESC list it" },
+      });
+      h.claude(id, docs, { hook_event_name: "Stop" });
+      h.claude(id, docs, { hook_event_name: "UserPromptSubmit", prompt: "TURN_THREE back to B3" });
+      h.claude(id, docs, { hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: path.join(beta, "README.md") } });
+      await h.fwd.tick();
+      return { raw: h.raw.join(""), paths: h.events().map((e) => e.path).filter(Boolean) };
+    };
+
+    it("by default a session stays shared after it touched a shared repo, later turns included", async () => {
+      const { raw, paths } = await threeTurns(undefined);
+      expect(raw).toContain("TURN_TWO my side project");
+      expect(raw).toContain("TURN_TWO_DESC");
+      expect(raw).toContain("TURN_THREE");
+      expect(paths).toEqual(["SPEC.md", "README.md"]);
+    });
+
+    it("off: a turn that touches no shared repo sends nothing, and a later shared turn shares again", async () => {
+      const { raw, paths } = await threeTurns(false);
+      expect(raw).not.toContain("TURN_ONE"); // its prompt came before the session was shared
+      expect(raw).not.toContain("TURN_TWO");
+      expect(raw).not.toContain("TURN_THREE"); // same: the prompt came before this turn's shared read
+      expect(paths).toEqual(["SPEC.md", "README.md"]);
+    });
+
+    it("off: a session whose cwd is in a shared repo is shared as before", async () => {
+      const h = harness({ share: "conversation", stickyShare: false });
+      h.claude("st-in", beta, { hook_event_name: "UserPromptSubmit", prompt: "IN_REPO_ONE" });
+      h.claude("st-in", beta, { hook_event_name: "Stop" });
+      h.claude("st-in", beta, { hook_event_name: "UserPromptSubmit", prompt: "IN_REPO_TWO" });
+      await h.fwd.tick();
+      expect(h.raw.join("")).toContain("IN_REPO_ONE");
+      expect(h.raw.join("")).toContain("IN_REPO_TWO");
+    });
   });
 
   it("an orchestrator in ~/Documents shares only what touches a shared repo", async () => {

@@ -80,6 +80,7 @@ program
   .option("--claude-dir <path>", "Claude Code config dir to hook (default: $CLAUDE_CONFIG_DIR, else ~/.claude)")
   .option("--no-mcp", "don't register the workmesh MCP server")
   .option("--no-service", "run the daemon in the background, not under launchd / systemd")
+  .option("--no-linger", "Linux: don't turn on lingering (the daemon then stops when you log out)")
   .option("--no-wake", "don't install the hook that wakes idle sessions for messages")
   .option("--repair", "pair again even if this machine is already paired with the hub")
   .action(wrap((url: string, opts: Parameters<typeof runInit>[1]) => runInit(url, opts)));
@@ -97,6 +98,7 @@ program
   .option("--no-codex", "leave Codex's files alone")
   .option("--no-mcp", "don't register the workmesh MCP server with Claude Code and Codex")
   .option("--no-service", "don't run the daemon under launchd / systemd")
+  .option("--no-linger", "Linux: don't turn on lingering (the daemon then stops when you log out)")
   .option("--no-wake", "don't install the hook that wakes idle sessions for messages")
   .action(wrap(runSetup));
 
@@ -107,8 +109,9 @@ const service = program
 service
   .command("install")
   .description("Install (or refresh) the daemon service and start it; stops a daemon running outside it first")
-  .action(wrap(async () => {
-    if (!(await runServiceInstall())) process.exitCode = 1;
+  .option("--no-linger", "Linux: don't turn on lingering (the daemon then stops when you log out)")
+  .action(wrap(async (opts: { linger?: boolean }) => {
+    if (!(await runServiceInstall({ linger: opts.linger }))) process.exitCode = 1;
   }));
 
 service

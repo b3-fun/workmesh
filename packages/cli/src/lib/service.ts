@@ -21,6 +21,8 @@ export type ServiceKind = "launchd" | "systemd";
 
 export interface ServiceStatus {
   kind: ServiceKind | null;
+  /** Linux: what systemd can do for this user (absent elsewhere). */
+  systemd?: SystemdUser;
   /** The plist or unit file exists. */
   installed: boolean;
   /** The service manager has it loaded. */
@@ -36,7 +38,105 @@ export interface ServiceStatus {
 export type Runner = (cmd: string, args: string[]) => string;
 
 const defaultRunner: Runner = (cmd, args) =>
-  execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 });
+  execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000, env: commandEnv(cmd) });
+
+/**
+ * Linux: the user's runtime dir, where the user's systemd listens (/run/user/<uid>). A shell from `su`, `sudo -u`,
+ * cron or some SSH setups has no XDG_RUNTIME_DIR even while the user manager runs (lingering), and `systemctl --user`
+ * then fails with "Failed to connect to bus".
+ */
+export function userRuntimeDir(env: NodeJS.ProcessEnv = process.env, id = uid(), exists = fs.existsSync): string | undefined {
+  if (env.XDG_RUNTIME_DIR) return env.XDG_RUNTIME_DIR;
+  const dir = `/run/user/${id}`;
+  return exists(dir) ? dir : undefined;
+}
+
+function commandEnv(cmd: string): NodeJS.ProcessEnv {
+  if (cmd !== "systemctl" || process.env.XDG_RUNTIME_DIR) return process.env;
+  const dir = userRuntimeDir();
+  return dir ? { ...process.env, XDG_RUNTIME_DIR: dir } : process.env;
+}
+
+/** Linux: what systemd can do for this user's daemon. */
+export interface SystemdUser {
+  /** `systemctl` exists (no: a container, WSL without systemd, a minimal VM). */
+  systemctl: boolean;
+  /** `systemctl --user` reaches the user's service manager. */
+  manager: boolean;
+  /**
+   * Lingering (`loginctl enable-linger`): the user's services start at boot and keep running after the last logout.
+   * Off, systemd stops the daemon about 10 s after you log out of your last session (an SSH box: the board shows you
+   * offline). Undefined: unknown.
+   */
+  linger: boolean | undefined;
+  /** Why the manager can't be reached (systemctl's first error line). */
+  error?: string;
+}
+
+/** The first line of a failed command's stderr (or its message). */
+export function commandError(err: unknown): string {
+  const e = err as { stderr?: unknown; message?: unknown } | undefined;
+  const stderr = typeof e?.stderr === "string" ? e.stderr : Buffer.isBuffer(e?.stderr) ? e.stderr.toString("utf8") : "";
+  const line = stderr.split("\n").map((l) => l.trim()).find(Boolean);
+  return (line ?? (typeof e?.message === "string" ? e.message.split("\n")[0] : String(err))).slice(0, 200);
+}
+
+const isMissing = (err: unknown) => (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+
+/** Whether `user` lingers: logind keeps a file per lingering user. */
+export function lingerOf(user = os.userInfo().username, opts: { run?: Runner; lingerDir?: string } = {}): boolean | undefined {
+  const dir = opts.lingerDir ?? "/var/lib/systemd/linger";
+  if (fs.existsSync(path.join(dir, user))) return true;
+  if (fs.existsSync(dir)) return false;
+  // No linger dir (nobody ever lingered here): ask logind, which knows either way.
+  try {
+    const out = (opts.run ?? defaultRunner)("loginctl", ["show-user", user, "-p", "Linger", "--value"]).trim();
+    if (out === "yes") return true;
+    if (out === "no") return false;
+  } catch (err) {
+    // "not logged in or lingering": a user logind doesn't know lingers no more than one it does.
+    if (!isMissing(err)) return false;
+  }
+  return undefined;
+}
+
+/** Linux: probes `systemctl --user` and lingering. */
+export function probeSystemdUser(opts: { run?: Runner; user?: string; lingerDir?: string } = {}): SystemdUser {
+  const run = opts.run ?? defaultRunner;
+  try {
+    run("systemctl", ["--user", "show-environment"]);
+    return { systemctl: true, manager: true, linger: lingerOf(opts.user, { run, lingerDir: opts.lingerDir }) };
+  } catch (err) {
+    if (isMissing(err)) return { systemctl: false, manager: false, linger: undefined, error: "systemctl not found" };
+    return { systemctl: true, manager: false, linger: lingerOf(opts.user, { run, lingerDir: opts.lingerDir }), error: commandError(err) };
+  }
+}
+
+/**
+ * Turns lingering on for this user (`loginctl enable-linger`, no password prompt): logind then starts the user's
+ * manager at once and at every boot, and keeps it after logout. Most distros let a user do this for themselves;
+ * elsewhere it needs `sudo loginctl enable-linger <user>`.
+ */
+export function enableLinger(opts: { run?: Runner } = {}): { ok: true } | { ok: false; error: string } {
+  try {
+    (opts.run ?? defaultRunner)("loginctl", ["--no-ask-password", "enable-linger"]);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: commandError(err) };
+  }
+}
+
+/** Thrown when this machine has no service manager the daemon can use; nothing was written. */
+export class ServiceUnavailableError extends Error {
+  constructor(
+    message: string,
+    /** What the person can do about it, as a command or a sentence. */
+    readonly fix?: string,
+  ) {
+    super(message);
+    this.name = "ServiceUnavailableError";
+  }
+}
 
 /** `WORKMESH_NO_SERVICE=1` turns the service off (tests; a machine that manages the daemon its own way). */
 export function serviceKind(platform: NodeJS.Platform = process.platform): ServiceKind | null {
@@ -156,6 +256,14 @@ WantedBy=default.target
 const uid = () => (typeof process.getuid === "function" ? process.getuid() : 0);
 const launchdTarget = () => `gui/${uid()}/${LAUNCHD_LABEL}`;
 
+/** The ExecStart of an installed unit (node, entry), read back for doctor. */
+function unitProgram(text: string): string[] | undefined {
+  const m = /^ExecStart=(.*)$/m.exec(text);
+  if (!m) return undefined;
+  const args = [...m[1]!.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => x[1]!.replace(/\\(.)/g, "$1"));
+  return args.length >= 2 ? args.slice(0, 2) : undefined;
+}
+
 /** The ProgramArguments of an installed plist (node, entry), read back for doctor. */
 function plistProgram(text: string): string[] | undefined {
   const m = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(text);
@@ -163,7 +271,9 @@ function plistProgram(text: string): string[] | undefined {
   return [...m[1]!.matchAll(/<string>([^<]*)<\/string>/g)].map((x) => x[1]!.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"));
 }
 
-export function serviceStatus(opts: { home?: string; run?: Runner; kind?: ServiceKind | null } = {}): ServiceStatus {
+export function serviceStatus(
+  opts: { home?: string; run?: Runner; kind?: ServiceKind | null; probe?: SystemdUser; lingerDir?: string } = {},
+): ServiceStatus {
   const kind = opts.kind === undefined ? serviceKind() : opts.kind;
   const run = opts.run ?? defaultRunner;
   const home = opts.home ?? os.homedir();
@@ -194,7 +304,8 @@ export function serviceStatus(opts: { home?: string; run?: Runner; kind?: Servic
     const installed = fs.existsSync(file);
     let loaded = false;
     let pid: number | undefined;
-    if (installed) {
+    const systemd = opts.probe ?? probeSystemdUser({ run, lingerDir: opts.lingerDir });
+    if (installed && systemd.manager) {
       try {
         const out = run("systemctl", ["--user", "show", SYSTEMD_UNIT, "-p", "ActiveState", "-p", "MainPID"]);
         loaded = /ActiveState=(active|activating|reloading)/.test(out);
@@ -204,7 +315,7 @@ export function serviceStatus(opts: { home?: string; run?: Runner; kind?: Servic
         // systemd --user unavailable
       }
     }
-    return { kind, installed, loaded, pid, file };
+    return { kind, systemd, installed, loaded, pid, file, program: installed ? unitProgram(fs.readFileSync(file, "utf8")) : undefined };
   }
   return { kind: null, installed: false, loaded: false };
 }
@@ -230,6 +341,8 @@ export function installService(
     env?: NodeJS.ProcessEnv;
     /** How long to wait for launchd to unload the old job (tests pass 0). */
     waitMs?: number;
+    /** systemd: the probe to trust (tests); default: probe now. */
+    probe?: SystemdUser;
     retries?: number;
     retryDelayMs?: number;
   } = {},
@@ -265,6 +378,17 @@ export function installService(
     }
     retry(() => run("launchctl", ["bootstrap", `gui/${uid()}`, file]), opts.retries ?? 3, opts.retryDelayMs ?? 500);
     return { kind, file, wrote };
+  }
+  // Nothing is written unless systemd can run it: a unit file nobody loads only misleads `doctor` and `start`.
+  const probe = opts.probe ?? probeSystemdUser({ run });
+  if (!probe.systemctl) {
+    throw new ServiceUnavailableError("no systemd on this machine", "the daemon runs in the background instead; the next agent event starts it after a reboot");
+  }
+  if (!probe.manager) {
+    throw new ServiceUnavailableError(
+      `no systemd user session (${probe.error ?? "systemctl --user failed"})`,
+      "`loginctl enable-linger $USER` (or `sudo loginctl enable-linger $USER`), then `workmesh service install`",
+    );
   }
   const file = systemdUnitPath(home);
   const wrote = writeIfChanged(file, renderSystemdUnit({ node, entry, env }));

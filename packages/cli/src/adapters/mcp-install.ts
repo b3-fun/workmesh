@@ -21,13 +21,17 @@ export function mcpServerCommand(): { command: string; args: string[] } {
 }
 
 /**
- * Claude Code's user config for a config dir: `<dir>/.claude.json`, except the default `~/.claude`, whose user
- * config is `~/.claude.json`. Without a dir: `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`.
+ * Claude Code's user config for a config dir. Claude Code reads `$CLAUDE_CONFIG_DIR/.claude.json` whenever the
+ * variable is set (even to `~/.claude`), else `~/.claude.json`. So: `<dir>/.claude.json`, except the default
+ * `~/.claude` named while the variable is unset or points elsewhere, whose user config is `~/.claude.json`. Without a
+ * dir: `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`.
  */
 export function claudeJsonPath(configDir = process.env.CLAUDE_CONFIG_DIR): string {
-  if (!configDir || path.resolve(configDir) === path.join(os.homedir(), ".claude")) {
-    return path.join(os.homedir(), ".claude.json");
-  }
+  const home = os.homedir();
+  if (!configDir) return path.join(home, ".claude.json");
+  const dir = path.resolve(configDir);
+  const env = process.env.CLAUDE_CONFIG_DIR;
+  if (dir === path.join(home, ".claude") && !(env && path.resolve(env) === dir)) return path.join(home, ".claude.json");
   return path.join(configDir, ".claude.json");
 }
 

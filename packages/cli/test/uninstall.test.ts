@@ -178,6 +178,22 @@ describe("claudeJsonPath", () => {
     expect(claudeJsonPath(path.join(os.homedir(), ".claude"))).toBe(path.join(os.homedir(), ".claude.json"));
     expect(claudeJsonPath(path.join(dir, ".clive"))).toBe(path.join(dir, ".clive", ".claude.json"));
   });
+
+  it("follows Claude Code when CLAUDE_CONFIG_DIR is set, even to ~/.claude", async () => {
+    const { claudeJsonPath } = await import("../src/adapters/mcp-install");
+    const def = path.join(os.homedir(), ".claude");
+    try {
+      process.env.CLAUDE_CONFIG_DIR = def;
+      expect(claudeJsonPath()).toBe(path.join(def, ".claude.json"));
+      expect(claudeJsonPath(def)).toBe(path.join(def, ".claude.json"));
+      process.env.CLAUDE_CONFIG_DIR = path.join(dir, ".clive");
+      expect(claudeJsonPath()).toBe(path.join(dir, ".clive", ".claude.json"));
+      // the default profile named by a flag while the variable points elsewhere: Claude Code run without it
+      expect(claudeJsonPath(def)).toBe(path.join(os.homedir(), ".claude.json"));
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    }
+  });
 });
 
 describe("workmesh uninstall and the daemon service", () => {

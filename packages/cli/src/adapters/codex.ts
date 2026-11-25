@@ -20,6 +20,7 @@ import {
 import { OUR_COMMAND_RE } from "../lib/names";
 import { removeOurHooks, writeBackup } from "../lib/hook-files";
 import { codexHome } from "../lib/paths";
+import { stableNodePath } from "../lib/node-path";
 
 const MAX_ACTIVITY_LEN = 60;
 
@@ -30,7 +31,7 @@ const MAX_ACTIVITY_LEN = 60;
  */
 export function codexNotifyLine(): string {
   const entry = fileURLToPath(import.meta.url);
-  return `notify = [${JSON.stringify(process.execPath)}, ${JSON.stringify(entry)}, "hook", "codex"]`;
+  return `notify = [${JSON.stringify(stableNodePath())}, ${JSON.stringify(entry)}, "hook", "codex"]`;
 }
 
 /** $CODEX_HOME/config.toml (default ~/.codex/config.toml). */
@@ -280,7 +281,7 @@ export function createCodexWatcher(
 
 /** Absolute hook invocation, quoted for spaces (see codexNotifyLine). */
 export function codexHookCommand(): string {
-  return `"${process.execPath}" "${fileURLToPath(import.meta.url)}" hook codex-hooks`;
+  return `"${stableNodePath()}" "${fileURLToPath(import.meta.url)}" hook codex-hooks`;
 }
 
 /** $CODEX_HOME/hooks.json (default ~/.codex/hooks.json). */
@@ -659,6 +660,28 @@ export function areCodexHooksInstalled(hooksPath = codexHooksPath()): boolean {
     return CODEX_HOOK_EVENTS.every((event) => hookListHasOurs(parsed.hooks?.[event]));
   } catch {
     return false;
+  }
+}
+
+/** Every hooks.json command of ours (0.12.1: doctor reads the Node they run and the CLI they point at). */
+export function ourCodexHookCommands(hooksPath = codexHooksPath()): string[] {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(hooksPath, "utf8")) as { hooks?: Record<string, unknown> };
+    const out: string[] = [];
+    for (const entries of Object.values(parsed.hooks ?? {})) {
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const hooks = (entry as { hooks?: unknown } | null)?.hooks;
+        if (!Array.isArray(hooks)) continue;
+        for (const hook of hooks) {
+          const command = (hook as { command?: unknown } | null)?.command;
+          if (isOurCodexHook(command)) out.push(command);
+        }
+      }
+    }
+    return out;
+  } catch {
+    return [];
   }
 }
 

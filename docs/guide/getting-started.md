@@ -48,8 +48,9 @@ the printed link on your laptop), `--no-codex` to leave Codex alone. The full li
 | `~/.config/workmesh/config.json` | Your hub pairing and settings, including the device token (`0600`). |
 | `~/.local/state/workmesh/` | The daemon's secret, log and saved state. |
 
-The hooks run the exact Node binary you installed with. If you later remove that Node (an nvm switch, `brew upgrade
-node`), `workmesh doctor` flags it and `workmesh setup --hooks-only` points everything at the new one.
+The hooks run Node by a path that survives upgrades (Homebrew's `/opt/homebrew/bin/node`, not its versioned Cellar
+path). Under nvm, asdf or Volta they run the version you installed with: if you remove it, `workmesh doctor` flags it
+and `workmesh setup --hooks-only` points everything at the new one.
 
 ## Undo it
 

@@ -18,7 +18,8 @@ MCP tools, not the `workmesh` command. The details are in [SPEC.md §42](../SPEC
 
 Codex skips a hook until you trust it. The first time Codex starts after `init` it asks ("Hooks need review"): pick
 Trust all. Or run `/hooks` in Codex and trust Workmesh's. Codex asks again whenever a hook changes, which happens when
-an update moves the CLI.
+an update moves the CLI, and once when 0.12.1 moves hooks off Homebrew's versioned Node path (after that they stay put
+through `brew upgrade node`).
 
 Until then a Codex session reaches the board only through the fallbacks (working or not, no tool activity), gets no
 messages, and isn't refused anything. `workmesh doctor` says so:

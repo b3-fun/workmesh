@@ -61,11 +61,18 @@ network call. It always exits 0, so a Workmesh failure never fails your session.
 
 ## Node moved
 
-The hooks pin the absolute path of the Node that ran `init`. After `brew upgrade node`, an nvm switch, or removing that
-Node, every hook fails until you run:
+The hooks name Node by an absolute path, since Claude Code started from the Dock or an IDE doesn't get your shell's
+PATH. From 0.12.1 that is a path that survives upgrades: Homebrew's `/opt/homebrew/bin/node` (or
+`/opt/homebrew/opt/node@22/bin/node`), never its versioned `Cellar/node/<version>` path, which `brew upgrade node`
+deletes. `init`, `setup` and `workmesh update` repoint hooks an older version wrote.
+
+Under nvm, asdf or Volta there is no such path (their shims pick a Node per project), so the hooks name the version
+you installed with, and Workmesh itself lives in that version's tree. After you remove that version, install Workmesh
+under the new one and run:
 
 ```bash
 workmesh setup --hooks-only
 ```
 
-`workmesh doctor` shows it as `✗ claude code hooks … which no longer exists`.
+`workmesh doctor` checks the Node that every hook, MCP entry and the daemon's service runs: `✗ node path … which no
+longer exists` or `! node path … versioned path`, each with the fix.

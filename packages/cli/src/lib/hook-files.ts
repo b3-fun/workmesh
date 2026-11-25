@@ -59,12 +59,5 @@ export function hookNodePath(command: string): string | undefined {
   return /^"([^"]+)"/.exec(command.trim())?.[1];
 }
 
-/**
- * True when `execPath` lives in a Node version manager's tree (nvm, fnm,
- * Volta, asdf, mise, n). Hooks pin the absolute path, so removing that
- * version later breaks every hook until setup runs again.
- */
-export function versionManagedNode(execPath: string): boolean {
-  return /[/\\](?:\.?nvm|\.?fnm|\.volta|\.asdf|mise|\.n|n[/\\]versions)[/\\]/.test(execPath) ||
-    /[/\\]node-versions[/\\]/.test(execPath);
-}
+/** True when a Node binary sits in a version manager's tree (nvm, fnm, Volta, asdf, mise, n): lib/node-path.ts. */
+export { versionManagedNode } from "./node-path";

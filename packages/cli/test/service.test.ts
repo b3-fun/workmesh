@@ -200,6 +200,9 @@ describe("the service's program and environment", () => {
     fs.writeFileSync(path.join(cellar, "node"), "");
     fs.symlinkSync(path.join(cellar, "node"), path.join(bin, "node"));
     expect(stableNodePath(path.join(cellar, "node"), `/nope:${bin}`)).toBe(path.join(bin, "node"));
+    // 0.12.1: Homebrew's own bin link is found without PATH (lib/node-path.ts); with no link, the Cellar path stays.
+    expect(stableNodePath(path.join(cellar, "node"), "/nope")).toBe(path.join(bin, "node"));
+    fs.rmSync(path.join(bin, "node"));
     expect(stableNodePath(path.join(cellar, "node"), "/nope")).toBe(path.join(cellar, "node"));
   });
 

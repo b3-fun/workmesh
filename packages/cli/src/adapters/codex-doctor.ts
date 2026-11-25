@@ -180,6 +180,8 @@ export interface CodexNotifyState {
   via?: string;
   /** The Workmesh CLI the notify runs (its dist/index.js, or a bare command name). */
   target?: string;
+  /** `direct` as `[node, cli, "hook", "codex"]`: the Node binary it pins (0.12.1, doctor's node path check). */
+  node?: string;
 }
 
 /**
@@ -193,7 +195,7 @@ export function codexNotifyState(configToml: string): CodexNotifyState {
   const argv = parseArgv(line.replace(/^\s*notify\s*=\s*/, "").replace(/\s+#.*$/, ""));
   if (!argv) return { kind: OUR_COMMAND_RE.test(line) ? "chained" : "other" };
   const ours = ourNotify(argv);
-  if (ours) return { kind: "direct", target: ours };
+  if (ours) return { kind: "direct", target: ours, ...(argv.length >= 4 ? { node: argv[0] } : {}) };
   for (const arg of argv) {
     if (!arg.trimStart().startsWith("[")) continue;
     const inner = parseArgv(arg);

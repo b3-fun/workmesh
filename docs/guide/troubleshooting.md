@@ -39,7 +39,8 @@ Logs: `~/Library/Logs/workmesh-daemon.log` on a Mac (launchd), `journalctl --use
 
 | Line | Cause | Fix |
 |---|---|---|
-| ✗ `claude code hooks  … runs <node>, which no longer exists` | The Node the hooks pin was removed (`brew upgrade node`, an nvm switch). | `workmesh setup --hooks-only` |
+| ✗ `node path  … run <node>, which no longer exists` | The Node that hooks, an MCP entry or the service run was removed (an nvm uninstall, or `brew upgrade` under a version before 0.12.1). | `workmesh setup --hooks-only` (under nvm, install Workmesh under your new Node first) |
+| `!` `node path  … run <Cellar path>, Homebrew's versioned path` | Written by a version before 0.12.1; the next `brew upgrade node` breaks them. | `workmesh setup --hooks-only` (or `workmesh update`) |
 | `!` `claude code hooks  not installed in …` | No Workmesh hooks in that Claude Code profile. | `workmesh setup --hooks-only` (with `--claude-dir` for another profile) |
 | `!` `claude code wake  not installed` | Set up with `--no-wake`, or by an older version. | `workmesh setup --hooks-only` |
 | `!` `claude code mcp  not registered` / `codex mcp  not registered` | The `workmesh` MCP server is missing. | `workmesh setup --hooks-only` |

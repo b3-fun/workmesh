@@ -1,5 +1,5 @@
-# Production deploy to Cloudflare Workers (agentblip.com): the root Worker only. The team hub (apps/hub, Worker
-# `bullpen` on the NPC Labs account) is not deployed from here; it deploys by hand (CONTRIBUTING.md).
+# Production deploy to Cloudflare Workers (agentblip.com): the root Worker only. The team hub is hosted by B3 and
+# deploys from its own private repo.
 #
 # Required GitHub repository secrets:
 #   CLOUDFLARE_API_TOKEN   — Cloudflare API token with Workers permissions
@@ -18,7 +18,6 @@ on:
       - "**.md"
       - "LICENSE"
       # Not part of the agentblip.com Worker:
-      - "apps/hub/**"
       - "apps/menubar/**"
       - "packages/protocol/**"
 

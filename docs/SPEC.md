@@ -1,49 +1,67 @@
-# Workmesh team hub: build contract
+# Workmesh protocol: the relay ↔ hub contract
 
-Workmesh (named Bullpen until 2026-11-24) is a hub where every teammate's coding agents and the people they work for
-share one live board. v0 is read-only visibility: every Claude Code and Codex session that Sean, An and Gio run on B3
-repos shows on one board, with each tool call as a metadata line within 5 seconds. Linear stays the team's system of
-record.
-
-Linear: parent B3-7165, this phase B3-7166 (project "B3OS Beta"). Research behind it: the Linear document
-"Research: multiplayer agents".
-
-Three parts of one repo, `b3-fun/workmesh`, built against this file (§14 has the layout):
+Workmesh puts every teammate's coding agents, and the people they work for, on one live board. Two sides meet in this
+file: the relay on each machine (this repo, open source) and a team hub. It is their public contract: what may leave a
+machine, the wire format, sharing levels, redaction, and the privacy rules a hub keeps. B3 hosts the hub at
+https://workmesh.b3os.org; the hosted hub's code and internals are private (§14).
 
 | Part | Where | What |
 |---|---|---|
 | Relay | `packages/cli` (`@b3os/workmesh`, formerly agentblip) | A generic "hub forward" output in the daemon, plus Codex hook support and a `hub` command group. |
 | Protocol | `packages/protocol` (`@workmesh/protocol`) | §3 and §10 as code: the wire schemas both sides validate against. |
-| Hub + board | `apps/hub` (`@workmesh/hub`) | Cloudflare Worker + one Durable Object per project, and the board (React SPA) served by the same Worker. |
+| Hub | hosted by B3 (private) | Pairs machines, keeps what they share, writes summaries, serves the board. |
 
-If this file and the code disagree, fix one of them in the same change. Sections 1–13 were written while the hub was
-Bullpen and the relay was agentblip, in separate repos; where they say agentblip, read the Workmesh CLI.
+If this file and the code disagree, fix one of them in the same change. Section numbers are stable because code cites
+them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13) covered the hub's internals, which moved to the
+hosted hub's own docs. Sections 1–13 were written while the hub was Bullpen and the relay was agentblip; where they say
+agentblip, read the Workmesh CLI.
+
+Linear: parent B3-7165, v0 B3-7166 (project "B3OS Beta"). Research behind it: the Linear document
+"Research: multiplayer agents".
+
+## Privacy rules
+
+What a hub may learn from a machine, and what it does with it. Each rule points at the section that makes it precise.
+
+- **Only shared repos.** A session sends nothing until it touches a repo the project's sharing rule includes (§2,
+  §3.3; B3's rule is `github.com/b3-fun/` remotes), and nothing from before that moment. A folder the person excludes
+  is never shared, whatever its remote.
+- **Two levels, chosen per machine** (§8). `metadata`: session state, Workmesh's activity label, tool names,
+  repo-relative paths, `owner/name` and branch, a program and one allow-listed subcommand, issue ids, PR links; since
+  v0.6 also which agents run under which (parent, role, agent type, model, token counts, a status line from the relay's
+  vocabulary), which agent wrote to which, links to Linear issues and to PRs and issues on shared repos, and the
+  person's GitHub login (§15). `conversation`: also prompt text, the agent's text messages, a one-line description per
+  tool call, and turn durations; since v0.6 a subagent's task description, the text agents send each other, and links
+  to Slack messages agents posted or read (§15). A machine that goes back to `metadata` has its stored text deleted
+  from the hub at once.
+- **Never, at any level:** tool input or output, file contents, command arguments beyond the allow-listed subcommand,
+  environment variables, absolute paths, the agent's thinking, a subagent's own prompt and transcript text, Slack
+  message text, or anything from a repo outside the rule (§3.3, §9, §15).
+  The relay builds every request from strict schemas, so a field outside this contract can't be sent (§14).
+- **Redaction on the machine**, before anything is queued (§9): keys, tokens, JWTs, private keys, credentials in URLs
+  and secret-valued settings become `[redacted]`, home paths `~/…`. The hub blanks obvious secrets again before it
+  stores text (§10).
+- **What the hub does with it.** It takes the owner from the device token, never from the body (§2); keeps events for
+  7 days; shows them only to the project's signed-in members (on B3's hub, npclabs.org logins through Cloudflare
+  Access); and may summarize shared text with a language model (B3's hub: OpenRouter with a dedicated key, else
+  Cloudflare Workers AI), as material to describe, never as instructions. Its logs carry no prompt, message or summary
+  text.
+- **The Slack-status relay is separate.** agentblip.com only ever receives the finished status (text, emoji,
+  expiration); see the README.
 
 ---
 
-## 1. Deployment facts (fixed)
+## 1. Hosts
 
-- Cloudflare account: NPC Labs `4300a93c2dcb252fa91df03f18e8e44c`. Pin `account_id` in `apps/hub/wrangler.jsonc`.
-  Never deploy to another account.
-- Host `https://workmesh.b3os.org`, and `https://bullpen.b3os.org` kept as an alias so relays paired there keep
-  working (both Workers custom domains on the NPC Labs zone `b3os.org`). `workers_dev` and `preview_urls` are off, so
-  the only ways in are the Access-protected custom domains.
-- Worker script name `bullpen`: its Durable Object holds every pairing, session and event, and a Worker under a new
-  name would start with an empty one. Keep the name.
-- Cloudflare Access (team domain `npclabs.cloudflareaccess.com`) is configured on both hosts, one audience:
-  - The board app on the whole host: allow emails at `npclabs.org`. AUD tag
-    `a3f9a834dccc7096ab27aa4f3470df3b5bd14618c40e641e92b751b696b70f63`.
-  - The relay app on `/relay/*`: bypass (no Access login). The Worker authenticates these requests with device
-    tokens.
-- The Worker MUST verify the Access JWT itself on every `/api/*` request (header `Cf-Access-Jwt-Assertion`,
-  RS256, keys from `https://npclabs.cloudflareaccess.com/cdn-cgi/access/certs`, `aud` = the board AUD above, `iss` =
-  `https://npclabs.cloudflareaccess.com`). No valid JWT → 401. Never trust `Cf-Access-Authenticated-User-Email` alone.
-  For local dev only, `DEV_USER_EMAIL` (a var that must be unset in production) skips the check.
+- B3's hosted hub is `https://workmesh.b3os.org`. `https://bullpen.b3os.org`, the hub's first name, serves the same
+  hub, so relays paired there keep sending without re-pairing; a pairing's verify URL names the host the relay asked.
+- People sign in to the board (on B3's hub, Cloudflare Access). `/relay/*` needs no sign-in: the hub authenticates
+  relays with device tokens (§2).
 
 ## 2. Identity
 
-- A **person** is an Access email (`an@example.com`). Display name = the local part capitalized (`An`), overridable in
-  the hub's `people` table later.
+- A **person** is a signed-in email (`an@example.com`; on B3's hub, the Access login). Display name = the local part
+  capitalized (`An`).
 - A **device** is one machine paired by one person. Tokens: `bp_` + 64 lowercase hex, shown once; the hub stores only
   SHA-256. A device belongs to one project.
 - A **session** is one agent session on one device. Hub key = `<deviceId>:<source>:<sessionId>`. The relay never
@@ -173,54 +191,6 @@ Inclusion:
 Cadence: batch every 1 s while there are events; heartbeat with `full: true` every 30 s. On network failure, keep
 up to 5,000 events in memory and resend (dedupe makes resends safe); beyond that drop the oldest and count them.
 
-## 4. Hub
-
-- Worker (Hono). Routes: `/relay/*` (device token), `/api/*` (Access JWT), everything else = static board assets
-  (SPA fallback).
-- Durable Object `Project` (SQLite storage), one instance per project id (`b3`). It owns devices, pairing codes,
-  sessions, events and the board's WebSockets (hibernation API).
-- Tables (sketch, refine as needed): `people(email, name)`, `devices(id, email, machine, client, token_hash,
-  created_at, last_seen_at, revoked_at)`, `pairings(code, device_id, poll_secret_hash, machine, client, created_at,
-  approved_by, delivered)`, `sessions(hub_key PK, device_id, email, source, key, name, state, activity, background,
-  agents, phase, orchestrator, repo, branch, issues_json, started_at, updated_at, state_since, ended_at)`,
-  `events(device_id, id, hub_key, ts, kind, tool, label, path, cmd, repo, branch, issues_json, pr, ok,
-  PRIMARY KEY(device_id, id))`.
-  As built, `sessions` also has `last_event_at` and `seen_at` (hub clock, last ingest that carried the session), and
-  `events` has `email` (owner, from the token) and `received_at`. A `pair_starts(ip_hash, ts)` table backs the
-  pair-start limit; IPs are stored only as SHA-256.
-- Retention: events 7 days (an alarm prunes hourly); ended sessions drop off the board after 12 h, and so do sessions
-  no ingest has carried for 12 h; a device with no ingest for 2 min shows its sessions as `offline` (the board
-  computes this from `devices.lastSeenAt`). Sessions unseen for 7 days and pairings older than a day are deleted.
-- Board API (Access): `GET /api/me`, `GET /api/state` (project, me, people, devices, sessions, last 300 events newest
-  first, `serverNow`, and since v0.2 `summarizer` and `digest`), `GET /api/sessions/:hubKey/events?before=<ts>&limit=200` (`limit` ≤ 500),
-  `GET /api/stream` (WebSocket: server pushes `{type:"hello", serverNow}` on connect, then
-  `{type:"session", session}`, `{type:"events", events}`, `{type:"device", device}`; the client may send `ping` and
-  gets `pong`), `GET /api/pair/:code`, `POST /api/pair/approve`, `GET /api/devices` (mine),
-  `POST /api/devices/:id/revoke` (mine only; also ends that device's open sessions). Non-GET `/api/*` requests with
-  a foreign `Origin` get `403`.
-- Every ingest updates `devices.last_seen_at`, upserts sessions (owner from the token), inserts events (dedupe),
-  and broadcasts the changes to connected boards.
-- Local dev: with `DEV_USER_EMAIL` set (and `ENVIRONMENT` not `production`) the Worker skips Access and the viewer is
-  `DEV_USER_EMAIL`, or the `X-Dev-User-Email` header so the fake relay can approve as Sean, An and Gio. If
-  `DEV_USER_EMAIL` is set while `ENVIRONMENT` is `production`, every `/api/*` request gets `500`.
-
-## 5. Board (v0)
-
-The mock is in the Linear document "Research: multiplayer agents" (section "The board"). Three columns, left to right:
-
-1. **Waiting on a person**: sessions in `waiting`, the viewer's own first, with how long they have waited.
-2. **People**: one lane per person (Sean, An, Gio), their sessions grouped by repo: state dot, session name, activity,
-   branch, issue chips (link to `https://linear.app/npclabs/issue/<id>`), subagent count, age of last event. Ended
-   and offline sessions dimmed and collapsed under the lane.
-3. **Live tail**: the selected session's events (all shared sessions when nothing is selected), newest at the top,
-   one line each: time, who, tool and path or `cmd`, PR links.
-
-Top bar: project name, counts (agents working, waiting on people, people online), and "Connect a machine" (a dialog
-with the one command to run). `/pair?code=…` is the approve page. Empty state explains how to connect the first
-machine.
-
-Design (v0.1): the B3 brand used in the research document. Superseded by §13: the board is a B3OS console surface.
-
 ## 6. Relay changes (then agentblip, now `packages/cli`)
 
 - `SessionEvent` gains an optional local-only `detail` (`tool`, `filePath` absolute, `command` raw, `prompt` raw,
@@ -233,18 +203,12 @@ Design (v0.1): the B3 brand used in the research document. Superseded by §13: t
   UserPromptSubmit, PreToolUse, PostToolUse, Stop and SessionEnd, mapped like Claude Code. Keep the `notify` path as
   a fallback.
 
-## 7. Done means
-
-An opens `https://workmesh.b3os.org`, signs in with Access, and sees every B3 session Sean is running, each
-tool call within 5 seconds, with nothing from non-B3 repos and no prompt or file text anywhere in the hub's storage.
-
 ---
 
-# v0.2: conversation view and summaries (Sean, 2026-11-24)
+# v0.2: conversation sharing (Sean, 2026-11-24)
 
-Sean: "use a small llm or something to help summarize ... to improve the UX" and "show way more detail, like the
-prompts + updates as we go", like Claude Code's own transcript (prompts, the agent's text updates, grouped tool calls
-such as "Ran 2 shell commands", turn durations).
+Sean: "show way more detail, like the prompts + updates as we go", like Claude Code's own transcript (prompts, the
+agent's text updates, grouped tool calls such as "Ran 2 shell commands", turn durations).
 
 ## 8. Sharing levels (per device)
 
@@ -295,168 +259,42 @@ such as "Ran 2 shell commands", turn durations).
   and 1,000 they are schema errors. `text` is kept on `prompt` and `message` only; a `message` without text is
   dropped. As a second guard behind §9, the hub replaces obvious credentials in `text` and `desc` (the §9 token
   shapes, JWTs, PEM blocks, `Bearer` values, credentials in URLs) with `[redacted]` before storing them.
-- Storage: `events` gains `text`, `truncated`, `descr` (the wire's `desc`), `duration_ms` and `summary`; `devices`
-  and `pairings` gain `share`; `sessions` gains `now_line`, `now_at`, `waiting_reason` and summary bookkeeping.
-  Board types carry them as `HubEvent.text/truncated/desc/durationMs/summary`, `Session.nowLine/nowAt/waitingReason`
-  and `Device.share`.
-
-## 11. Summaries (hub)
-
-- Provider, chosen at runtime behind one interface (`apps/hub/src/worker/summaries/provider.ts`):
-  1. **OpenRouter** when the Worker secret `OPENROUTER_API_KEY` is set: `POST https://openrouter.ai/api/v1/chat/completions`
-     over plain fetch, headers `HTTP-Referer: https://workmesh.b3os.org` and `X-Title: Workmesh`. Model from the var
-     `SUMMARY_MODEL`, default `anthropic/claude-haiku-5.5` ($0.10 / $0.50 per M tokens in November 2026, structured
-     outputs); `SUMMARY_MODEL_FALLBACK` (comma-separated, default `openai/gpt-6-luna`) becomes OpenRouter's `models`
-     fallback list. Requests use `response_format: json_schema` (strict) with `provider.require_parameters` and
-     `reasoning.effort: "low"`; if no endpoint takes that (400/404), the hub retries once in JSON mode with the schema
-     in the prompt and remembers it for that model. Any parse failure skips the summary. On an outage or rate limit
-     the same request goes once to Workers AI, when bound; a refusal or a cut-off answer is final.
-  2. **Workers AI** through the `AI` binding when no OpenRouter key is set: `@cf/google/gemma-4-26b-a4b-it` (2026,
-     4B active parameters, JSON-schema output, reasoning off, $0.10 / $0.30 per M tokens).
-  The board's footer names it: "Summaries by Claude Haiku 5.5 via OpenRouter" or "Summaries by Gemma 4 26B on
-  Workers AI" (`BoardState.summarizer`; null = off).
-- Outputs, all plain text, stored in the Durable Object and pushed to boards:
-  1. **Now line** per session (≤ 90 chars): what the agent is doing right now, e.g. "Publishing agentblip 0.6.0;
-     waiting on Sean's security key". Refreshed when a turn ends, when the state changes, and while working: at most
-     every 30 s when new prompts or messages arrived, every 2 min when only tool calls did. Pushed as `session`.
-  2. **Turn summary** (≤ 220 chars, one or two sentences) when a turn ends: asked → did → result or blocker. Stored
-     on the `turn` event (`HubEvent.summary`), pushed as `{type:"turnSummary", deviceId, id, hubKey, summary}`.
-  3. **Waiting reason** (≤ 80 chars) when a session enters `waiting`: what it needs from its person. Cleared when a
-     new wait starts (the board shows the activity label until the new reason lands) and never written for a wait
-     that ended while the model ran.
-  4. **Digest** per viewer ("Since you looked", 1–4 lines ≤ 110 chars): a viewer back after more than 30 min away
-     (last `/api/state`, socket close or socket ping) starts a visit; its digest covers turn summaries since they last
-     looked, is built once off the request path, served in `/api/state` for 10 minutes, and pushed to that viewer's
-     sockets as `{type:"digest", digest}`. No turn summaries in the window: no digest.
-- Off the ingest path: ingest only records a job per session (`summary_jobs`, one row per session, triggers merged,
-  due 1.5 s after the trigger so a burst lands together); the Durable Object's alarm, which also runs the hourly
-  prune, runs due jobs (6 at a time). Ingest latency is unchanged.
-- Metadata-only sessions are summarized from tools, paths, commands and issue ids alone.
-- Guards: per session at least 10 s between calls; skip when nothing is new since the last now line (no newer event,
-  same state); events older than 15 min on arrival (a resent backlog) trigger nothing; a daily cap per project
-  (`SUMMARY_DAILY_CAP`, default 3,000 calls per UTC day), where now-line-only refreshes stop at 90 % so turn
-  summaries, waiting reasons and digests keep working; outages and rate limits retry once a minute later; graceful
-  degradation (no summary, never an error on the board) on refusal, rate limit or outage.
-- Transcript text is untrusted input: it goes inside `<activity>` / `<turns>` tags that the system prompt calls
-  material to describe, never instructions; the output is a JSON object; each field is flattened to one line, stripped
-  of markup and capped before storage; the board renders it as text.
-- Usage per UTC day (calls, failures, skips, tokens, milliseconds, cost when OpenRouter reports it) is kept in
-  `summary_usage` and served at `GET /api/summaries`. Each call logs one JSON line (`msg: "summary"`, kind, provider,
-  ms, tokens or failure reason), never the prompt or the output.
-
-## 12. Board v0.2
-
-- **Conversation view** for a selected session, modeled on Claude Code's transcript: header (person, session, repo,
-  branch, state, now line, issues, PRs); turns in order, each with the prompt (full text, collapsible when long), the
-  turn summary, the agent's messages as paragraphs (safe markdown subset: code spans and blocks, bold, lists, links;
-  no raw HTML), consecutive tool calls folded into one line ("Ran 3 shell commands · Edited 2 files · Called
-  claude-in-chrome 2 times") that expands to each call's tool, desc, path or cmd and failure, and a closing line
-  "Worked for 1m 34s · 4:06 PM". New items stream in; the view follows the bottom unless the reader scrolled up.
-- **Lanes** show the now line (falling back to the activity label); **Waiting** shows the waiting reason.
-- **Digest strip** at the top when there is one; dismissible.
-- **Metadata-only** sessions show the tool timeline and say the person shares activity only.
-
-As built (v0.2):
-- Selecting a session swaps the right column from the all-sessions live tail to the conversation and widens it
-  (the lanes give up width); at 400 px the columns stack and the conversation scrolls on its own. The live tail
-  shows one-line previews of prompts and messages and "turn ended · 1m 34s" rows.
-- Prompts render verbatim (pre-wrapped, collapsed past 8 lines or 600 chars, "Cut at 4,000 characters" when
-  `truncated`). Messages render through `apps/hub/src/board/lib/markdown.ts`: paragraphs, headings as bold lines, fenced
-  code, inline code, bold, italics, nested lists, quotes, simple tables; links only for http(s) and mailto, opened
-  with `target="_blank" rel="noopener noreferrer"`; everything else is text nodes, never HTML.
-- Tool folds (`apps/hub/src/board/lib/transcript.ts`) group by kind in order of first appearance: shell commands, edited and
-  read files (distinct paths), searches, web searches and fetches, agents, plan updates, skills, MCP calls per
-  server, other tools by name; a failed call turns the fold's marker red and adds "· N failed".
-- A now line written before the session's current working or waiting state began (a new turn whose refresh hasn't
-  landed) is not shown; the relay's activity label stands in until it does. The relay's label also stays as a small
-  trace under the summary.
-- "Earlier" loads 500 events per page and hides once the session's start is loaded. (The layout, the digest and the
-  footer changed in §13.)
-
 
 ---
 
-# v0.3: the board as a B3OS console surface (Sean, 2026-11-24)
+# v0.4 and the split: one protocol, an open client, a hosted hub (Sean, 2026-11-24)
 
-Sean: remove "Summaries by … via OpenRouter", "make it look more like b3os … utilizing that same matching style and
-design principles", "copy it exactly, extracting components".
+v0.4 put the relay, the hub and the board in one public monorepo under one name. Later the same day Sean split it:
+"separate the UI from the agent/daemon, so that the platform always remains hosted / by us, while the piece that gets
+installed on users machine is open source".
 
-## 13. Board v0.3
+## 14. Layout and protocol
 
-- **Name:** the system (relay, hub and board) is **Workmesh** (Sean, 2026-11-24, tying in with B3IQ's Workcell). Every
-  user-visible "Bullpen" on the board reads "Workmesh"; the connect dialog shows `npm i -g @b3os/workmesh` and
-  `workmesh hub connect <this host>`. (The host, repo and code names followed in v0.4, §14.)
-
-- **Built from the console's components, not redrawn.** `apps/hub/src/board/b3os/` is a verbatim copy, at the same paths, of
-  b3os-beta `apps/web/src/` at `65e00f860` (the foundation kit, signature pixel pieces, primitives, the console's
-  `primitives.tsx`, `AuthCard`, `ThemeSwitch`, `Icon`, and its stylesheets and tokens), plus four marked shims; its
-  README lists what came over and how to refresh it. The design rules are the console's
-  (`apps/web/docs/design-rules.md` at that commit).
-- **Shell:** the console's `app-shell`: sidebar (wordmark and "Workmesh" chip, Connect a machine as the glossy create
-  button, nav with the sliding pill and a pixel grid that plays on the hovered row: Board, Machines, then People, one
-  row per person narrowing the board), Dark mode switch, account card; the page on the raised stage with its footer
-  (the live connection's status on the left). Under 1024 px a sticky top bar and the sidebar in a drawer. Light by
-  default (the console's theme bootstrap, `b3os-theme`, `?theme=dark`).
-- **Routes:** `/` the board (`?person=<email>` narrows it), `/sessions/:hubKey` a session's conversation, `/machines`
-  your machines, `/pair` the approve page.
-- **Board** (Home's frame): `PageHeaderView` "Board"; the Attention line ("2 sessions waiting on a person", quiet
-  "Nobody is waiting"); a `FigureStrip` (agents working, sessions open, people online); then, side by side from
-  1280 px, the sessions waiting on a person and each person's sessions as `RowCard`s (the agent's real mark: Anthropic
-  for Claude Code, OpenAI for Codex; state as a kit `Status`; the now line or waiting reason, repo, branch, issues as
-  the meta line; age or wait as the value; copy the session id on hover) beside "Since you looked" (the digest, said
-  once as panel content, dismissible) and Activity (the live tail). Ended and offline sessions fold under each person.
-- **Session page:** a console detail page: back to Board, the agent's mark on the tile, the session's name and
-  `Status`, the now line (or waiting reason) as its line, person and machine, repo, branch, issue and PR links as its
-  meta line, copy id; then the transcript (§12) in a 760 px column on the console's tokens, `Working` (the pixel
-  loader) while the agent works, a `Note` for activity-only sessions. It lands on the newest item and follows it.
-- **Machines:** `RowCard`s for your machines (connected or offline, client, sharing level), Revoke through the shared
-  `ConfirmDialog`; Connect a machine opens a `ResponsiveDialog` (a drawer on a phone) with the command on the dark code
-  island and one `Note` on what is shared.
-- **Approve page:** the console's CLI sign-in card (`Device.tsx`): `AuthHead`, the code large, the facts (machine,
-  client, what it shares), Approve and Cancel; the animated check when connected; `AuthNote` with Retry when a lookup
-  fails.
-- **States:** a skeleton built from the page's own parts on the first read only (`PageReveal`); a failed board read
-  says so once in the Attention slot with Retry, the figures showing dashes; failed history or machine reads show an
-  `InlineError` with the request id (`cf-ray`) and Retry; empty states offer one way to start.
-- **Removed:** the footer naming the summary model (nothing in the UI names a model or vendor), the digest banner, left
-  and top accent bars.
-
----
-
-# v0.4: one system, one repo (Sean, 2026-11-24)
-
-Sean chose a single public monorepo: the relay, the hub and the board in `b3-fun/workmesh`, under one name.
-
-## 14. Layout, protocol and hosts
-
-- **Repo:** `b3-fun/workmesh` (public, MIT), npm workspaces with one root lockfile:
+- **Repo:** `b3-fun/workmesh` (public, MIT) is everything that runs on a person's machine, the protocol, and
+  agentblip.com. npm workspaces with one root lockfile:
 
   | Path | Package | What |
   |---|---|---|
   | `packages/cli` | `@b3os/workmesh` (published) | The relay: CLI, daemon, hooks, hub forwarder, Slack sinks |
   | `packages/core` | `@workmesh/core` (private) | Session model, aggregation, Slack status formatting |
   | `packages/protocol` | `@workmesh/protocol` (private) | The relay ↔ hub wire format (§3, §8, §10) |
-  | `apps/hub` | `@workmesh/hub` (private) | This hub: Worker, Durable Object, board, summaries |
   | `apps/menubar` | (SwiftPM) | Workmesh.app, the menu bar client of the daemon |
   | `app/`, `src/`, `workers/` | root | agentblip.com: the site and the Slack-status relay Worker |
 
-  The hub came over from `b3-fun/bullpen` (now archived) with its history; each imported commit carries an
-  `Imported-From: b3-fun/bullpen@<sha>` trailer. The research document stays in Linear ("Research: multiplayer
-  agents"); it quotes teammates and is not in the repo.
+- **The hosted hub:** B3's hub, its board and its summaries are built in a private repository that pins this one as a
+  git submodule and reads `@workmesh/protocol` from it. From v0.4 until the split the hub lived here, in `apps/hub`;
+  that code is still in this repo's history, but it is no longer developed here. A wire change lands here first
+  (`packages/protocol` and this file, with the relay's side); the hub follows by moving its pin, and keeps reading
+  relays older and newer than its pin.
 - **One protocol:** `packages/protocol` is the code form of §3.1–3.2 and §10. Each body has two readings from the same
   field rules. The relay builds what it sends from the strict schemas (unknown keys fail, no `null`, integer epoch
   ms, `cmd` with one subcommand word, text ≤ 4,000 and `desc` ≤ 200). The hub reads with the accept schemas (§3.2's
   hub-side validation: unknown keys dropped, `null` as absent, fractional ms rounded, `cmd` with up to two subcommand
   words, text ≤ 16,000 and `desc` ≤ 1,000 for the hub to cut after its redaction pass). A body the strict schemas
   accept parses unchanged under the accept schemas, and both name the same fields; the protocol's tests hold both. A
-  wire change is one edit there, and both sides' tests run against it.
-- **Hosts:** `https://workmesh.b3os.org` is the hub's address in the board, the docs and the CLI's examples.
-  `https://bullpen.b3os.org` serves the same Worker, so relays paired there keep sending without re-pairing; a
-  pairing's verify URL names the host the relay asked. The Worker script stays `bullpen` (§1). Device tokens keep
-  their `bp_` prefix.
-- **Deploys:** the hub deploys by hand from `main` (`npm run deploy -w @workmesh/hub`, wrangler OAuth on an NPC Labs
-  account) until CI has an NPC Labs Workers token. CI runs every workspace's tests and typecheck, the CLI build, the
-  site build and the board build. agentblip.com still deploys from CI on every push to `main`.
+  wire change is one edit there: the relay's tests here run against it, and the hub's when it moves its pin.
+- **Deploys:** agentblip.com deploys from CI on every push to `main`. CI runs every workspace's tests and typecheck,
+  the CLI build and the site build.
 
 ---
 

@@ -6,6 +6,7 @@ import type { SessionEvent } from "@workmesh/core";
 import { CoordClient } from "../hub/coord";
 import type { HubSyncEdit, HubSyncInboxItem } from "../hub/coord";
 import { shellCommands, shellWriteTargets } from "../hub/shell-writes";
+import { selectMemories } from "./memory";
 
 /**
  * v1 Coordinate in the hook path (docs/SPEC.md §23). The daemon answers a hook from its cached state only: a refusal
@@ -37,12 +38,17 @@ const WARN_REPEAT_MS = 10 * 60_000;
 
 export interface CoordHooksDeps {
   coord: () => CoordClient | undefined;
-  /** The shared checkout an absolute path is in (the forwarder's §3.3 inclusion), or undefined. */
-  classify: (absPath: string) => { root: string; repo?: string } | undefined;
+  /** The shared checkout an absolute path is in (the forwarder's §3.3 inclusion, with its branch), or undefined. */
+  classify: (absPath: string) => { root: string; repo?: string; branch?: string } | undefined;
   /** The session is shared with the hub. */
   isShared: (localKey: string) => boolean;
   /** The project's name ("B3"). */
   projectName?: () => string | undefined;
+  /**
+   * v3 (SPEC §36): session start put these memories in a session's context. Called after the hook's answer is built,
+   * off the hook path; the daemon reports `used` to the hub in the background and drops a failure.
+   */
+  memoriesUsed?: (localKey: string, ids: string[]) => void;
   now?: () => number;
   home?: string;
 }
@@ -150,15 +156,32 @@ export class CoordHooks {
     }
 
     // Guidance: once, for a top-level shared session, at its start or the first boundary after it became shared,
-    // with the team's rules and conventions and this person's open claims (v2, SPEC §31).
+    // with the team's knowledge and this person's open claims: the accepted memories that matter here when the hub
+    // has memory (v3, SPEC §36), else rules and conventions from notes (v2, SPEC §31).
     if (!event.detail?.agentId && hook !== "PreToolUse" && !this.guided.has(base) && this.deps.isShared(base)) {
       this.guided.add(base);
       if (this.guided.size > 5000) this.guided.clear();
-      parts.push(guidance(this.deps.projectName?.(), coord.delegateAvailable()));
+      const memoryOn = coord.memoryAvailable(now);
+      parts.push(guidance(this.deps.projectName?.(), coord.delegateAvailable(), memoryOn));
       const st = coord.view().state;
       if (st) {
-        const k = knowledge(st.notes, st.claims, coord.me(), (hk) => CoordClient.family(hk) === coord.hubKey(base));
-        if (k) parts.push(k);
+        const isMine = (hk: string): boolean => CoordClient.family(hk) === coord.hubKey(base);
+        const brief = memoryOn ? coord.brief(now) : undefined;
+        if (brief) {
+          const me = coord.me()?.toLowerCase();
+          const claimed = me === undefined ? [] : st.claims.filter((c) => c.holder.person.toLowerCase() === me).map((c) => c.issue);
+          const sel = selectMemories(brief, { ...this.where(event.cwd), issues: claimed });
+          if (sel) {
+            parts.push(sel.text);
+            this.reportUsed(base, sel.ids);
+          }
+          const c = claimsLine(st.claims, coord.me(), isMine);
+          if (c) parts.push(c);
+        } else {
+          // A hub without memory, or its brief not fetched yet (a memory hub lists accepted memories as notes).
+          const k = knowledge(st.notes, st.claims, coord.me(), isMine);
+          if (k) parts.push(k);
+        }
         const me = coord.me();
         const mine = me === undefined ? undefined : st.gates?.find((g) => g.owner.toLowerCase() === me.toLowerCase());
         const g = mine && me ? gateNote(me, mine.actions, mine.approvers) : undefined;
@@ -192,6 +215,28 @@ export class CoordHooks {
     }
   }
 
+  /** Where a session works, for picking its memories: the shared repo of its cwd, the directory in it, the branch. */
+  private where(cwd: string | undefined): { repo?: string; dir?: string; branch?: string } {
+    if (!cwd || !path.isAbsolute(cwd)) return {};
+    const t = this.deps.classify(cwd);
+    if (!t?.repo) return {};
+    const rel = path.relative(t.root, cwd).split(path.sep).join("/");
+    return { repo: t.repo, dir: rel.startsWith("..") ? undefined : rel, branch: t.branch };
+  }
+
+  /** The `used` report, after the hook has its answer (never in its way). */
+  private reportUsed(localKey: string, ids: string[]): void {
+    const report = this.deps.memoriesUsed;
+    if (!report || ids.length === 0) return;
+    setImmediate(() => {
+      try {
+        report(localKey, ids);
+      } catch {
+        // dropped
+      }
+    });
+  }
+
   private editWarnings(event: SessionEvent, coord: CoordClient, key: string, now: number): string | undefined {
     const lines: string[] = [];
     for (const t of this.targets(event)) {
@@ -212,10 +257,13 @@ export class CoordHooks {
   }
 }
 
-/** The workmesh MCP tools a held session may still call: talk to people, read the board, let go of what it holds. */
-const HOLD_MCP_TOOLS = new Set(["whoami", "roster", "send", "inbox", "leases", "notes", "ask", "release", "unlease"]);
-/** The `workmesh` CLI subcommands a held session may run in the shell (SPEC §23, 0.11.x). */
-const HOLD_CLI = new Set(["send", "inbox", "whoami", "claims", "leases", "notes"]);
+/**
+ * The workmesh MCP tools a held session may still call: talk to people, read the board and the team's memory (v3), let
+ * go of what it holds.
+ */
+const HOLD_MCP_TOOLS = new Set(["whoami", "roster", "send", "inbox", "leases", "notes", "ask", "release", "unlease", "recall", "memories"]);
+/** The `workmesh` CLI subcommands a held session may run in the shell (SPEC §23, 0.11.x; v3's reads, SPEC §36). */
+const HOLD_CLI = new Set(["send", "inbox", "whoami", "claims", "leases", "notes", "recall", "memories"]);
 
 /**
  * A call a hold lets through: one of the workmesh MCP tools above, or exactly one `workmesh <send|inbox|whoami|claims|
@@ -316,7 +364,7 @@ function editWarning(t: Target, e: HubSyncEdit, hubNow: number): string {
 }
 
 /** The note a shared session gets once (SPEC §23), under ~8 lines. */
-export function guidance(project: string | undefined, delegate = false): string {
+export function guidance(project: string | undefined, delegate = false, memory = false): string {
   const team = project ? ` (${project})` : "";
   return [
     `Workmesh: this session is on your team's board${team}, beside your teammates' agents. Coordinate with the workmesh tools (MCP server \`workmesh\`, or the \`workmesh\` CLI):`,
@@ -325,6 +373,9 @@ export function guidance(project: string | undefined, delegate = false): string 
     "- Check `inbox` for teammates' messages; answer with `send`.",
     "- Need a file someone else leased? `send` its holder a message instead of working around them. `roster` shows who works where.",
     ...(delegate ? ["- `handoff` a task to a teammate (or to yourself, run on another of your machines); `handoffs` lists yours."] : []),
+    ...(memory
+      ? ["- `recall` the team's memory before you decide; `remember` a decision, convention or gotcha the team should keep (a person accepts it)."]
+      : []),
   ].join("\n");
 }
 
@@ -381,13 +432,24 @@ export function knowledge(
     }
     if (rules.length > room) lines.push(`- …and ${rules.length - room} more: \`notes\` (tag rule or convention).`);
   }
-  if (mine.length > 0) {
-    lines.push(`Your open claims: ${mine
-      .slice(0, 4)
-      .map((c) => `${c.issue}${isMine(c.holder.sessionKey) ? " (this session)" : c.holder.sessionName ? ` (${c.holder.sessionName})` : ""}${c.note ? ` — ${c.note.slice(0, 80)}` : ""}`)
-      .join("; ")}${mine.length > 4 ? `; and ${mine.length - 4} more (\`claims\`)` : ""}.`);
-  }
+  const c = claimsLine(claims, me, isMine);
+  if (c) lines.push(c);
   return lines.length > 0 ? lines.slice(0, KNOWLEDGE_MAX_LINES + 1).join("\n") : undefined;
+}
+
+/** "Your open claims: B3-7168 (this session) — relay side; B3-7000 (other)." for the person's claims, if any. */
+export function claimsLine(
+  claims: ReadonlyArray<{ issue: string; holder: { person: string; sessionKey: string; sessionName?: string }; note?: string }>,
+  me: string | undefined,
+  isMine: (hubKey: string) => boolean,
+): string | undefined {
+  const owner = me?.toLowerCase();
+  const mine = owner === undefined ? [] : claims.filter((c) => c.holder.person.toLowerCase() === owner);
+  if (mine.length === 0) return undefined;
+  return `Your open claims: ${mine
+    .slice(0, 4)
+    .map((c) => `${c.issue}${isMine(c.holder.sessionKey) ? " (this session)" : c.holder.sessionName ? ` (${c.holder.sessionName})` : ""}${c.note ? ` — ${c.note.slice(0, 80)}` : ""}`)
+    .join("; ")}${mine.length > 4 ? `; and ${mine.length - 4} more (\`claims\`)` : ""}.`;
 }
 
 /** Inbox items as one context block, within `budget` chars; the items that fit. Workmesh's own notices read as is. */

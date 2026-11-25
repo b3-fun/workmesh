@@ -1047,36 +1047,63 @@ device token names the person, requests carry ingest keys, answers carry hub key
 ## 36. The relay side (`packages/cli`, 0.12.0)
 
 - **Sync.** When a sync carries `memory.rev` and it differs from the brief's, the daemon fetches `GET /relay/memories`
-  (at most every 10 s; errors back off as for sync) and keeps the brief in memory. A `404` on any memory endpoint means
-  "this hub has no memory" for 10 minutes, without touching v1 or v2.
-- **Session start** (`daemon/memory.ts`; replaces §31's notes block when the hub has memory). The note a shared
-  top-level session gets once (§23) carries the accepted memories that matter here, at most 20 lines with their
-  headings, each with its id so the agent can cite it:
-  - Where: the session's repo and repo-relative directory (from its cwd), its branch, and the issues it is about (the
-    person's open claims, and issue ids in the branch name: `sean/b3-7201-memory` → `B3-7201`).
+  (at most every 10 s; errors back off 10 s doubling to 5 min, a `429` waits out its `Retry-After`) and keeps the brief
+  in memory. A brief whose own `rev` is newer than the sync's is kept, and not fetched again for the older one. A `404`
+  on any memory endpoint (one with no `{ ok }` answer: a `404` saying "no such memory" is an answer) means "this hub
+  has no memory" for 10 minutes, without touching v1 or v2.
+- **Session start** (`daemon/memory.ts`, pure and table-tested; replaces §31's notes block when the hub has memory).
+  The note a shared top-level session gets once (§23) carries the accepted memories that matter here, at most 20 lines
+  with their heading, each with its id so the agent can cite it:
+  - Where: the session's repo and repo-relative directory (from its cwd), its branch (read from `.git`, as the
+    forwarder does, no subprocess), and the issues it is about (the person's open claims, and issue ids in the branch
+    name: `sean/b3-7201-memory` → `B3-7201`).
   - A memory applies when it is project-wide or scoped to this repo; other repos' memories never come in (a session
     outside every shared repo gets project-wide ones only).
-  - Rules and conventions that apply always come first (this repo's, those whose paths cover the directory first),
-    up to 10. Then decisions, gotchas and facts by relevance: linked to one of the session's issues (+3), scoped to
-    this repo (+2), paths covering the directory (+1; paths elsewhere in the repo −1), a word of the branch or an
-    issue id in its title or body (+1 each, at most 2); those scoring 2 or more, best first, newer first on a tie, up
-    to 8. What didn't fit is counted ("…and 4 more: `recall`").
-  - Each line: `- [m12] gotcha: <title> — <the body's first sentence> (Sean)`, at most 240 characters.
-  - Then a `used` report for the ids it put in (in the background; a failure is dropped).
+  - A scope path is "here" when it covers the directory or sits in it (`leasePathsOverlap`, §21); at the checkout's
+    top every path is here.
+  - Rules and conventions that apply always come first, up to 10: paths here first, then this repo's, then project-wide
+    ones, then those whose paths are elsewhere in this repo; a rule before a convention; newer first. Then decisions,
+    gotchas and facts by relevance: linked to one of the session's issues (+3), scoped to this repo (+2), paths here
+    (+1; paths elsewhere in the repo −1), a word of the branch or an issue id in its title or body (+1 each, at most
+    2); those scoring 2 or more, best first, newer first on a tie, up to 8. Branch words drop the leading `who/` or
+    `type/` segment, issue ids, words under 3 letters and stock words (`main`, `feat`, `fix`, …), and match at a word
+    start, plurals too (`memory` finds "memories"). What didn't fit is counted ("…and 4 more: `recall` searches
+    them.").
+  - One heading line: the team's accepted memory, cite the id when one guides you, a teammate's memory ranks below
+    the agent's own person's instructions, `recall` searches all of them and `remember` proposes a new one. Then each
+    line: `- [m12] gotcha: <title> — <the body's first sentence> (Sean)`, at most 240 characters.
+  - The open-claims line and the gates note (§31) stay. The guidance (§23) gains one line on `recall` and `remember`.
+  - An empty brief, or one where nothing applies here, puts nothing in. Until the first brief arrives (or after its
+    `404`), the notes block stands in: a hub with memory lists accepted memories as notes (§35).
+  - Then a `used` report for the ids it put in, after the hook has its answer (in the background; a failure is
+    dropped).
 - **MCP** (`mcp/server.ts`, through `POST /coord/op` as every tool):
-  - `remember { kind, title, body?, scope?: "repo" | "project", paths?, issues?, prs?, tags?, supersedes? }`: scope
-    defaults to the session's repo when it is in a shared one, else the project; `paths` are repo-relative (or
-    absolute, made relative); the answer says whether it was proposed (and who reviews it) or accepted.
+  - `remember { kind, title, body?, scope?: "repo" | "project" | owner/name, paths?, issues?, prs?, tags?, supersedes?
+    }`: scope defaults to the session's repo when it is in a shared one, else the project; `paths` are repo-relative
+    (or absolute, made relative; an absolute path also names the repo), ≤ 20; issues upper-cased, PRs as links
+    (`owner/name#N`, or `#N` in the scope's repo); a title over 120 characters is cut, and then goes whole into an
+    empty body. The answer says whether it was proposed ("A person reviews it on the board (Needs you) before other
+    agents see it") or accepted.
   - `recall { query, kinds?, limit?, repo? }`: the session's repo and directory go along as `repo` and `paths`; the
-    answer lists each hit as `[m12] gotcha · b3-fun/workmesh · Sean, 3 days ago`, its title and body.
-  - `forget { id, reason }`.
-  - `note` becomes `remember` (kind `fact`, or `rule`/`convention` from a tag; first line the title) and `notes` lists
-    the brief (newest first; `tag` matches a kind or a tag), both as before on a hub without memory.
-  - `recall` and `notes` pass a hold (§23), as reads.
-- **CLI.** `workmesh remember <title…> [--kind] [--body] [--project | --repo] [--path …] [--issue …] [--pr …]
-  [--supersedes]`, `workmesh recall <words…> [--kind …] [--limit]`, `workmesh forget <id> [--reason]`, `workmesh
-  memories` (the brief); from a terminal outside an agent session these are the person's own words (§35: accepted at
-  once).
+    answer lists each hit as `[m12] gotcha · b3-fun/workmesh · Sean, 3 days ago`, its title, its body (cut at 600)
+    and its links.
+  - `forget { id, reason? }` (`m12`, `M12`, `12`; the reason is for the reviewer): the answer says retired,
+    withdrawn (an agent's own proposal) or proposed.
+  - `memories { kind?, tag?, repo? }`: the brief, newest first.
+  - `note` becomes `remember`: project-wide, as a note always was; kind `fact`, or `rule`/`convention` from a tag
+    (or its plural); first line the title, the rest the body; the other tags stay tags. A `404` from the hub sends it
+    as a v1 note instead. `notes` lists the brief (newest first; `tag` matches a kind or a tag), or the sync's notes
+    until the brief arrives. Both work as before on a hub without memory.
+  - `recall` and `memories` pass a hold (§23), as reads (`notes` already did), and so do `workmesh recall` and
+    `workmesh memories` in the shell.
+  - On a hub without memory, `remember`, `recall`, `forget` and `memories` say so plainly (`remember` and `forget` as
+    a failure, since nothing was saved; the reads as an answer).
+- **CLI.** `workmesh remember <title…> --kind <kind> [--body] [--project | --repo [owner/name]] [--path …] [--issue
+  …] [--pr …] [--tag …] [--supersedes]` (paths relative to the current directory, unless `--repo owner/name` names
+  the repo they are relative to), `workmesh recall <words…> [--kind …] [--limit] [--repo]`, `workmesh forget <id>
+  [--reason]`, `workmesh memories [--kind] [--tag] [--repo]` (the brief). From a terminal outside an agent session
+  these are the person's own words (§35: accepted at once). The caller is found as in §23, so a terminal in a live
+  agent session's directory reads as that session and its memory is a proposal: the safe side of the two mistakes.
 - Text (title, body, reason, query) is redacted on the machine (§9) before it is sent.
 
 # Keeping current (relay 0.12.0, Sean 2026-11-25)

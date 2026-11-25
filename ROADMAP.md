@@ -29,7 +29,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **done** (11-25): wire #22 (SPEC §30), relay #23 + #26 in **0.11.0** (npm, GitHub release v0.11.0), hub and board workmesh-cloud #12; follow-ups (approval → the agent carries on, a live two-person handoff) in 0.11.x |
 | Onboarding hardening | First run solid on macOS and Linux: lingering so an SSH box stays online after logout, no half-installed systemd unit, `init` checks the hub heard from the machine, `doctor` names why a machine shows offline, one pairing per machine (the same hub under two addresses, a re-pair retires the old device), "online, no agents running" and "paired, never connected" on the board; a Docker smoke test (Node 20/22/24, with and without systemd, over SSH) | **in review** (11-25): relay 0.11.1 (not published), hub workmesh-cloud |
 | PR details | PR title, state (open, draft, merged, closed), author, review and checks on the board, from a read-only GitHub App on b3-fun, instead of a bare `repo#n` | **done** (11-25): hub and board workmesh-cloud #24 |
-| v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **in progress** (11-25): wire (SPEC §35–36) |
+| v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **in progress** (11-25): wire #32 (SPEC §35–36); relay built (0.12.0, not published) |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -302,8 +302,13 @@ base people trust. Contract: SPEC §35 (wire) and §36 (relay).
   `forget`, `memories`; `note` keeps working as a `fact`. At the start of a shared session the relay puts in the
   accepted memories that matter there: rules and conventions always, decisions, gotchas and facts by repo, path,
   branch and claimed issue, at most 20 lines, each with its id.
-- **Next:** relay 0.12.0, then the hub and board (Memory tab, Needs-you cards, Settings, Ask, proposals from finished
-  sessions, notes migrated).
+- **Relay:** built (0.12.0, not published). The daemon caches the brief (every accepted memory) and refetches it when
+  sync's `memory.rev` moves; a session's start note carries the rules and conventions that apply and the decisions,
+  gotchas and facts that score for its repo, directory, branch and claimed issues, each with its id, and reports which
+  it used. `remember`, `recall`, `forget`, `memories` (MCP and CLI); on a hub with memory `note` proposes a memory and
+  `notes` lists them; on an older hub nothing changes.
+- **Next:** the hub and board (Memory tab, Needs-you cards, Settings, Ask, proposals from finished sessions, notes
+  migrated).
 
 ## Decision log
 

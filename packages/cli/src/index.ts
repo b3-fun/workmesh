@@ -17,6 +17,10 @@ import {
   runUnlease,
   runWhoami,
   runAsk,
+  runRemember,
+  runRecall,
+  runForget,
+  runMemories,
 } from "./commands/coord";
 import { runDoctor } from "./commands/doctor";
 import { runEmit } from "./commands/emit";
@@ -334,6 +338,51 @@ program
   .argument("<question...>", "e.g. what is An's agent doing on B3-7167?")
   .option("--json", "machine-readable output")
   .action(wrap(runAsk));
+
+// v3 Memory (SPEC §36): the team's shared knowledge base. From a terminal these are your own words (accepted at once);
+// from an agent's shell, its proposal.
+program
+  .command("remember")
+  .description("Write down a decision, convention, gotcha, rule or fact for your team's agents")
+  .argument("<title...>", "the memory in one line")
+  .option("--kind <kind>", "decision | convention | gotcha | rule | fact")
+  .option("--body <text>", "why, how, where it bit (up to 2,000 characters)")
+  .option("--project", "team-wide, not just this repo")
+  .option("--repo [owner/name]", "this repo (the default inside a shared one), or the one named")
+  .option("--path <paths...>", "only these files, directories or globs (relative to this directory)")
+  .option("--issue <ids...>", "linked Linear issues, e.g. B3-123")
+  .option("--pr <prs...>", "linked PRs: links, owner/name#N, or #N in this repo")
+  .option("--tag <tags...>", "one-word tags")
+  .option("--supersedes <id>", "a memory this one replaces, e.g. m12")
+  .option("--json", "machine-readable output")
+  .action(wrap(runRemember));
+
+program
+  .command("recall")
+  .description("Search your team's accepted memories (this repo's first)")
+  .argument("<words...>", "what to look for")
+  .option("--kind <kinds...>", "only these kinds")
+  .option("--limit <n>", "how many (1-20, default 8)")
+  .option("--repo <owner/name>", "rank this repo first")
+  .option("--json", "machine-readable output")
+  .action(wrap(runRecall));
+
+program
+  .command("forget")
+  .description("Retire a team memory that no longer holds (yours at once; an agent's is a proposal)")
+  .argument("<id>", "e.g. m12")
+  .option("--reason <text>", "why it no longer holds")
+  .option("--json", "machine-readable output")
+  .action(wrap(runForget));
+
+program
+  .command("memories")
+  .description("Your team's accepted memories, newest first")
+  .option("--kind <kind>", "only this kind")
+  .option("--tag <tag>", "only this tag")
+  .option("--repo <owner/name>", "only this repo's (project: team-wide ones)")
+  .option("--json", "machine-readable output")
+  .action(wrap(runMemories));
 
 program
   .command("whoami")

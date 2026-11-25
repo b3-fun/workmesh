@@ -14,8 +14,13 @@ import {
   hubInboxAckRequestSchema,
   hubLeaseRequestSchema,
   hubLeaseResponseAcceptSchema,
+  hubMemoryBriefResponseAcceptSchema,
+  hubMemoryRequestSchema,
+  hubMemoryResponseAcceptSchema,
   hubMessageRequestSchema,
   hubNoteRequestSchema,
+  hubRecallRequestSchema,
+  hubRecallResponseAcceptSchema,
   hubSyncAcceptSchema,
   isLeaseGlob,
   leaseEntriesCovering,
@@ -35,8 +40,13 @@ import type {
   HubLeaseAccepted,
   HubLeaseRequest,
   HubLeaseResponseAccepted,
+  HubMemoryBriefItemAccepted,
+  HubMemoryRequest,
+  HubMemoryResponseAccepted,
   HubMessageRequest,
   HubNoteRequest,
+  HubRecallRequest,
+  HubRecallResponseAccepted,
   HubSyncAccepted,
 } from "@workmesh/protocol";
 import type { z } from "zod";
@@ -93,7 +103,15 @@ export interface CoordClientOptions {
   staleMs?: number;
   /** v2 (SPEC §31): after each good sync, with the one before (handoffs, approvals and wake checks diff them). */
   onSync?: (next: HubSyncAccepted, previous: HubSyncAccepted | undefined) => void;
+  /** v3 (SPEC §36): the brief is fetched at most this often (default 10 s). */
+  briefMinMs?: number;
 }
+
+/** v3 Memory (SPEC §35): one accepted memory as the brief carries it. */
+export type MemoryBriefItem = HubMemoryBriefItemAccepted;
+
+/** What a memory call answers when this hub has no memory (a 404, or a sync without `memory`). */
+export const NO_MEMORY = "this team's hub has no memory yet (it predates Workmesh v3)";
 
 /** What a hub call answered: the parsed body, or why there is none. */
 export type CoordResult<T> =
@@ -164,6 +182,15 @@ export class CoordClient {
   private readonly asking = new Set<string>();
   /** Ask is off on this hub (404, 503), or rate-limited (429), until then, and why. */
   private askBlocked: { until: number; status: number; error: string } | undefined;
+  /** v3 (SPEC §36): the last good brief (every accepted memory), and the sync `rev` it was fetched for. */
+  private memBrief: { rev: string; forRev: string; memories: MemoryBriefItem[]; fetchedAt: number } | undefined;
+  /** A memory endpoint answered 404: this hub has no memory until then. */
+  private memoryOffUntil = 0;
+  private readonly briefMinMs: number;
+  private briefAttemptAt = 0;
+  private briefFailures = 0;
+  private briefRetryAt = 0;
+  private briefInFlight: Promise<void> | undefined;
 
   constructor(opts: CoordClientOptions) {
     this.url = opts.url.replace(/\/+$/, "");
@@ -182,6 +209,7 @@ export class CoordClient {
     this.holdGraceMs = opts.holdGraceMs ?? 30 * 60_000;
     this.staleMs = opts.staleMs ?? 90_000;
     this.onSync = opts.onSync;
+    this.briefMinMs = opts.briefMinMs ?? 10_000;
   }
 
   // --- lifecycle ---------------------------------------------------------------
@@ -277,6 +305,31 @@ export class CoordClient {
   delegateAvailable(): boolean {
     const s = this.state;
     return s !== undefined && (s.handoffs !== undefined || s.gates !== undefined || s.approvals !== undefined);
+  }
+
+  /**
+   * v3 (SPEC §35, §36): this hub has memory: its last sync carried `memory.rev`, and no memory endpoint answered 404
+   * in the last 10 minutes. Off, the relay keeps v1's notes (session start, `note`, `notes`).
+   */
+  memoryAvailable(now = this.now()): boolean {
+    return this.state?.memory !== undefined && this.memoryOffUntil <= now;
+  }
+
+  /** The accepted memories as of the last good brief, newest first; undefined before the first one (or without memory). */
+  brief(now = this.now()): readonly MemoryBriefItem[] | undefined {
+    return this.memoryAvailable(now) ? this.memBrief?.memories : undefined;
+  }
+
+  /** The brief's rev and when it was fetched (for status lines and tests). */
+  briefInfo(): { rev: string; fetchedAt: number; count: number } | undefined {
+    const b = this.memBrief;
+    return b ? { rev: b.rev, fetchedAt: b.fetchedAt, count: b.memories.length } : undefined;
+  }
+
+  /** Syncs first when the last sync is older than `maxAgeMs`, then waits for a brief fetch it started. Never throws. */
+  async memoryReady(maxAgeMs = 5000): Promise<void> {
+    await this.refreshed(maxAgeMs);
+    if (this.briefInFlight) await this.briefInFlight;
   }
 
   // --- what hooks read (cached; never a network call) ----------------------------
@@ -594,6 +647,11 @@ export class CoordClient {
     for (const item of s.inbox) if (this.delivered.has(item.id)) this.ackQueue.add(item.id);
     this.setAvailable(true);
     if (this.ackQueue.size > 0) void this.flushAcks();
+    // v3 (SPEC §36): the accepted set moved: fetch the brief (throttled, in the background).
+    const rev = s.memory?.rev;
+    if (rev !== undefined && this.memoryOffUntil <= now && rev !== this.memBrief?.rev && rev !== this.memBrief?.forRev) {
+      void this.fetchBrief(rev);
+    }
     if (this.onSync) {
       try {
         this.onSync(s, previous);
@@ -621,6 +679,86 @@ export class CoordClient {
     return this.acking;
   }
 
+  // --- v3 Memory: the brief (SPEC §36) ----------------------------------------------
+
+  /**
+   * `GET /relay/memories` for the sync `rev` that moved: at most every `briefMinMs`, backing off after errors (10 s
+   * doubling to 5 min, a 429's `Retry-After`). A 404 turns memory off for 10 minutes (v1 and v2 carry on). Never throws.
+   */
+  private fetchBrief(forRev: string): Promise<void> {
+    if (this.briefInFlight) return this.briefInFlight;
+    const now = this.now();
+    if (this.halted || now - this.briefAttemptAt < this.briefMinMs || this.briefRetryAt > now) return Promise.resolve();
+    this.briefAttemptAt = now;
+    this.briefInFlight = this.fetchBriefUnsafe(forRev)
+      .catch((err: unknown) => this.briefFailed(`brief: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => {
+        this.briefInFlight = undefined;
+      });
+    return this.briefInFlight;
+  }
+
+  private briefFailed(message: string): void {
+    this.briefFailures++;
+    this.briefRetryAt = this.now() + Math.min(this.maxBackoffMs, 10_000 * 2 ** Math.min(this.briefFailures - 1, 10));
+    this.log(`hub: memory ${message}`);
+  }
+
+  private memoryOff(): void {
+    if (this.memoryOffUntil <= this.now()) this.log("hub: no memory on this hub yet (404); asking again in 10 min");
+    this.memoryOffUntil = this.now() + this.absentRetryMs;
+    this.memBrief = undefined;
+  }
+
+  private async fetchBriefUnsafe(forRev: string): Promise<void> {
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.url}/relay/memories`, {
+        method: "GET",
+        headers: { authorization: `Bearer ${this.token}`, accept: "application/json" },
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (err) {
+      this.briefFailed(`unreachable: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    const text = await res.text().catch(() => "");
+    if (res.status === 404) {
+      this.memoryOff();
+      return;
+    }
+    if (res.status === 401) {
+      this.halted = true;
+      this.error = "device token rejected (401)";
+      this.holds.clear();
+      return;
+    }
+    if (res.status === 429) {
+      this.briefRetryAt = this.now() + parseRetryAfter(res.headers.get("retry-after"), this.now());
+      return;
+    }
+    if (!res.ok) {
+      this.briefFailed(`brief: hub responded ${res.status}`);
+      return;
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text) as unknown;
+    } catch {
+      this.briefFailed("brief isn't JSON");
+      return;
+    }
+    const parsed = hubMemoryBriefResponseAcceptSchema.safeParse(raw);
+    if (!parsed.success) {
+      this.briefFailed("brief this relay can't read");
+      return;
+    }
+    this.briefFailures = 0;
+    this.briefRetryAt = 0;
+    const memories = [...parsed.data.memories].sort((a, b) => b.updatedAt - a.updatedAt);
+    this.memBrief = { rev: parsed.data.rev, forRev, memories, fetchedAt: this.now() };
+  }
+
   // --- hub calls (from the MCP server and CLI, through the daemon) ----------------
 
   private async post<Req, Res>(
@@ -628,15 +766,22 @@ export class CoordClient {
     reqSchema: z.ZodType<Req>,
     body: unknown,
     resSchema: z.ZodType<Res> | null,
-    /** A v2 endpoint: a 404 means this hub has no v2 (remembered for a while), not that it has no coordination. */
-    v2 = false,
+    /**
+     * A v2 or v3 endpoint: a 404 means this hub has no v2 (or no memory), remembered for a while, not that it has no
+     * coordination.
+     */
+    family?: "v2" | "memory",
   ): Promise<CoordResult<Res>> {
     if (this.halted) return { ok: false, error: "the hub rejected this device's token: run `workmesh hub connect` again" };
     if (this.available === false) {
       return { ok: false, unavailable: true, error: "this hub has no coordination yet (it predates Workmesh v1)" };
     }
+    const v2 = family === "v2";
     if (v2 && (this.v2Absent.get(pathname) ?? 0) > this.now()) {
       return { ok: false, status: 404, unavailable: true, error: "this hub has no delegation yet (it predates Workmesh v2)" };
+    }
+    if (family === "memory" && this.memoryOffUntil > this.now()) {
+      return { ok: false, status: 404, unavailable: true, error: NO_MEMORY };
     }
     const req = reqSchema.safeParse(body);
     if (!req.success) {
@@ -663,6 +808,10 @@ export class CoordClient {
     if (res.status === 404 && v2 && (raw === undefined || (raw as { ok?: unknown }).ok === undefined)) {
       this.v2Absent.set(pathname, this.now() + this.absentRetryMs);
       return { ok: false, status: 404, unavailable: true, error: "this hub has no delegation yet (it predates Workmesh v2)" };
+    }
+    if (res.status === 404 && family === "memory" && (raw === undefined || (raw as { ok?: unknown }).ok === undefined)) {
+      this.memoryOff();
+      return { ok: false, status: 404, unavailable: true, error: NO_MEMORY };
     }
     if (res.status === 404 && (raw === undefined || (raw as { ok?: unknown }).ok === undefined)) {
       this.setAvailable(false);
@@ -747,15 +896,37 @@ export class CoordClient {
   // --- v2 Delegate (SPEC §30) ------------------------------------------------------
 
   handoff(req: HubHandoffRequest): Promise<CoordResult<HubHandoffResponseAccepted>> {
-    return this.post("/relay/handoffs", hubHandoffRequestSchema, req, hubHandoffResponseAcceptSchema, true);
+    return this.post("/relay/handoffs", hubHandoffRequestSchema, req, hubHandoffResponseAcceptSchema, "v2");
   }
 
   approval(req: HubApprovalRequest): Promise<CoordResult<HubApprovalResponseAccepted>> {
-    return this.post("/relay/approvals", hubApprovalRequestSchema, req, hubApprovalResponseAcceptSchema, true);
+    return this.post("/relay/approvals", hubApprovalRequestSchema, req, hubApprovalResponseAcceptSchema, "v2");
   }
 
   setGates(req: HubGatesRequest): Promise<CoordResult<HubGatesResponseAccepted>> {
-    return this.post("/relay/gates", hubGatesRequestSchema, req, hubGatesResponseAcceptSchema, true);
+    return this.post("/relay/gates", hubGatesRequestSchema, req, hubGatesResponseAcceptSchema, "v2");
+  }
+
+  // --- v3 Memory (SPEC §35) ----------------------------------------------------------
+
+  /** `POST /relay/memories`: remember, forget, used. A 404 without an answer turns memory off for 10 minutes. */
+  memory(req: HubMemoryRequest): Promise<CoordResult<HubMemoryResponseAccepted>> {
+    return this.post("/relay/memories", hubMemoryRequestSchema, req, hubMemoryResponseAcceptSchema, "memory");
+  }
+
+  /** `POST /relay/recall`: the team's accepted memories that match, best first. */
+  recall(req: HubRecallRequest): Promise<CoordResult<HubRecallResponseAccepted>> {
+    return this.post("/relay/recall", hubRecallRequestSchema, req, hubRecallResponseAcceptSchema, "memory");
+  }
+
+  /** Session start put these memories in a session's context (SPEC §36): reported in the background, failures dropped. */
+  async memoryUsed(sessionKey: string, ids: readonly string[]): Promise<void> {
+    if (ids.length === 0 || !this.memoryAvailable()) return;
+    try {
+      await this.memory({ action: "used", sessionKey, ids: [...new Set(ids)].slice(0, 50), how: "start" });
+    } catch {
+      // dropped: a use count is not worth a retry
+    }
   }
 
   // --- Ask (SPEC §29) --------------------------------------------------------------

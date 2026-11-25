@@ -241,6 +241,44 @@ describe("Claude Code subagents (SPEC §15)", () => {
     expect(h.last("claude-code:p6")?.state).toBe("ended");
   });
 
+  it("a subagent nothing confirms (no type, task, hook or tokens) is held back 2 s, and never sent if it ends sooner", async () => {
+    const h = harness();
+    const ghost = "a00000000000000a1";
+    const slow = "a00000000000000a2";
+    const named = "a00000000000000a3";
+    h.claude("g1", beta, { hook_event_name: "UserPromptSubmit", prompt: "resume" });
+    // A SubagentStart/SubagentStop pair with nothing between (Claude Code replaying calls on resume).
+    h.claude("g1", beta, { hook_event_name: "SubagentStart", agent_id: ghost });
+    h.claude("g1", beta, { hook_event_name: "SubagentStart", agent_id: slow });
+    h.claude("g1", beta, { hook_event_name: "SubagentStart", agent_id: named, agent_type: "Explore" });
+    await h.send();
+    // A typed subagent goes at once; the untyped ones wait.
+    expect(h.last(`claude-code:g1/${named}`)).toMatchObject({ state: "working", agentType: "Explore" });
+    expect(h.upserts(`claude-code:g1/${ghost}`)).toEqual([]);
+    expect(h.upserts(`claude-code:g1/${slow}`)).toEqual([]);
+    h.advance(400);
+    h.claude("g1", beta, { hook_event_name: "SubagentStop", agent_id: ghost, background_tasks: [] });
+    await h.send();
+    h.advance(2000);
+    await h.send();
+    // The pair that ended in 400 ms never left; the one still running after 2 s did.
+    expect(h.upserts(`claude-code:g1/${ghost}`)).toEqual([]);
+    expect(h.last(`claude-code:g1/${slow}`)).toMatchObject({ state: "working", role: "subagent", parent: "claude-code:g1" });
+    expect(h.fwd.status()).toMatchObject({ subagentSessions: 2 });
+  });
+
+  it("a hook inside an untyped subagent confirms it at once", async () => {
+    const h = harness();
+    const quick = "a00000000000000b1";
+    h.claude("g2", beta, { hook_event_name: "SubagentStart", agent_id: quick });
+    h.claude("g2", beta, { hook_event_name: "PreToolUse", agent_id: quick, tool_name: "Read", tool_input: { file_path: path.join(beta, "README.md") } });
+    h.advance(300);
+    h.claude("g2", beta, { hook_event_name: "SubagentStop", agent_id: quick, background_tasks: [] });
+    await h.send();
+    expect(h.last(`claude-code:g2/${quick}`)).toMatchObject({ state: "ended", role: "subagent" });
+    expect(h.events(`claude-code:g2/${quick}`).map((e) => e.kind)).toEqual(["tool"]);
+  });
+
   it("a Stop with background work says what the session waits on", async () => {
     const h = harness();
     h.claude("p7", beta, { hook_event_name: "UserPromptSubmit", prompt: "run it" });

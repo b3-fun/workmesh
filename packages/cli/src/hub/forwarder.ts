@@ -329,6 +329,8 @@ interface SubState {
   ended?: number;
   /** v0.11: it stopped with background tasks of its own and waits on them (SPEC §26). */
   bgWait?: boolean;
+  /** A hook fired inside it (a tool call): it ran, whatever else is known (SPEC §15, unconfirmed subagents). */
+  active?: boolean;
 }
 
 const SESSION_REQUIRED = new Set(["key", "source", "state", "startedAt", "updatedAt", "stateSince"]);
@@ -355,6 +357,12 @@ const MONITOR_EVENT_GAP_MS = 10_000;
 const COMPACT_DEDUPE_MS = 60_000;
 /** A subagent with no hook or transcript activity for this long is over (its SubagentStop was missed). */
 const SUBAGENT_IDLE_END_MS = 30 * 60_000;
+/**
+ * SPEC §15: a subagent with no type, no task, no hook of its own and no tokens is held back until it has lasted this
+ * long. Claude Code fires SubagentStart/SubagentStop pairs with nothing between them (calls replayed on resume); sent,
+ * each was a nameless agent on the board.
+ */
+const SUBAGENT_CONFIRM_MS = 2_000;
 /** Usage (tokens, model) re-read at most this often per session. */
 const USAGE_REFRESH_MS = 5000;
 /** Agent transcripts read per workflow run. */
@@ -788,6 +796,7 @@ export class HubForwarder {
     if (event.activity) t.label = { raw: event.activity, hub: label };
     if (sub) {
       const st = this.sessions.get(sub.key)!.sub!;
+      st.active = true;
       st.label = label ?? st.label;
       if (st.state !== "working") st.stateSince = event.ts ?? this.now();
       st.state = "working";
@@ -1711,12 +1720,23 @@ export class HubForwarder {
       const quiet = now - sub.updatedAt > idleEnd;
       if (!parent || !live.has(sub.parentKey) || quiet) sub.ended = Math.min(now, quiet ? sub.updatedAt + idleEnd : now);
     }
-    // Never sent (older hub, or not shared): nothing to end on the hub.
-    if (sub.ended !== undefined && (!this.structured || !t.shared) && t.sentJson === undefined) {
+    const unconfirmed = t.sentJson === undefined && this.unconfirmedSub(t, now);
+    // Never sent (older hub, not shared, or it ended before anything confirmed it ran): nothing to end on the hub.
+    if (sub.ended !== undefined && t.sentJson === undefined && (!this.structured || !t.shared || unconfirmed)) {
       this.dropSub(t);
       return;
     }
-    t.current = t.shared ? this.buildSubUpsert(t, parent) : undefined;
+    t.current = t.shared && !unconfirmed ? this.buildSubUpsert(t, parent) : undefined;
+  }
+
+  /**
+   * SPEC §15: nothing says this subagent ran yet (no type, no task, no hook of its own, no tokens) and it is under
+   * SUBAGENT_CONFIRM_MS old, or ended that soon after it started. It is not sent until something does.
+   */
+  private unconfirmedSub(t: Tracked, now: number): boolean {
+    const sub = t.sub!;
+    if (sub.agentType || sub.title || sub.active || t.usage?.tokensIn || t.usage?.tokensOut) return false;
+    return (sub.ended ?? now) - sub.startedAt < SUBAGENT_CONFIRM_MS;
   }
 
   private dropSub(t: Tracked): void {

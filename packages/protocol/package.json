@@ -6,7 +6,8 @@
   "description": "Workmesh relay ↔ hub wire protocol: the schemas both the CLI's hub forwarder and the hub's ingest validate against",
   "exports": {
     ".": "./src/index.ts",
-    "./injected": "./src/injected.ts"
+    "./injected": "./src/injected.ts",
+    "./lease-paths": "./src/lease-paths.ts"
   },
   "types": "./src/index.ts",
   "scripts": {

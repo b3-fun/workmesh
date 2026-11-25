@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { HUB_ISSUE_RE, HUB_REPO_RE } from "./fields.js";
+
+export { HUB_ISSUE_RE, HUB_REPO_RE };
 
 /**
  * Workmesh relay ↔ hub wire protocol, v1 (docs/SPEC.md §3 and §8–10).
@@ -69,8 +72,6 @@ export const HUB_PAIR_CODE_RE = /^[A-Z]{4}-\d{4}$/;
 export const HUB_CMD_RE = /^[a-z0-9][a-z0-9._-]{0,30}( [a-z][a-z0-9:-]{0,24})?$/;
 /** What the hub accepts as `cmd`: a program plus at most two subcommand words, so `gh pr create` passes (SPEC §3.2). */
 export const HUB_CMD_ACCEPT_RE = /^[a-z0-9][a-z0-9._-]{0,30}( [a-z][a-z0-9:-]{0,24}){0,2}$/;
-export const HUB_ISSUE_RE = /^[A-Za-z][A-Za-z0-9]{0,9}-\d{1,6}$/;
-export const HUB_REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 export const HUB_PR_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
 export const HUB_TOOL_RE = /^[\w.:-]+$/;
 /** A GitHub login: 1–39 alphanumerics or single hyphens, not starting with a hyphen (SPEC §15). */
@@ -610,3 +611,8 @@ export type HubTeamAccepted = z.infer<typeof hubTeamAcceptSchema>;
 
 // v0.7: system-injected content in agent text (zod-free; also importable alone as `@workmesh/protocol/injected`).
 export * from "./injected.js";
+
+// v1 Coordinate (SPEC §21): leases, claims, messages, notes, holds, sync. Lease path matching is zod-free (also
+// importable alone as `@workmesh/protocol/lease-paths`).
+export * from "./coord.js";
+export * from "./lease-paths.js";

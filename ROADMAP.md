@@ -125,6 +125,10 @@ Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interru
 - **Versions, quiet, lanes (done):** every ingest names its client; Machines shows each device's current version and
   flags old ones; a working row reads "quiet 7m", then "stalled?" after an hour; ended sessions leave the lanes after
   an hour.
+- **Live 11-25:** hub deployed (presence pushed), Sean's Mac on the new relay under launchd; a `workmesh restart` and a
+  `kill -9` of his daemon each kept him online with every session working (launchd brought the killed one back in
+  1 s, the saved state brought its 9 shared sessions back). The first upgrade from an older relay still starts cold
+  (it had no saved state), so its other sessions show as Unconfirmed until they touch a B3 repo again.
 - **Next:** publish relay 0.10.0 (npm, two key taps) so teammates get the service and the saved state; the menu bar
   build that shows "asleep"/"reconnecting".
 

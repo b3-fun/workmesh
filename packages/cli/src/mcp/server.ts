@@ -169,6 +169,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       required: ["kind", "title"],
       additionalProperties: false,
     },
+    annotations: TEAM_WRITE,
   },
   {
     name: "recall",
@@ -185,6 +186,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       required: ["query"],
       additionalProperties: false,
     },
+    annotations: READ,
   },
   {
     name: "forget",
@@ -195,6 +197,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       required: ["id"],
       additionalProperties: false,
     },
+    annotations: TEAM_WRITE,
   },
   {
     name: "memories",
@@ -208,6 +211,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       },
       additionalProperties: false,
     },
+    annotations: READ,
   },
   // v2 Delegate (SPEC §31). Approvals and gates are a person's to decide and set: no tools for them here.
   {

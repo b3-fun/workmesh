@@ -85,8 +85,9 @@ describe("MCP tools run without a terminal prompt in Codex", () => {
 
   it("reading tools say read-only; the ones that change team state say so, and none is destructive or open-world", () => {
     const by = Object.fromEntries(MCP_TOOLS.map((t) => [t.name, t.annotations]));
-    for (const n of ["whoami", "roster", "inbox", "leases", "notes", "ask"]) expect(by[n]?.readOnlyHint, n).toBe(true);
-    for (const n of ["send", "claim", "release", "lease", "unlease", "note", "handoff", "handoffs"]) {
+    for (const n of ["whoami", "roster", "inbox", "leases", "notes", "ask", "recall", "memories"]) expect(by[n]?.readOnlyHint, n).toBe(true);
+    // `forget` only proposes retiring a memory: a person confirms it on the board.
+    for (const n of ["send", "claim", "release", "lease", "unlease", "note", "handoff", "handoffs", "remember", "forget"]) {
       expect(by[n], n).toEqual({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
     }
   });
@@ -311,7 +312,7 @@ describe("refusals read right in Codex", () => {
   });
 
   it("the session-start note names the MCP tools only for Codex", () => {
-    expect(guidance("B3", false, true)).toContain("the workmesh tools (MCP server `workmesh`):");
+    expect(guidance("B3", false, false, true)).toContain("the workmesh tools (MCP server `workmesh`):");
     expect(guidance("B3")).toContain("or the `workmesh` CLI");
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@workmesh/core",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
   "description": "Shared session model, aggregation, and Slack status formatting for Workmesh",

@@ -160,7 +160,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     if (deny) {
       // The tool won't run: keep the session alive, but nothing about the refused call goes anywhere.
       applyEvent({ ...event, kind: "heartbeat", activity: undefined, detail: undefined });
-      log(`refused a ${event.detail?.tool ?? "tool"} call in ${event.source}:${event.sessionId.slice(0, 8)}: ${deny.slice(0, 80)}`);
+      log(`refused ${event.detail?.tool ?? "a tool"} in ${event.source}:${event.sessionId.slice(0, 8)}: ${deny.slice(0, 80)}`);
     } else {
       applyEvent(event);
       if (forwarder?.isShared(`${event.source}:${event.sessionId}`)) coord?.poke();

@@ -232,15 +232,15 @@ function leaseRefusal(
   now: number,
   others: number,
 ): string {
-  const why = lease.reason ? ` ("${lease.reason}")` : "";
-  const covers = entries[0] === t.rel ? "" : ` (lease on ${entries.slice(0, 3).join(", ")})`;
+  const why = lease.reason ? `: ${lease.reason.replace(/[.\s]+$/, "")}` : "";
+  const covers = entries[0] === t.rel ? "" : ` The lease covers ${entries.slice(0, 3).join(", ")}.`;
   const more = others > 0 ? ` ${others} more lease${others === 1 ? "" : "s"} cover it too.` : "";
   const ask = coord.me()?.toLowerCase() === lease.holder.person.toLowerCase()
     ? `Finish there first, or have that session \`unlease\` it.`
     : `Work on something else meanwhile, or ask ${lease.holder.person} to hand it over: \`workmesh send ${quoteArg(lease.holder.person)} "…"\` (or the workmesh \`send\` tool${lease.holder.sessionName ? `, to: ${lease.holder.sessionName}` : ""}).`;
   return (
     `Workmesh: ${t.rel} in ${t.repo} is leased to ${holderPhrase(lease, coord)} ${until(lease.expiresAt, coord.hubNow(now))}` +
-    `${why}${covers}.${more} Don't edit it. ${ask}`
+    `${why}.${covers}${more} Don't edit it. ${ask}`
   );
 }
 

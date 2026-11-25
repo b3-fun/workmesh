@@ -8,7 +8,8 @@
 // Scenarios: team (default: two local sessions, three teammates, a wait on
 // another machine), empty (paired, nobody else online), unpaired (no hub),
 // halted (the hub rejected the device token), noteam (a hub without the team
-// view), legacy (a daemon from before GET /team: 404).
+// view), legacy (a daemon from before GET /team: 404), coord (team plus v1: a hold on
+// one of this Mac's agents and a message waiting for another).
 //
 // It writes <XDG_STATE_HOME>/workmesh/daemon.secret and
 // <XDG_CONFIG_HOME>/workmesh/config.json ({"port": ...}) so the app finds it.
@@ -28,7 +29,7 @@ const arg = (name, fallback) => {
 };
 const port = Number(arg("port", "45190"));
 const scenario = arg("scenario", "team");
-const SCENARIOS = ["team", "empty", "unpaired", "halted", "noteam", "legacy"];
+const SCENARIOS = ["team", "coord", "empty", "unpaired", "halted", "noteam", "legacy"];
 
 function die(msg) {
   console.error(`mock-daemon: ${msg}`);
@@ -234,7 +235,18 @@ function team(open) {
   };
   if (scenario === "halted") return { ...base, available: null, error: "hub rejected the device token (401)" };
   if (scenario === "noteam") return { ...base, available: false, fetchedAt: Date.now() - 1_000 };
-  return { ...base, available: true, fetchedAt: Date.now() - 1_000, team: teamBody() };
+  const out = { ...base, available: true, fetchedAt: Date.now() - 1_000, team: teamBody() };
+  // v1: a hold on one of this Mac's agents and messages waiting for them.
+  if (scenario === "coord") {
+    out.coord = {
+      available: true,
+      holds: [{ session: localWorking.key, name: localWorking.name, by: "An", reason: "reworking the cell layout", since: Date.now() - 4 * 60_000 }],
+      unread: [
+        { id: "m1", session: localWaiting.key, name: localWaiting.name, from: "An", fromSession: "b3iq-strategy", text: "I have packages/cli/src/hub leased for the forwarder rework; can you take the CLI side?", ts: Date.now() - 2 * 60_000, delivered: false },
+      ],
+    };
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- server

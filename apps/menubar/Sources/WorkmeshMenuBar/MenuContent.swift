@@ -148,7 +148,9 @@ struct MenuContent: View {
             return rows.isEmpty ? nil : (g, rows)
         }
 
-        var rowCount = needs.count + groups.reduce(0) { n, g in
+        let holds = model.team?.coord?.holds ?? []
+        let unread = Array((model.team?.coord?.unread ?? []).prefix(Self.maxMessages))
+        var rowCount = needs.count + holds.count + unread.count + groups.reduce(0) { n, g in
             n + (g.0 == .idle && !idleExpanded ? 0 : g.1.count)
         }
         switch area {
@@ -170,6 +172,14 @@ struct MenuContent: View {
             if !needs.isEmpty {
                 sectionHeader("Needs you", count: needs.count > 1 ? "\(needs.count)" : nil, urgent: true)
                 ForEach(needs) { needRow($0, now: now, hubNow: hubNow) }
+            }
+            if !holds.isEmpty {
+                sectionHeader("On hold", count: holds.count > 1 ? "\(holds.count)" : nil, urgent: true)
+                ForEach(holds) { holdRow($0, hubNow: hubNow) }
+            }
+            if !unread.isEmpty {
+                sectionHeader("Messages for your agents", count: "\(model.team?.coord?.unread.count ?? unread.count)")
+                ForEach(unread) { messageRow($0, hubNow: hubNow) }
             }
             ForEach(groups, id: \.0) { group, rows in
                 section(group, rows, now)
@@ -242,6 +252,59 @@ struct MenuContent: View {
 
     /// A wait on me: the local row when it's on this Mac (with the hub's reason
     /// when the hub has one), else the hub's item from another machine.
+    /// Messages shown at most; the header counts them all.
+    private static let maxMessages = 4
+
+    /// v1: a teammate held one of this Mac's agents (every tool call is refused until they lift it).
+    private func holdRow(_ h: CoordHold, hubNow: Date) -> some View {
+        let who = h.name ?? "An agent"
+        let detail = "Held by \(h.by)" + (h.reason.map { ": \($0)" } ?? "")
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "pause.circle.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(.orange)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(who).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            if let since = h.since {
+                Text(AgentRow.elapsed(since: since, now: hubNow))
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .help("\(who): \(detail). Its tool calls are refused until \(h.by) lifts the hold on the board.")
+        .accessibilityElement(children: .combine)
+    }
+
+    /// v1: a teammate's message that hasn't reached its agent yet (it arrives at the agent's next tool call).
+    private func messageRow(_ m: CoordMessage, hubNow: Date) -> some View {
+        let from = m.fromSession.map { "\(m.from) (\($0))" } ?? m.from
+        let to = m.name.map { " → \($0)" } ?? ""
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "envelope")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(from + to).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(m.text).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            if let ts = m.ts {
+                Text(AgentRow.elapsed(since: ts, now: hubNow))
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .help("\(from)\(to): \(m.text)\nDelivered at the agent's next tool call.")
+        .accessibilityElement(children: .combine)
+    }
+
     @ViewBuilder
     private func needRow(_ n: NeedItem, now: Date, hubNow: Date) -> some View {
         if let s = n.local {

@@ -268,8 +268,8 @@ describe("hook decisions", () => {
     const deny = h.refuse(edit("Edit", `${ROOT}/packages/cli/src/hub/forwarder.ts`), "PreToolUse")!;
     expect(deny).toContain("packages/cli/src/hub/forwarder.ts in b3-fun/workmesh is leased to An's agent b3iq-strategy");
     expect(deny).toContain("for 23 more min");
-    expect(deny).toContain('("reworking the forwarder")');
-    expect(deny).toContain("(lease on packages/cli/src/hub/**)");
+    expect(deny).toContain("(until ");
+    expect(deny).toContain("): reworking the forwarder. The lease covers packages/cli/src/hub/**. Don't edit it.");
     expect(deny).toContain("Don't edit it.");
     expect(deny).toContain('`workmesh send An "…"`');
     expect(deny).toContain("to: b3iq-strategy");

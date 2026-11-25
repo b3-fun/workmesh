@@ -113,13 +113,13 @@ export interface WfState {
  */
 export function stepWorkflows(
   active: Map<string, WfState>,
-  journals: Array<{ wfId: string; count: number; orchestrator?: string }>,
+  journals: Array<{ wfId: string; count: number; orchestrator?: string; file?: string }>,
   nowMs: number,
 ): SessionEvent[] {
   const events: SessionEvent[] = [];
   const seen = new Set<string>();
 
-  for (const { wfId, count, orchestrator } of journals) {
+  for (const { wfId, count, orchestrator, file } of journals) {
     // A drained (started === result) or never-live journal we aren't already
     // tracking is a finished workflow still inside the scan window — ignore it,
     // don't adopt-then-end it every tick.
@@ -141,6 +141,8 @@ export function stepWorkflows(
               activity: "running a workflow",
               orchestrator,
               ts: nowMs,
+              // Local only: the hub forwarder sums the run's agent transcripts for its token total.
+              ...(file ? { detail: { transcriptPath: file } } : {}),
             },
       );
       st.agents = count;
@@ -185,7 +187,7 @@ export function createWorkflowWatcher(
 
   const tick = (): void => {
     try {
-      const journals: Array<{ wfId: string; count: number; orchestrator: string }> = [];
+      const journals: Array<{ wfId: string; count: number; orchestrator: string; file: string }> = [];
       for (const { wfId, file, orchestrator } of findActiveJournals(projectsDir, now())) {
         let count: number;
         try {
@@ -193,7 +195,7 @@ export function createWorkflowWatcher(
         } catch {
           continue; // read failed this tick — omit it, don't fabricate count 0
         }
-        journals.push({ wfId, count, orchestrator });
+        journals.push({ wfId, count, orchestrator, file });
       }
       for (const event of stepWorkflows(active, journals, now())) onEvent(event);
     } catch (err) {

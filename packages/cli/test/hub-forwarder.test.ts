@@ -480,9 +480,12 @@ describe("HubForwarder privacy: nothing raw leaves the machine", () => {
     expect(evs.some((e) => e.path === "crates/vm/src/vm.rs")).toBe(true);
     expect(evs.some((e) => e.path === "README.md" && e.key === "codex:priv2")).toBe(true);
     expect(evs.some((e) => e.cmd === "npm run")).toBe(true);
-    const promptKeys = new Set(["id", "key", "ts", "kind", "repo", "branch", "issues"]);
+    const promptKeys = new Set(["id", "key", "ts", "kind", "repo", "branch", "issues", "links"]);
     for (const e of evs.filter((ev) => ev.kind === "prompt")) {
       for (const k of Object.keys(e)) expect(promptKeys.has(k), `prompt event field ${k}`).toBe(true);
+      // v0.6: a metadata prompt's links are its Linear ids, nothing more.
+      for (const l of e.links ?? []) expect(Object.keys(l).sort()).toEqual(["id", "type"]);
+      for (const l of e.links ?? []) expect(l.type).toBe("linear");
     }
     expect(evs.find((e) => e.kind === "prompt" && e.key === "claude-code:priv1")?.issues).toEqual(["B3-7166"]);
   });

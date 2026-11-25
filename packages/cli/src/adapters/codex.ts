@@ -174,6 +174,9 @@ export function createCodexWatcher(
       sessionId: rolloutSessionId(file),
       kind: "working",
       ts: Date.now(),
+      // Local only: the hub forwarder reads the rollout's session_meta (who
+      // spawned this thread) and token totals from it.
+      ...(path.isAbsolute(file) && file.length <= DETAIL_LIMITS.transcriptPath ? { detail: { transcriptPath: file } } : {}),
     });
   };
   watcher.on("add", emit);

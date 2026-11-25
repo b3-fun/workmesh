@@ -20,7 +20,29 @@ export type TranscriptFormat = "claude-code" | "codex";
 
 export type TranscriptItem =
   | { kind: "message"; id: string; ts?: number; text: string }
-  | { kind: "turnDuration"; ts?: number; durationMs: number };
+  | { kind: "turnDuration"; ts?: number; durationMs: number }
+  | AgentMessageItem;
+
+/**
+ * v0.6: a message between agents (SPEC §15). `in` = another agent wrote to this
+ * session (Claude Code peer messages: a subagent reporting back, or another
+ * session); `out` = this session wrote to another agent (Codex send_message,
+ * followup_task, spawn_agent; Claude Code's SendMessage comes from its hook).
+ */
+export interface AgentMessageItem {
+  kind: "agentMessage";
+  id: string;
+  ts?: number;
+  direction: "in" | "out";
+  channel: "claude-session" | "codex-mail";
+  /** `in`: the sender's name as the transcript gives it (a session name, an agent type). */
+  from?: string;
+  /** `in`: the sending subagent's id, when a subagent sent it. */
+  fromAgentId?: string;
+  /** `out`: the recipient (an agent path or name). */
+  to?: string;
+  text: string;
+}
 
 export interface TranscriptTail {
   path: string;
@@ -68,10 +90,47 @@ interface ClaudeBlock {
   text?: unknown;
 }
 
+const AGENT_ID_RE = /^a[0-9a-f]{8,32}$/;
+
+/**
+ * A Claude Code peer message: a `user` line whose `origin.kind` is `peer`
+ * (verified on 2.1.331 transcripts: `origin` has `from`, `name`, `body`, and
+ * either `senderTaskId` (a subagent writing to its parent; `from` is its agent
+ * id) or `msg_id`/`fromMode` (another session; `from` is a local socket
+ * address, never sent)).
+ */
+function claudePeerMessage(e: Record<string, unknown>, ts: number | undefined): AgentMessageItem[] {
+  const origin = e.origin as Record<string, unknown> | undefined;
+  if (!origin || typeof origin !== "object" || origin.kind !== "peer") return [];
+  const message = e.message as { content?: unknown } | undefined;
+  const body =
+    typeof origin.body === "string" ? origin.body : typeof message?.content === "string" ? message.content : undefined;
+  if (!body || !body.trim()) return [];
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const task = str(origin.senderTaskId);
+  const from = str(origin.from);
+  const fromAgentId = task && AGENT_ID_RE.test(task) ? task : from && AGENT_ID_RE.test(from) ? from : undefined;
+  const name = str(origin.name);
+  const id = typeof e.uuid === "string" ? e.uuid : str(origin.msg_id) ?? `${ts ?? ""}:peer`;
+  return [
+    {
+      kind: "agentMessage",
+      id: `peer:${id}`,
+      ts,
+      direction: "in",
+      channel: "claude-session",
+      from: name && !name.includes("/") ? name.slice(0, 120) : undefined,
+      fromAgentId,
+      text: body,
+    },
+  ];
+}
+
 /** One Claude Code transcript line → what it may contribute (main thread only). */
 export function parseClaudeLine(line: string): TranscriptItem[] {
   // Cheap prefilter: tool results, attachments and API request copies dominate.
-  if (!line.includes('"type":"assistant"') && !line.includes('"turn_duration"')) return [];
+  const peer = line.includes('"kind":"peer"');
+  if (!peer && !line.includes('"type":"assistant"') && !line.includes('"turn_duration"')) return [];
   let e: Record<string, unknown>;
   try {
     e = JSON.parse(line) as Record<string, unknown>;
@@ -80,6 +139,7 @@ export function parseClaudeLine(line: string): TranscriptItem[] {
   }
   if (!e || typeof e !== "object" || e.isSidechain === true) return [];
   const ts = parseTs(e.timestamp);
+  if (peer && e.type === "user") return claudePeerMessage(e, ts);
   if (e.type === "system" && e.subtype === "turn_duration") {
     const ms = e.durationMs;
     return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? [{ kind: "turnDuration", ts, durationMs: Math.round(ms) }] : [];
@@ -104,10 +164,36 @@ export function parseClaudeLine(line: string): TranscriptItem[] {
  * structure): assistant text is `response_item` → `message` with role
  * `assistant` and `output_text` blocks; `event_msg` → `task_complete` carries
  * `duration_ms`. Reasoning, tool calls and their output, developer/user
- * messages and inter-agent `agent_message` items yield nothing.
+ * messages and inter-agent `agent_message` items yield nothing, except the
+ * multi-agent calls that carry a message to another agent (v0.6:
+ * `send_message` / `followup_task` with `message` + `target`, `spawn_agent`
+ * with `message` + `task_name`; argument keys verified on 0.164 rollouts).
  */
+/** Codex multi-agent calls that carry a message to another agent (`message` + `target` or `task_name`). */
+const CODEX_SEND_CALLS: ReadonlySet<string> = new Set(["send_message", "followup_task", "spawn_agent", "send_input"]);
+
+function codexAgentSend(p: Record<string, unknown>, ts: number | undefined): AgentMessageItem[] {
+  if (typeof p.name !== "string" || !CODEX_SEND_CALLS.has(p.name) || typeof p.arguments !== "string") return [];
+  if (p.arguments.length > MAX_READ_BYTES) return [];
+  let args: Record<string, unknown>;
+  try {
+    args = JSON.parse(p.arguments) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  if (!args || typeof args !== "object") return [];
+  const text = typeof args.message === "string" ? args.message : typeof args.input === "string" ? args.input : undefined;
+  if (!text || !text.trim()) return [];
+  const target = [args.target, args.task_name, args.id].find((v): v is string => typeof v === "string" && v.trim() !== "");
+  const id = typeof p.call_id === "string" ? p.call_id : typeof p.id === "string" ? p.id : `${ts ?? ""}`;
+  return [
+    { kind: "agentMessage", id: `codex-send:${id}`, ts, direction: "out", channel: "codex-mail", to: target?.slice(0, 200), text },
+  ];
+}
+
 export function parseCodexLine(line: string): TranscriptItem[] {
-  if (!line.includes('"assistant"') && !line.includes('"task_complete"')) return [];
+  const call = line.includes('"function_call"');
+  if (!call && !line.includes('"assistant"') && !line.includes('"task_complete"')) return [];
   let e: Record<string, unknown>;
   try {
     e = JSON.parse(line) as Record<string, unknown>;
@@ -117,6 +203,7 @@ export function parseCodexLine(line: string): TranscriptItem[] {
   const p = e?.payload as Record<string, unknown> | undefined;
   if (!p || typeof p !== "object") return [];
   const ts = parseTs(e.timestamp);
+  if (call && e.type === "response_item" && p.type === "function_call") return codexAgentSend(p, ts);
   if (e.type === "event_msg" && p.type === "task_complete") {
     const ms = p.duration_ms;
     return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? [{ kind: "turnDuration", ts, durationMs: Math.round(ms) }] : [];

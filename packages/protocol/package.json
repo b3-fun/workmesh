@@ -1,6 +1,6 @@
 {
   "name": "@workmesh/protocol",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "description": "Workmesh relay ↔ hub wire protocol: the schemas both the CLI's hub forwarder and the hub's ingest validate against",

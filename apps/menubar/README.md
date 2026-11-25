@@ -94,9 +94,12 @@ swift build                 # compile
 open dist/Workmesh.app
 ```
 
-The build is unsigned, so on first launch macOS Gatekeeper will complain —
-right-click the app → **Open**, or `xattr -dr com.apple.quarantine dist/Workmesh.app`.
-For distribution we'd notarize it or ship a Homebrew cask (`brew install --cask workmesh`).
+The build is unsigned, so on first launch macOS Gatekeeper will complain:
+`xattr -dr com.apple.quarantine dist/Workmesh.app`, or right-click → **Open** on macOS 14
+and older (macOS 15 dropped that bypass: open once, then System Settings → Privacy &
+Security → Open Anyway). We hand the release zip to the team unsigned; no Apple Developer
+signing for now (Sean, 11-25). Install steps for teammates:
+[Getting started](../../docs/guide/getting-started.md#the-menu-bar-app-macos).
 
 To start it at login, a LaunchAgent with the label `org.npclabs.workmesh.menubar`
 (the bundle id) that runs `Workmesh.app/Contents/MacOS/Workmesh` with `RunAtLoad`
@@ -286,7 +289,7 @@ formatting are presentation. Team ages use the hub's `serverNow`.
 - Keep a pause or snooze across daemon restarts.
 - Launch at login from the menu (SMAppService) instead of a hand-made
   LaunchAgent.
-- Signed and notarized build, Homebrew cask.
+- Signed and notarized build, Homebrew cask (not for now: Sean, 11-25).
 
 **Later**
 - A short per-session timeline: what it did in the last hour.

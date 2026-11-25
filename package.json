@@ -11,7 +11,9 @@
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "react-router typegen && tsc -b && npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present && vitest run",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "docs:ref": "node scripts/docs-ref.mjs",
+    "docs:ref:check": "node scripts/docs-ref.mjs --check"
   },
   "dependencies": {
     "@workmesh/core": "*",

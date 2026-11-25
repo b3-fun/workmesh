@@ -129,11 +129,11 @@ export default function Privacy(_: Route.ComponentProps) {
           too, redacted on your machine first. That traffic goes to the hub
           your team runs, never through this relay. The{" "}
           <a
-            href={`${GITHUB_URL}#team-board`}
+            href={`${GITHUB_URL}/blob/main/docs/guide/sharing-and-privacy.md`}
             rel="noreferrer"
             className="text-phosphor-400 underline-offset-4 hover:underline"
           >
-            README
+            sharing guide
           </a>{" "}
           lists every field.
         </p>

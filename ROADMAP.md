@@ -27,12 +27,13 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **done** (11-25): wire #10 (SPEC §21), relay #12 in 0.10.0 (npm), hub and board workmesh-cloud #5; the Workmesh agent in Linear (claims as agent sessions, replies and stop from Linear) workmesh-cloud #11, #13, #14 |
 | Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); agents' `ask` tool and `workmesh ask` in 0.11.x |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **done** (11-25): wire #22 (SPEC §30), relay #23 + #26 in **0.11.0** (npm, GitHub release v0.11.0), hub and board workmesh-cloud #12; follow-ups (approval → the agent carries on, a live two-person handoff) in 0.11.x |
-| Onboarding hardening | First run solid on macOS and Linux: lingering so an SSH box stays online after logout, no half-installed systemd unit, `init` checks the hub heard from the machine, `doctor` names why a machine shows offline, one pairing per machine (the same hub under two addresses, a re-pair retires the old device), "online, no agents running" and "paired, never connected" on the board; a Docker smoke test (Node 20/22/24, with and without systemd, over SSH) | **in review** (11-25): relay 0.11.1 (not published), hub workmesh-cloud |
+| Onboarding hardening | First run solid on macOS and Linux: lingering so an SSH box stays online after logout, no half-installed systemd unit, `init` checks the hub heard from the machine, `doctor` names why a machine shows offline, one pairing per machine (the same hub under two addresses, a re-pair retires the old device), "online, no agents running" and "paired, never connected" on the board; a Docker smoke test (Node 20/22/24, with and without systemd, over SSH) | **done** (11-25): relay 0.11.1 (npm), hub workmesh-cloud #22 |
 | PR details | PR title, state (open, draft, merged, closed), author, review and checks on the board, from a read-only GitHub App on b3-fun, instead of a bare `repo#n` | **done** (11-25): hub and board workmesh-cloud #24 |
-| v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search by words and meaning; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **done** (11-25): wire #32 (SPEC §35–36), relay #35 (0.12.0, not published), hub and board workmesh-cloud #28 (live) |
-| Keeping current | `workmesh update` (install the newest release the way it was installed, refresh hooks, MCP and the daemon, roll back on failed checks), update notices from the hub, opt-in auto-update, a once-per-session note to sessions on older tools, "Update available" in the menu bar, versions on the board | **done** (11-25): wire #33 (SPEC §40), relay #37 (SPEC §41) and menu bar #36 in 0.12.0 (not published), hub and board workmesh-cloud #25–#27 (live) |
-| Codex parity | Everything a Claude Code session gets on the team hub, for Codex, proven live: board session and mirror, MCP tools, lease and hold refusals, wake, gates, handoffs run with `codex exec`, a truthful `doctor` | **done** (11-25): relay #38 (SPEC §42), ships with the next release (not published) |
-| Launch | Public docs, self-host guide, B3OS-hosted hub | later |
+| v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search by words and meaning; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **done** (11-25): wire #32 (SPEC §35–36), relay #35 in 0.12.0 (npm), hub and board workmesh-cloud #28 (live) |
+| Keeping current | `workmesh update` (install the newest release the way it was installed, refresh hooks, MCP and the daemon, roll back on failed checks), update notices from the hub, opt-in auto-update, a once-per-session note to sessions on older tools, "Update available" in the menu bar, versions on the board | **done** (11-25): wire #33 (SPEC §40), relay #37 (SPEC §41) and menu bar #36 in 0.12.0 (npm, GitHub release v0.12.0), hub and board workmesh-cloud #25–#27 (live) |
+| Codex parity | Everything a Claude Code session gets on the team hub, for Codex, proven live: board session and mirror, MCP tools, lease and hold refusals, wake, gates, handoffs run with `codex exec`, a truthful `doctor` | **done** (11-25): relay #38 (SPEC §42) in 0.12.0 (npm) |
+| Private testing | The B3 team (Sean, An, Mitch, David, Gio) on B3's hub; teammate guide in `docs/guide/`, generated CLI and MCP references, maintainer runbook in workmesh-cloud `docs/OPERATIONS.md`; menu bar app unsigned, handed to the team from GitHub releases | **in progress** (11-25) |
+| Launch | Public docs, self-host guide, B3OS-hosted hub for other teams | later: not before Sean says (11-25) |
 
 ## Next up, in detail
 
@@ -83,7 +84,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
   and later Workmesh's own) · Graph (a canvas of people → agents → subagents, with linked Linear tickets, PRs and Slack
   threads as nodes; built on the B3OS canvas) · Activity (the full timeline).
 - **Linear:** ticket titles, status and owners on chips and graph nodes (hub-side Linear app).
-- **Slack:** threads agents post to show as linked nodes; "needs you" and the daily digest can post to Slack.
+- **Slack:** threads agents post to show as linked nodes; "needs you" can post to Slack (the daily digest is dropped: Sean, 11-25).
 - **Relay capture (branch `relay-v06`, SPEC §15):** Claude Code subagents from SubagentStart/SubagentStop and the
   `agent_id` on hooks inside them, as sessions under their parent with type, task (conversation level), model,
   tokens (as Claude Code counts them) and a status line; sent only to a hub that serves `/relay/team`. Codex spawned
@@ -376,6 +377,12 @@ Also fixed: uninstall left `[mcp_servers.workmesh.tools.*]` tables that stop Cod
 queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Codex makes its sessions dir.
 
 ## Decision log
+
+- 11-25 Private testing, not a launch (Sean: "not ready for public launch, private testing with the team for now"):
+  the docs serve B3 teammates installing it now, and B3's hub stays closed to other teams.
+- 11-25 No daily digest (Sean). The board's summaries stay; nothing posts a digest.
+- 11-25 No Apple Developer signing for now (Sean): the menu bar app ships unsigned on each GitHub release and is handed
+  to the team directly; the guide says how to clear Gatekeeper's quarantine.
 
 - 11-25 Codex parity: Workmesh's MCP tools declare themselves read-only or non-destructive and closed-world, so Codex
   runs them without a prompt (Claude Code ignores the hints). A Codex handoff runs under `--approve-for-me` (Codex's

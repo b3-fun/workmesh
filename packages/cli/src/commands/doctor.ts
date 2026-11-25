@@ -15,8 +15,11 @@ import { claudeJsonPath, isClaudeMcpInstalled, isCodexMcpInstalled } from "../ad
 import { delegateSettings, hubShareLevel, loadConfig, loadConfigSafe } from "../lib/config";
 import type { Config } from "../lib/config";
 import { getHealth, getHubState, getTeamState, sinkConfigured } from "../lib/daemon-client";
-import { configPath, hubForwardStatePath } from "../lib/paths";
+import { codexHome, configPath, hubForwardStatePath } from "../lib/paths";
 import { serviceKind, serviceStatus } from "../lib/service";
+import type { ServiceStatus } from "../lib/service";
+import { readStateFile } from "../hub/persist";
+import { LINGER_FIX } from "./service";
 import { createSink } from "../sinks";
 import { resolveClaudeDir } from "./setup";
 import {
@@ -30,7 +33,7 @@ import {
 
 const HTTP_TIMEOUT_MS = 5000;
 
-interface CheckResult {
+export interface CheckResult {
   name: string;
   status: "ok" | "warn" | "fail";
   detail: string;
@@ -93,8 +96,12 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     ),
   );
 
+  // Linux: what systemd does with the daemon (asked once; the service check and the offline causes read it).
+  const svc: ServiceStatus | undefined = serviceKind() ? serviceStatus() : undefined;
+  let daemonUp = false;
   try {
     const health = await getHealth(cfg.port);
+    daemonUp = true;
     checks.push(
       ok("daemon", `running (pid ${health.pid}, up ${formatDuration(health.uptimeSec * 1000)})`),
     );
@@ -110,9 +117,19 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
       );
     }
   } catch {
-    checks.push(
-      warn("daemon", `not running on 127.0.0.1:${cfg.port} — \`workmesh start --detach\``),
-    );
+    if (cfg.hub) {
+      // Paired but silent: the board shows this machine offline. Say since when, why, and what to run.
+      const last = lastContact(cfg.hub.url);
+      const since = last ? `${formatDuration(Date.now() - last)} ago` : "it paired";
+      checks.push(
+        fail(
+          "daemon",
+          `not running, so the hub hasn't heard from this machine since ${since} and the board shows it offline${offlineCause(svc)} → \`workmesh restart\``,
+        ),
+      );
+    } else {
+      checks.push(warn("daemon", `not running on 127.0.0.1:${cfg.port} — \`workmesh start --detach\``));
+    }
   }
 
   // Legacy-read probe: a token without users.profile:read still pushes, but
@@ -173,18 +190,31 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
       if (state.enabled && state.share === undefined) {
         checks.push(warn("hub forward", "the running daemon predates sharing levels — restart it: `workmesh restart`"));
       }
+      const heard = state.enabled && state.lastSuccessAt ? `${formatDuration(Date.now() - state.lastSuccessAt)} ago` : undefined;
       if (!state.enabled) {
-        checks.push(warn("hub forward", "the daemon isn't forwarding — restart it: `workmesh restart`"));
+        checks.push(fail("hub forward", "the daemon isn't forwarding (it started before this machine paired?), so the board shows it offline → `workmesh restart`"));
+      } else if (state.url !== hub.url) {
+        checks.push(fail("hub forward", `the daemon forwards to ${state.url} but this machine is paired with ${hub.url} → \`workmesh restart\``));
       } else if (state.halted) {
-        checks.push(fail("hub forward", `stopped: ${state.lastError ?? "token rejected"} — run \`workmesh hub connect ${hub.url}\``));
+        checks.push(fail("hub forward", `stopped: ${state.lastError ?? "token rejected"} → \`workmesh init ${hub.url}\``));
       } else if (state.lastSendOk === false) {
-        checks.push(warn("hub forward", `retrying: ${state.lastError ?? "send failed"} (${state.queued} queued, ${state.dropped} dropped)`));
+        checks.push(
+          warn(
+            "hub forward",
+            `retrying: ${state.lastError ?? "send failed"}; the hub last heard from this machine ${heard ?? "before this daemon started"} (${state.queued} queued, ${state.dropped} dropped)`,
+          ),
+        );
+      } else if (!state.lastSuccessAt) {
+        checks.push(warn("hub forward", "the daemon hasn't reached the hub yet (it sends within a second of starting) → run `workmesh doctor` again"));
       } else {
         checks.push(
           ok(
             "hub forward",
-            `${state.sharedSessions} shared session(s), ${state.queued} queued, ${state.dropped} dropped` +
-              (state.lastSuccessAt ? `, last sent ${formatDuration(Date.now() - state.lastSuccessAt)} ago` : ""),
+            `online: the hub heard from this machine ${heard}; ` +
+              (state.sharedSessions > 0
+                ? `${state.sharedSessions} shared session(s)`
+                : "no agents running in a shared repo right now (you show as online, no agents)") +
+              (state.queued || state.dropped ? `, ${state.queued} queued, ${state.dropped} dropped` : ""),
           ),
         );
       }
@@ -226,16 +256,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
   }
 
   // v0.10 (SPEC §24): the daemon under launchd / systemd comes back after a crash, kill or reboot.
-  if (serviceKind()) {
-    const svc = serviceStatus();
-    checks.push(
-      !svc.installed
-        ? warn("daemon service", "not installed: a killed or crashed daemon stays down until the next hook — run `workmesh service install`")
-        : svc.loaded && svc.pid
-          ? ok("daemon service", `${svc.kind}, running (pid ${svc.pid})${svc.program?.[1] ? `, ${svc.program[1]}` : ""}`)
-          : warn("daemon service", `${svc.kind}, installed but ${svc.loaded ? "not running" : "not loaded"} — run \`workmesh service install\``),
-    );
-  }
+  if (svc) checks.push(...serviceChecks(svc, daemonUp));
   if (cfg.hub) {
     checks.push(
       fs.existsSync(hubForwardStatePath())
@@ -261,11 +282,15 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
         : warn("claude code wake", "not installed — run `workmesh setup --hooks-only` (or it was turned off with --no-wake)"),
     );
   }
-  checks.push(
-    areCodexHooksInstalled()
-      ? ok("codex hooks", `${codexHooksPath()} (trust them in Codex with /hooks)`)
-      : warn("codex hooks", "not installed — run `workmesh setup`"),
-  );
+  // Codex only where it is installed: someone who doesn't use it has nothing to fix.
+  const codexUsed = fs.existsSync(codexHome());
+  if (codexUsed) {
+    checks.push(
+      areCodexHooksInstalled()
+        ? ok("codex hooks", `${codexHooksPath()} (trust them in Codex with /hooks)`)
+        : warn("codex hooks", "not installed — run `workmesh setup --hooks-only --codex`"),
+    );
+  }
   checks.push(
     isClaudeMcpInstalled(claudeJson)
       ? ok("claude code mcp", `workmesh in ${claudeJson} (user scope)`)
@@ -278,11 +303,15 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
         : warn("codex mcp", "not registered — run `workmesh setup --hooks-only`"),
     );
   }
-  checks.push(
-    isCodexNotifyInstalled()
-      ? ok("codex notify", codexConfigPath())
-      : warn("codex notify", "not installed — run `workmesh setup`"),
-  );
+  if (codexUsed) {
+    checks.push(
+      isCodexNotifyInstalled()
+        ? ok("codex notify", codexConfigPath())
+        : warn("codex notify", "not installed — run `workmesh setup --hooks-only --codex`"),
+    );
+  } else {
+    checks.push(ok("codex", `not installed (${codexHome()}), skipped`));
+  }
 
   const failed = checks.some((check) => check.status === "fail");
   if (opts.json) {
@@ -302,4 +331,59 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     }
   }
   if (failed) process.exitCode = 1;
+}
+
+/** When the hub last accepted a send from this machine, as the daemon saved it (SPEC §24 state file). */
+export function lastContact(url: string, file = hubForwardStatePath()): number | undefined {
+  const raw = readStateFile(file) as { url?: unknown; lastContactAt?: unknown } | undefined;
+  if (!raw || raw.url !== url || typeof raw.lastContactAt !== "number") return undefined;
+  return raw.lastContactAt;
+}
+
+/** Why a daemon may be down, from the service manager's view (empty when nothing explains it). */
+export function offlineCause(svc: ServiceStatus | undefined): string {
+  const sd = svc?.systemd;
+  if (sd?.systemctl && !sd.manager) return ` (no systemd user session: ${sd.error ?? "systemctl --user failed"}; the daemon stops when you log out: ${LINGER_FIX})`;
+  if (sd?.systemctl && sd.linger === false) return ` (lingering is off, so systemd stopped it when you logged out: ${LINGER_FIX})`;
+  if (svc && svc.kind && !svc.installed) return " (no daemon service is installed, so nothing brings it back)";
+  return "";
+}
+
+/** The daemon-service checks: launchd, systemd --user and, on Linux, what happens at logout. */
+export function serviceChecks(svc: ServiceStatus, daemonUp: boolean): CheckResult[] {
+  const out: CheckResult[] = [];
+  const sd = svc.systemd;
+  if (sd && !sd.systemctl) {
+    out.push(ok("daemon service", "none (no systemd on this machine): the daemon runs in the background; after a reboot the next agent event starts it"));
+    return out;
+  }
+  if (sd && !sd.manager) {
+    out.push(
+      warn(
+        "daemon service",
+        `no systemd user session (${sd.error ?? "systemctl --user failed"}): the daemon can't run as a service and stops when you log out → \`${LINGER_FIX}\`, then \`workmesh service install\``,
+      ),
+    );
+    return out;
+  }
+  if (!svc.installed) {
+    out.push(warn("daemon service", "not installed: a killed or crashed daemon stays down until the next hook → `workmesh service install`"));
+  } else if (svc.loaded && svc.pid) {
+    out.push(ok("daemon service", `${svc.kind}, running (pid ${svc.pid})${svc.program?.[1] ? `, ${svc.program[1]}` : ""}`));
+  } else if (daemonUp) {
+    out.push(warn("daemon service", `${svc.kind}, installed but the running daemon isn't the service's (it won't come back after a crash) → \`workmesh service install\``));
+  } else {
+    out.push(warn("daemon service", `${svc.kind}, installed but ${svc.loaded ? "not running" : "not loaded"} → \`workmesh service install\``));
+  }
+  if (sd?.linger === false) {
+    out.push(
+      warn(
+        "logout",
+        `lingering is off: systemd stops the daemon when you log out (an SSH box then shows you offline on the board) → \`${LINGER_FIX}\``,
+      ),
+    );
+  } else if (sd?.linger === true) {
+    out.push(ok("logout", "lingering on: the daemon keeps running after you log out and starts at boot"));
+  }
+  return out;
 }

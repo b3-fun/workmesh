@@ -37,3 +37,23 @@ jobs:
 
       - name: Build CLI
         run: npm run build -w @b3os/workmesh
+
+  # First-run onboarding on fresh Linux boxes (scripts/smoke-linux): `workmesh init` with Node 20, 22 and 24 in
+  # containers without systemd, against a stand-in hub. The systemd-over-SSH box and a real hub run locally
+  # (scripts/smoke-linux/smoke.sh without --fake-hub).
+  smoke-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Smoke test (Linux, no systemd, Node 20/22/24)
+        run: scripts/smoke-linux/smoke.sh --fake-hub --no-systemd --nodes "20 22 24"

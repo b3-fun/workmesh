@@ -156,7 +156,8 @@ describe("systemd --user (Linux)", () => {
     const saved = process.env.XDG_CONFIG_HOME;
     process.env.XDG_CONFIG_HOME = path.join(home, ".config");
     try {
-      const res = installService({ home, run, kind: "systemd", node: "/usr/bin/node", entry: "/x/dist/index.js", env: {} });
+      const probe = { systemctl: true, manager: true, linger: true };
+      const res = installService({ home, run, kind: "systemd", node: "/usr/bin/node", entry: "/x/dist/index.js", env: {}, probe });
       const unit = fs.readFileSync(systemdUnitPath(home), "utf8");
       expect(res.file).toBe(systemdUnitPath(home));
       expect(unit).toContain('ExecStart="/usr/bin/node" "/x/dist/index.js" start');
@@ -166,7 +167,13 @@ describe("systemd --user (Linux)", () => {
         ["systemctl", "--user", "daemon-reload"],
         ["systemctl", "--user", "enable", "--now", "workmesh.service"],
       ]);
-      expect(serviceStatus({ home, run, kind: "systemd" })).toMatchObject({ installed: true, loaded: true, pid: 777 });
+      expect(serviceStatus({ home, run, kind: "systemd", probe })).toMatchObject({
+        installed: true,
+        loaded: true,
+        pid: 777,
+        program: ["/usr/bin/node", "/x/dist/index.js"],
+        systemd: probe,
+      });
       expect(uninstallService({ home, run, kind: "systemd" })).toBe(true);
       expect(fs.existsSync(systemdUnitPath(home))).toBe(false);
     } finally {

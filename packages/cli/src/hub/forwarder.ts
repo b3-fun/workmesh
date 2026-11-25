@@ -468,6 +468,8 @@ export class HubForwarder {
   private lastSendAt: number | undefined;
   private lastSendOk: boolean | undefined;
   private lastSuccessAt: number | undefined;
+  /** The last accepted send by this forwarder or, until it has one, by the daemon before it (from the state file). */
+  private lastContactAt: number | undefined;
   private lastError: string | undefined;
   private dropped = 0;
   private rejected = 0;
@@ -2011,6 +2013,7 @@ export class HubForwarder {
       this.maxEvents = Math.min(HUB_MAX_EVENTS_PER_REQUEST, this.maxEvents * 2);
       this.lastSendOk = true;
       this.lastSuccessAt = now;
+      this.lastContactAt = now;
       this.lastError = undefined;
       return true;
     }
@@ -2022,12 +2025,19 @@ export class HubForwarder {
     );
     if (res.status === 401) {
       this.halted = true;
-      this.lastError = "device token rejected (401)";
+      const superseded = isSuperseded(detail);
+      // A hub retires a machine's older pairing when it pairs again (same person, same machine name).
+      this.lastError = superseded
+        ? "this pairing was replaced: the machine paired with the hub again (401 superseded)"
+        : "device token rejected (401)";
       if (this.timer) clearInterval(this.timer);
       this.timer = undefined;
       this.log(
-        `hub: ${this.url} rejected this device's token (401): forwarding stopped. ` +
-          `Run \`workmesh hub connect ${this.url}\` to pair this machine again.`,
+        superseded
+          ? `hub: ${this.url} retired this device's token: the machine paired again, so this daemon stops forwarding. ` +
+              `If this is a different machine, give it its own name: \`workmesh init ${this.url} --repair --machine <name>\`.`
+          : `hub: ${this.url} rejected this device's token (401): forwarding stopped. ` +
+              `Run \`workmesh init ${this.url}\` to pair this machine again.`,
       );
       return false;
     }
@@ -2130,6 +2140,7 @@ export class HubForwarder {
       v: STATE_VERSION,
       savedAt: this.now(),
       url: this.url,
+      ...(this.lastContactAt ? { lastContactAt: this.lastContactAt } : {}),
       sessions,
       queue: this.queue.slice(-STATE_MAX_EVENTS),
     };
@@ -2148,6 +2159,7 @@ export class HubForwarder {
     const counts = { sessions: 0, events: 0, ended: 0 };
     const seed: AgentSession[] = [];
     const state = asPersisted(raw);
+    if (state?.url === this.url && state.lastContactAt && !this.lastContactAt) this.lastContactAt = state.lastContactAt;
     if (!state || state.url !== this.url || this.now() - state.savedAt > STATE_MAX_AGE_MS) {
       this.restoredCounts = counts;
       return seed;
@@ -2309,6 +2321,8 @@ export interface PersistedForward {
   v: number;
   savedAt: number;
   url: string;
+  /** The last time the hub accepted a send (doctor: "the hub last heard from this machine …" with the daemon down). */
+  lastContactAt?: number;
   sessions: PersistedTracked[];
   queue: HubActivityEvent[];
 }
@@ -2325,7 +2339,18 @@ function asPersisted(raw: unknown): PersistedForward | undefined {
     v: s.v,
     savedAt: s.savedAt,
     url: s.url,
+    ...(typeof s.lastContactAt === "number" ? { lastContactAt: s.lastContactAt } : {}),
     sessions: Array.isArray(s.sessions) ? s.sessions.filter((x): x is PersistedTracked => !!x && typeof x.key === "string") : [],
     queue: Array.isArray(s.queue) ? s.queue : [],
   };
+}
+
+/** A hub's 401 body says the token was superseded by a newer pairing of the same machine (SPEC §3.1). */
+export function isSuperseded(body: string): boolean {
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown; reason?: unknown };
+    return parsed.reason === "superseded" || (typeof parsed.error === "string" && /\bsuperseded\b/i.test(parsed.error));
+  } catch {
+    return /\bsuperseded\b/i.test(body);
+  }
 }

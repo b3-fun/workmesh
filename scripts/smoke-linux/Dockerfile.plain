@@ -1,0 +1,9 @@
+# A plain Linux box: no systemd, no logind (containers, WSL without systemd, minimal VMs).
+# The daemon runs detached; hooks start it again when it is gone.
+ARG NODE=22
+FROM node:${NODE}-bookworm-slim
+RUN useradd -m -s /bin/bash dev
+USER dev
+WORKDIR /home/dev
+ENV NPM_CONFIG_PREFIX=/home/dev/.npm-global PATH=/home/dev/.npm-global/bin:$PATH
+CMD ["sleep", "infinity"]

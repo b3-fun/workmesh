@@ -17,8 +17,8 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.2 Conversation + summaries | Prompts, agent messages, tool descriptions, turn durations; now lines, turn summaries, waiting reasons, digest (OpenRouter) | **done** on the hub; relay 0.7.0 merged; first `@b3os/workmesh` publish in progress |
 | v0.3 B3OS look | Board rebuilt from the B3OS console component library, exactly | **done** (11-24) |
 | v0.4 One system | Monorepo, rename to Workmesh, shared protocol package | **done** (11-24); hub deploys from CI next |
-| v0.5 Multiplayer menu bar | The team in the menu bar | **next** |
-| v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **next** |
+| v0.5 Multiplayer menu bar | The team in the menu bar | **in progress**: relay + menu bar on branch `relay-v06`; hub `/relay/team` in parallel |
+| v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **in progress**: wire merged (#3), relay capture on `relay-v06`; board in parallel |
 | v1 Coordinate | Claims, file leases, hold, Linear agent identities | later |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
@@ -54,6 +54,13 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
   with their agents and now lines, my sharing level, connect status, and "Open board".
 - A device-token read endpoint on the hub (`/relay/team`) feeds the daemon, which serves the menu bar as today.
 - Notifications for "needs you", quiet otherwise.
+- **Relay (branch `relay-v06`):** wire schemas for `/relay/team` in `@workmesh/protocol` (merged, #3, SPEC §16). The
+  daemon polls it (15 s while the menu is open or something needs me, 60 s otherwise, 10 min after a 404, stops on
+  401) and serves it on `GET /team` with the hub connection and sharing level. Workmesh.app: needs-me first (local
+  waiting sessions merged with the hub's, with its reason), then each teammate with avatar or initials, online dot
+  and counts, expanding to their sessions with the agent's mark and now line; the hub connection and sharing level;
+  Open board; native notifications for new needs-you items (on unless turned off). Mock daemon + snapshot mode for
+  screenshots. **Next:** the hub's `/relay/team` (hub agent), then roll out.
 
 ### v0.6 Structure + tabs
 - **Subagents:** each session shows its subagents as a tree, the way Claude Code lists them: type
@@ -64,6 +71,15 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
   threads as nodes; built on the B3OS canvas) · Activity (the full timeline).
 - **Linear:** ticket titles, status and owners on chips and graph nodes (hub-side Linear app).
 - **Slack:** threads agents post to show as linked nodes; "needs you" and the daily digest can post to Slack.
+- **Relay capture (branch `relay-v06`, SPEC §15):** Claude Code subagents from SubagentStart/SubagentStop and the
+  `agent_id` on hooks inside them, as sessions under their parent with type, task (conversation level), model,
+  tokens (as Claude Code counts them) and a status line; sent only to a hub that serves `/relay/team`. Codex spawned
+  threads name their parent from the rollout's `session_meta`; workflow runs are workflow sessions with their agents'
+  tokens. `agent_message` events from SendMessage, peer messages and Codex `send_message`/`spawn_agent` (text at
+  conversation level, redacted). Links: Linear ids, PRs and issues on shared repos, Slack messages (conversation
+  level). `person.github` from `gh` for avatars. Injected prompts (task notices, peer messages) are no longer sent as
+  the person's prompt. Not captured: cost (no agent records it per subagent), Codex inbound agent messages, main
+  Claude Code sessions' tokens.
 
 ### v1 Coordinate (Linear B3-7167)
 - MCP server in every session: `roster`, `send`, `inbox`, `claim`, `lease`, `note`.
@@ -97,6 +113,13 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
   teammates' Slack messages); one wire package with a strict reading for relays and a tolerant one for the hub; hub
   served at workmesh.b3os.org and bullpen.b3os.org from the same `bullpen` Worker; hub deploys stay manual until CI
   has an NPC Labs token.
+
+- 11-24 v0.6 wire: subagents are sessions with `parent` and `role`, not a nested list; the relay sends them only to a
+  hub that serves `/relay/team`, so an older hub never shows each subagent as its own session.
+- 11-24 Tokens follow Claude Code's per-agent figure (context now + output so far), checked against its own
+  `totalTokens`, rather than a billing sum that runs 1.1–6× larger on cache reads.
+- 11-24 Slack links and subagent titles are conversation-level; Linear, PR and issue links are metadata (they repeat
+  `issues` and `pr`).
 
 ## Links
 

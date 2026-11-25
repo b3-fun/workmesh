@@ -477,8 +477,8 @@ after such a 400, as it does for `message`/`turn`.
 | `agentType` | string ≤ 64 | metadata | Claude Code's `subagent_type` (`general-purpose`, `Explore`), a workflow agent's type |
 | `title` | string ≤ 200 | conversation | a subagent's task description, redacted (§9); the hub accepts ≤ 1,000 and cuts |
 | `model` | string ≤ 80 | metadata | the model id the agent's transcript reports |
-| `tokensIn`, `tokensOut` | int ≥ 0 | metadata | cumulative for the session: input (incl. cache reads and writes) and output |
-| `costUsd` | number ≥ 0 | metadata | only when the agent records it; never estimated by the relay |
+| `tokensIn`, `tokensOut` | int ≥ 0 | metadata | as Claude Code counts an agent: `tokensIn` its context now (input, cache reads and cache writes of its latest call), `tokensOut` what it has generated (output summed over its calls); Claude Code's own "tokens" is tokensIn + the latest call's output |
+| `costUsd` | number ≥ 0 | metadata | only when the agent records it; never estimated by the relay (Claude Code and Codex record none per agent today, so the relay sends none) |
 | `statusLine` | string ≤ 120 | metadata | from the relay's fixed vocabulary only: "waiting on 1 shell", "running commands", "editing vm.rs" |
 
 `ActivityEvent` adds:
@@ -504,8 +504,28 @@ Ingest body adds `person: { github?: string ≤ 40 }`: the person's GitHub login
 logged in), sent on every heartbeat for the board's and menu bar's avatars. The hub reads a malformed value as absent.
 
 What still never leaves a machine (§3.3 holds): tool input or output, file contents, full commands, a subagent's
-prompt or its text messages (the main thread's only, §9), anything from an unshared session. A subagent is shared
-exactly when its parent session is.
+prompt or its transcript text (the main thread's only, §9; what agents write to each other travels as
+`agent_message`), anything from an unshared session. A subagent is shared exactly when its parent session is.
+
+How the relay builds them (`packages/cli`, verified on Claude Code 2.1.331 and Codex 0.164, shapes only):
+- **Claude Code subagents:** `SubagentStart` / `SubagentStop` hooks (`agent_id`, `agent_type`; Stop adds
+  `agent_transcript_path`) and the `agent_id` every hook inside a subagent carries. Each subagent is a session keyed
+  `<parent key>/<agent id>` (source `claude-code`, `role: "subagent"`, `parent` = the main session); its tool calls
+  go on its own timeline; `title` from its `agent-<id>.meta.json` `description`; `model` and tokens from its
+  `agent-<id>.jsonl`; `statusLine` = its activity label; `ended` at SubagentStop or when its parent goes. The relay
+  sends subagent sessions only to a hub that serves `GET /relay/team` (§16): an older hub keeps seeing their tool
+  calls on the parent, as before. A main session's `statusLine` says what it waits on ("waiting on 1 shell") from
+  its Stop's `background_tasks`.
+- **Codex spawned threads:** already their own sessions (`codex:<thread id>`); the rollout's first `session_meta`
+  line names `parent_thread_id`, `agent_role` (→ `agentType`) and `agent_path` (→ `title`, conversation level);
+  tokens and model from its `token_count` and `turn_context` lines.
+- **Workflows:** `workflow:<run id>` sessions get `role: "workflow"`, `parent` = the launching session, tokens summed
+  over the run's agent transcripts.
+- **Agent messages:** Claude Code `SendMessage` (hook; `to` an agent id → that subagent's key, a local socket address
+  → "another session"); peer messages in the main transcript (`origin.kind: "peer"`, from a subagent or another
+  session; read at the conversation level, from the transcript tail); Codex `send_message`, `followup_task`,
+  `spawn_agent` calls in the rollout (conversation level). A prompt Claude Code injects (a task notice, a
+  cross-session or teammate message) is never sent as the person's prompt.
 
 ## 16. `GET /relay/team` (v0.5, the menu bar's read)
 
@@ -536,3 +556,5 @@ person or session on its own instead of failing):
 - Text in `now` and `reason` follows the owner's sharing level, as on the board.
 - The relay polls it every 15 s while the menu is open or something needs the person, every 60 s otherwise, and
   serves the last answer on its loopback API (`GET /team`); the menu bar reads only that.
+- A `200` here is also how a relay knows the hub reads v0.6 session structure: from then on it sends subagents as
+  their own sessions (§15). A `404` turns that off again.

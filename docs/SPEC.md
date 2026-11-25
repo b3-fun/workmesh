@@ -520,32 +520,65 @@ read and drops the rest one by one):
 
 - `Lease` = `{ id, repo, paths, holder: { person, sessionKey, sessionName? }, since?, expiresAt, reason? }`;
   `Note` = `{ id, by: { person, sessionKey?, sessionName? }, text, tags?, ts }`.
-- `inbox` holds this device's undelivered messages until the relay acks them; a relay may see an item again before
-  its ack lands and delivers it once (by `id`). The cursor lets a hub send only what changed; leases, holds, claims
-  and roster are always complete lists.
+- `inbox` lists every message for this device's sessions that the relay hasn't acked, on every sync; a relay may see
+  an item again before its ack lands and delivers it once (by `id`). Leases, holds, claims and roster are complete
+  lists too; the cursor is the hub's own (a relay sends back what it got). A relay keeps an undelivered item a hub
+  stops listing for a day (its session may come back), so a hub that lists each item once still works.
 - `edits` (optional): files sessions edited in the last 10 minutes (one row per session and path, the newest),
   from the `path` the hub already has (§3.2). A relay warns its agent before it edits a file another person's
   session touched there.
 
 ## 23. The relay side (`packages/cli`)
 
-- **Sync.** The daemon polls `/relay/sync` every 5 s while any shared session is live, every 60 s otherwise, backing
-  off on errors (to 5 min) and waiting out a `429`'s `Retry-After`; `404` turns coordination off and asks again in 10
-  minutes; `401` stops it, as for ingest. It keeps the last good answer in memory.
-- **Fail-open.** Nothing is ever blocked because the hub or the daemon is unreachable. A hook gets no decision when the
-  daemon doesn't answer within its usual timeout. The one exception is a hold the daemon already knew about: it stays
-  in force until a sync answers without it, or for 30 minutes after the last sync that carried it.
-- **Enforcement** (Claude Code and Codex `PreToolUse`, answered by the daemon from its cached state; no network call
-  in the hook path): a hold on the session (or its parent) refuses every tool call, naming who held it and why; an
-  edit (Edit, Write, MultiEdit, NotebookEdit, apply_patch, and shell commands that clearly write a path) to a file
-  another session's lease covers is refused, naming the holder, the entries, when the lease expires, and how to ask
-  them; an edit to a file another person's session edited in the last 10 minutes goes ahead, with a note to the agent
-  saying who is working there.
-- **Inbox.** A session's messages reach its agent at its next tool boundary (`additionalContext` on Claude Code's
-  PostToolUse and UserPromptSubmit, Codex's equivalents), as "Message from An (b3iq-strategy): …", and are then
-  acked. Nothing about them leaves the machine beyond the ack.
-- **MCP.** `workmesh mcp` (stdio) gives every agent `whoami`, `roster`, `send`, `inbox`, `claim`, `release`, `lease`,
-  `unlease`, `leases`, `note` and `notes`. It talks to the local daemon only and never holds the device token; the
-  daemon makes the hub calls.
-- **Guidance.** A shared session gets a short note at its start (or when it first becomes shared): it is on Workmesh
-  with its team, and how to claim, lease, read its inbox and message instead of editing leased files.
+- **Sync** (`hub/coord.ts`). The daemon polls `/relay/sync` every 5 s while any shared top-level session is live, every
+  60 s otherwise (a shared session's event brings the next poll forward), backing off on errors (10 s doubling to
+  5 min) and waiting out a `429`'s `Retry-After`; `404` turns coordination off and asks again in 10 minutes; `401`
+  stops it, as for ingest. It keeps the last good answer in memory, with the hub's clock offset (`serverNow`) for
+  expiries.
+- **Fail-open.** Nothing is ever blocked because the hub or the daemon is unreachable. A hook gets no answer when the
+  daemon doesn't answer within its usual timeout, and Claude Code and Codex then run the tool as they would without
+  Workmesh. Leases and recent edits count only while the last good sync is under 90 s old. The one exception is a
+  hold the daemon already knew about: it stays in force until a sync answers without it, or for 30 minutes after the
+  last sync that carried it. A `404` or `401` drops holds at once.
+- **Enforcement** (`daemon/coord-hooks.ts`; Claude Code and Codex `PreToolUse`). The hook sends its event on the same
+  loopback request as before (`POST /event`) with the hook's event name in an `x-workmesh-hook` header; the daemon
+  answers `{ ok: true, coord?: { deny?, context? } }` from its cached state, with no network call in the hook path,
+  and an older daemon ignores the header. The hook prints Claude Code's documented hook JSON (Codex 0.164's hook
+  output schemas take the same fields): `hookSpecificOutput.permissionDecision: "deny"` with
+  `permissionDecisionReason`, and `additionalContext`. It never answers `allow`: the agent's own permissions stand.
+  - A hold on the session (or the session a subagent runs under) refuses every tool call, naming who held it and why.
+  - An edit to a file another session's lease covers is refused, naming the file, the holder (person and session), the
+    reason, the entries that cover it, when the lease expires, and how to ask them. Edits are Edit, Write, MultiEdit,
+    NotebookEdit (their path), Codex `apply_patch` (every file in the patch), and shell commands that plainly write a
+    path (`> file`, `tee`, `rm`, `mv`, `cp`, `touch`, `truncate`, `ln`, `dd of=`, `sed -i`/`perl -i`, `git rm|mv|restore`,
+    `git checkout -- <paths>`; `cd` moves the base; variables, substitutions and heredoc bodies are not read). Only
+    paths in shared repos (§3.3) are checked, as repo-relative paths.
+  - An edit to a file another person's session edited in the last 10 minutes (`edits`) goes ahead, with a note to the
+    agent saying who is working there (once per file and editor per 10 minutes).
+  - A refused call is applied as a heartbeat: the session stays alive, and nothing about the call reaches Slack or the
+    hub.
+- **Inbox.** A session's messages reach its agent at its next tool boundary (`additionalContext` on PostToolUse and
+  UserPromptSubmit, Claude Code and Codex alike), at most five at a time, as "Message from An (b3iq-strategy): …",
+  framed as a colleague's note; they are then acked (`POST /relay/inbox/ack`). A message for a subagent
+  (`<key>/<agentId>`) reaches only that subagent. The MCP `inbox` tool and `workmesh inbox` list them too.
+- **MCP** (`mcp/server.ts`). `workmesh mcp` (stdio, JSON-RPC 2.0, one message per line; protocol versions 2024-11-05 to
+  2025-11-25) gives every agent `whoami`, `roster`, `send`, `inbox`, `claim`, `release`, `lease`, `unlease`, `leases`,
+  `note` and `notes`. It talks to the local daemon only (`POST /coord/op` on the loopback API, bearer secret as
+  everywhere) and never holds the device token; the daemon makes the hub calls. The daemon tells which session is
+  calling from the caller's parent process (Claude Code's `~/.claude/sessions/<pid>.json`), else
+  `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`, else the live session in the caller's directory that moved last;
+  none of them means the person at a terminal. Message and note text is redacted (§9) before it is sent.
+- **Registration.** `workmesh setup` (and `setup --hooks-only`; `--no-mcp` skips it) registers the server with Claude
+  Code at user scope (`claude mcp add -s user workmesh -- <node> <cli> mcp` when the `claude` CLI is on PATH, else a
+  merge into `~/.claude.json`, written by rename) and with Codex as `[mcp_servers.workmesh]` in `~/.codex/config.toml`.
+  Both back the file up once before the first change, repoint an older install of theirs, and leave alone another
+  server named `workmesh` or a file they can't read. `workmesh doctor` checks both, and whether the running daemon
+  coordinates.
+- **Guidance.** A shared top-level session gets a five-line note once (`SessionStart`, or the first boundary after it
+  becomes shared) while the hub coordinates: it is on Workmesh with its team, and how to claim, lease, read its inbox,
+  and message a holder instead of editing leased files.
+- **Menu bar.** `GET /team` adds `coord: { available, holds: [{ session, name, by, reason, since }], unread: [{ id,
+  session, name, from, fromSession, text, ts, delivered }] }` for this machine's sessions; Workmesh.app shows "On
+  hold" and "Messages for your agents".
+- **CLI.** `workmesh leases`, `lease`, `unlease`, `claims`, `claim`, `send`, `inbox`, `note`, `notes`, `whoami`, through
+  the same daemon call as the MCP tools.

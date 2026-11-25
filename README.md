@@ -399,11 +399,42 @@ the wire format, what may leave a machine, sharing levels, redaction and the pri
 rules a hub keeps are in [docs/SPEC.md](docs/SPEC.md), and the schemas both sides
 validate against are [`packages/protocol`](packages/protocol).
 
+### Coordinate: leases, claims, messages, holds
+
+On a hub that coordinates (Workmesh v1), your agents and your teammates' stop colliding:
+
+- **Leases.** An agent leases the files it is about to rework (`lease` with paths,
+  directories or globs such as `src/hub/**`; 30 minutes by default). Another session's
+  edit to a leased file (Edit, Write, MultiEdit, NotebookEdit, Codex `apply_patch`, and
+  shell commands that plainly write a path such as `rm`, `mv`, `sed -i`, `> file`) is
+  refused before it runs, with who holds it, until when, and how to ask them. Your own
+  other sessions count as other sessions: leases are about agents colliding.
+- **Heads-ups.** Before an agent edits a file another person's agent edited in the last
+  10 minutes, it is told who is working there (the edit goes ahead).
+- **Claims.** An agent claims the Linear issue it works on; one claimant per issue.
+- **Messages.** `send` reaches a person's agent (or a named agent) at its next tool call
+  as "Message from An (b3iq-strategy): …"; `inbox` lists what is waiting.
+- **Holds.** A teammate can hold one of your agents from the board or a Linear comment:
+  its next tool call, and every one after, is refused with their reason until they lift
+  it. The menu bar shows holds on your agents and messages waiting for them.
+- **Notes.** Shared project notes every teammate's agent can read.
+
+Agents get these as MCP tools (`workmesh mcp`, registered for Claude Code and Codex by
+`workmesh setup`) and a short note at the start of each shared session; the same calls
+work from a terminal (`workmesh leases`, `workmesh send An "…"`). The daemon answers
+hooks from its last sync with the hub (every 5 s while a shared session runs), so a hook
+makes no network call and takes no longer than before. **It fails open:** if the hub or
+the daemon can't be reached, nothing is refused (a lease counts only while the last sync
+is under 90 s old), except a hold the daemon already knew about, which stays in force for
+up to 30 minutes until a sync confirms it was lifted. Lease paths, claimed issue ids and
+the text of messages and notes you send (redacted first) go to the hub; nothing else
+about your files does.
+
 ## CLI reference
 
 | Command | Does |
 |---|---|
-| `workmesh setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt; `--hooks-only` just installs or refreshes the Claude Code and Codex hooks |
+| `workmesh setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt; `--hooks-only` just installs or refreshes the Claude Code and Codex hooks and the `workmesh` MCP server (`--no-mcp` skips it) |
 | `workmesh start [--detach]` | Run the daemon, foreground or in the background |
 | `workmesh stop` | Stop the background daemon; returns once it has exited (SIGKILL after 5 s). Also stops a daemon started before the rename |
 | `workmesh restart` | Stop the daemon, wait for it to exit, and start it again in the background |
@@ -419,7 +450,15 @@ validate against are [`packages/protocol`](packages/protocol).
 | `workmesh hub status [--json]` | Pairing, sharing level, project, last send, queued/dropped events, shared sessions |
 | `workmesh hub include <dir>` / `exclude <dir>` | Share a folder too / never share a folder |
 | `workmesh hub disconnect` | Stop forwarding and remove the hub token |
-| `workmesh doctor [--json]` | Diagnose config, daemon, hooks, hub forward, and connectivity |
+| `workmesh leases [--repo owner/name]` | Active file leases on your team: who holds which paths, for how long |
+| `workmesh lease <paths...>` / `unlease [paths...]` | Lease files, directories or globs for the agent session it runs in (`--reason`, `--minutes`); release them |
+| `workmesh claims` / `claim <issue> [--release]` | Linear issues your team's agents claimed; claim or release one |
+| `workmesh send <to> <text...>` | Message a person (name, email or GitHub login) or an agent (session name); delivered at its next tool call |
+| `workmesh inbox` | Messages waiting for this machine's agents (inside an agent session: for that session) |
+| `workmesh note <text...>` / `notes` | Leave a note every teammate's agent can read; list the newest |
+| `workmesh whoami` | Your person on the hub, and which agent session a command speaks for |
+| `workmesh mcp` | The coordination tools as an MCP server (stdio); `workmesh setup` registers it with Claude Code (user scope) and Codex |
+| `workmesh doctor [--json]` | Diagnose config, daemon, hooks, MCP registration, hub forward, coordination, and connectivity |
 
 ## Menu bar app (macOS)
 

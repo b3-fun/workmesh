@@ -28,6 +28,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); agents' `ask` tool and `workmesh ask` in 0.11.x |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **done** (11-25): wire #22 (SPEC §30), relay #23 + #26 in **0.11.0** (npm, GitHub release v0.11.0), hub and board workmesh-cloud #12; follow-ups (approval → the agent carries on, a live two-person handoff) in 0.11.x |
 | Onboarding hardening | First run solid on macOS and Linux: lingering so an SSH box stays online after logout, no half-installed systemd unit, `init` checks the hub heard from the machine, `doctor` names why a machine shows offline, one pairing per machine (the same hub under two addresses, a re-pair retires the old device), "online, no agents running" and "paired, never connected" on the board; a Docker smoke test (Node 20/22/24, with and without systemd, over SSH) | **in review** (11-25): relay 0.11.1 (not published), hub workmesh-cloud |
+| PR details | PR title, state (open, draft, merged, closed), author, review and checks on the board, from a read-only GitHub App on b3-fun, instead of a bare `repo#n` | **done** (11-25): hub and board workmesh-cloud #24 |
 | v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **in progress** (11-25): wire (SPEC §35–36) |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
@@ -274,6 +275,18 @@ this". Wire: SPEC §26.
   and leave the board); the board says "online, no agents running" and "paired, never connected" (with `workmesh
   doctor` as the next step).
 
+### PR details (Linear B3-7165, done 11-25)
+
+- **Why:** the board named PRs only as `repo#n` (row chips, tooltips, the detail drawer, a session's links, the graph):
+  the hub had no way to read GitHub.
+- **What:** a GitHub App on the b3-fun org, "Workmesh (B3)", read-only (pull requests, checks, commit statuses,
+  metadata; no webhook), installed on all repositories. The hub reads the PRs the board's sessions name. Open PRs
+  refresh every two minutes while someone has the board open, and merged and closed ones once a day. Each PR is shown
+  with its title, its state in colour, its author with their avatar, the review decision and the checks (failing ones
+  by name). Settings shows the connection. Nothing changes on the relay or the wire, and a PR outside b3-fun keeps
+  `repo#n`.
+- **Later:** a webhook instead of polling, if two-minute freshness turns out too slow.
+
 ### v3 Memory (Linear B3-7203, in progress 11-25)
 
 Sean's first ask (11-24) was agents working toward a shared goal "with humans in the loop, and potentially shared
@@ -294,6 +307,9 @@ base people trust. Contract: SPEC §35 (wire) and §36 (relay).
 
 ## Decision log
 
+- 11-25 PR details come from a read-only GitHub App on b3-fun (Sean: "GitHub App on b3-fun"), not anyone's personal
+  token: the narrowest permissions that answer title, state, review and checks (no code access), polled rather than a
+  webhook for now.
 - 11-25 Memory: agents propose, people accept; only accepted memories reach agents, and a hub's own proposals from
   finished sessions are never accepted without a person. A person may let their own agents' memories through, never
   someone else's (superseding or retiring a teammate's memory is always a proposal). Session start picks from a brief

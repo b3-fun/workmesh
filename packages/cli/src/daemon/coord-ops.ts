@@ -14,6 +14,7 @@ import type { AgentSession } from "@workmesh/core";
 import { CoordClient } from "../hub/coord";
 import type { CoordResult } from "../hub/coord";
 import { scrubText } from "../hub/redact";
+import { forgetOp, memoriesOp, noteAsMemory, recallOp, rememberOp } from "./memory-ops";
 
 /**
  * v1 Coordinate operations for the MCP server and the CLI (docs/SPEC.md §23): `POST /coord/op` on the daemon's
@@ -42,6 +43,11 @@ export const COORD_OPS = [
   "approvals",
   // Ask (SPEC §29)
   "ask",
+  // v3 Memory (SPEC §36)
+  "remember",
+  "recall",
+  "forget",
+  "memories",
 ] as const;
 export type CoordOp = (typeof COORD_OPS)[number];
 
@@ -215,6 +221,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
   const needsSession = (what: string): CoordOpResult | undefined =>
     key ? undefined : fail(`Workmesh can't tell which agent session is asking, and ${what} belongs to one. Run it from inside a Claude Code or Codex session.`);
   const unavailable = view.available === false ? fail("Workmesh coordination isn't on this team's hub yet.") : undefined;
+  const ctx = { coord, key, cwd, home, now, classify: deps.classify };
 
   switch (req.op) {
     case "whoami": {
@@ -413,6 +420,11 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
 
     case "note": {
       if (unavailable) return unavailable;
+      // v3 (SPEC §36): on a hub with memory a note is a memory (a fact, or a rule or convention by its tag).
+      if (coord.memoryAvailable(now)) {
+        const r = await noteAsMemory(a, ctx);
+        if (r) return r; // else the hub has no memory after all: a v1 note
+      }
       const text = scrubText(str(a.text, 16_000), { home, max: 4000 })?.text;
       if (!text) return fail("`note` needs `text`.");
       const tags = strList(a.tags, 10)?.filter((t) => /^[\w.:-]{1,32}$/.test(t));
@@ -429,6 +441,8 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
     case "notes": {
       if (unavailable) return unavailable;
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
+      // v3 (SPEC §36): on a hub with memory, the notes are the accepted memories (`tag` matches a kind or a tag).
+      if (coord.memoryAvailable(now)) return memoriesOp(a, ctx);
       const tag = str(a.tag, 32);
       const notes = st.notes.filter((n) => !tag || n.tags?.includes(tag));
       if (notes.length === 0) return { ok: true, text: tag ? `No team notes tagged ${tag}.` : "No team notes yet.", data: { notes: [] } };
@@ -575,6 +589,21 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       });
       return { ok: true, text: lines.join("\n"), data: { approvals: st.approvals } };
     }
+
+    // --- v3 Memory (SPEC §36) ------------------------------------------------------------
+
+    case "remember":
+      if (unavailable) return unavailable;
+      return rememberOp(a, ctx);
+    case "recall":
+      if (unavailable) return unavailable;
+      return recallOp(a, ctx);
+    case "forget":
+      if (unavailable) return unavailable;
+      return forgetOp(a, ctx);
+    case "memories":
+      if (unavailable) return unavailable;
+      return memoriesOp(a, ctx);
 
     // --- Ask (SPEC §29) -----------------------------------------------------------------
 

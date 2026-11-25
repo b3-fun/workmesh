@@ -1,3 +1,4 @@
+import path from "node:path";
 import pkg from "../../package.json";
 import type { CoordCaller, CoordOp, CoordOpResult } from "../daemon/coord-ops";
 import { loadConfigSafe } from "../lib/config";
@@ -120,6 +121,70 @@ export function runWhoami(opts: CoordCliOptions): Promise<void> {
 /** `workmesh ask <question…>`: the board's Ask, read-only (SPEC §29). */
 export function runAsk(words: string[], opts: CoordCliOptions): Promise<void> {
   return runOp("ask", { question: words.join(" ") }, opts);
+}
+
+// --- v3 Memory (SPEC §36) ---------------------------------------------------------------
+
+/**
+ * `workmesh remember <title…>`: from a terminal outside an agent session these are the person's own words (accepted at
+ * once); from an agent's shell, the agent's proposal.
+ */
+export function runRemember(
+  words: string[],
+  opts: CoordCliOptions & {
+    kind?: string;
+    body?: string;
+    project?: boolean;
+    repo?: string | boolean;
+    path?: string[];
+    issue?: string[];
+    pr?: string[];
+    tag?: string[];
+    supersedes?: string;
+  },
+): Promise<void> {
+  const scope = opts.project ? "project" : typeof opts.repo === "string" ? opts.repo : opts.repo ? "repo" : undefined;
+  // Paths on the command line are relative to this directory (made absolute here), unless `--repo owner/name` names the
+  // repo they are relative to.
+  const paths =
+    typeof opts.repo === "string" ? opts.path : opts.path?.map((p) => (path.isAbsolute(p) || p.startsWith("~") ? p : path.resolve(p)));
+  return runOp(
+    "remember",
+    {
+      title: words.join(" "),
+      ...(opts.kind ? { kind: opts.kind } : {}),
+      ...(opts.body ? { body: opts.body } : {}),
+      ...(scope ? { scope } : {}),
+      ...(paths?.length ? { paths } : {}),
+      ...(opts.issue?.length ? { issues: opts.issue } : {}),
+      ...(opts.pr?.length ? { prs: opts.pr } : {}),
+      ...(opts.tag?.length ? { tags: opts.tag } : {}),
+      ...(opts.supersedes ? { supersedes: opts.supersedes } : {}),
+    },
+    opts,
+  );
+}
+
+export function runRecall(words: string[], opts: CoordCliOptions & { kind?: string[]; limit?: string; repo?: string }): Promise<void> {
+  const limit = opts.limit ? Number(opts.limit) : undefined;
+  return runOp(
+    "recall",
+    {
+      query: words.join(" "),
+      ...(opts.kind?.length ? { kinds: opts.kind } : {}),
+      ...(limit && Number.isFinite(limit) ? { limit } : {}),
+      ...(opts.repo ? { repo: opts.repo } : {}),
+    },
+    opts,
+  );
+}
+
+export function runForget(id: string, opts: CoordCliOptions & { reason?: string }): Promise<void> {
+  return runOp("forget", { id, ...(opts.reason ? { reason: opts.reason } : {}) }, opts);
+}
+
+export function runMemories(opts: CoordCliOptions & { kind?: string; tag?: string; repo?: string }): Promise<void> {
+  return runOp("memories", { ...(opts.kind ? { kind: opts.kind } : {}), ...(opts.tag ? { tag: opts.tag } : {}), ...(opts.repo ? { repo: opts.repo } : {}) }, opts);
 }
 
 // --- v2 Delegate (SPEC §31) -----------------------------------------------------------

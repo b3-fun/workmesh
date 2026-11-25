@@ -371,7 +371,7 @@ describe("MCP server (workmesh mcp)", () => {
     expect(init.result).toMatchObject({ protocolVersion: "2025-06-18", serverInfo: { name: "workmesh", version: "0.10.0" }, capabilities: { tools: {} } });
     expect(await handleMcpMessage({ jsonrpc: "2.0", method: "notifications/initialized" }, opts(calls), session)).toBeUndefined();
     const list = (await handleMcpMessage({ jsonrpc: "2.0", id: 2, method: "tools/list" }, opts(calls), session)) as { result: { tools: Array<{ name: string; description: string }> } };
-    expect(list.result.tools.map((t) => t.name)).toEqual(["whoami", "roster", "send", "inbox", "claim", "release", "lease", "unlease", "leases", "note", "notes", "handoff", "handoffs", "ask"]);
+    expect(list.result.tools.map((t) => t.name)).toEqual(["whoami", "roster", "send", "inbox", "claim", "release", "lease", "unlease", "leases", "note", "notes", "remember", "recall", "forget", "memories", "handoff", "handoffs", "ask"]);
     for (const t of list.result.tools) expect(t.description.length, t.name).toBeLessThanOrEqual(320);
     const ok = (await handleMcpMessage({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "send", arguments: { to: "An", text: "hi" } } }, opts(calls), session)) as { result: unknown };
     expect(ok.result).toEqual({ content: [{ type: "text", text: "did send" }], isError: false });
@@ -408,7 +408,7 @@ describe("MCP server (workmesh mcp)", () => {
     const msgs = out.map((l) => JSON.parse(l) as { id: unknown; error?: { code: number } });
     expect(msgs.map((m) => m.id).sort()).toEqual([1, 2, null]);
     expect(msgs.find((m) => m.id === null)?.error?.code).toBe(-32700);
-    expect(MCP_TOOLS).toHaveLength(14);
+    expect(MCP_TOOLS).toHaveLength(18);
   });
 });
 

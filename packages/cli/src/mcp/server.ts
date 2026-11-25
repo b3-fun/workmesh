@@ -120,6 +120,67 @@ export const MCP_TOOLS: readonly ToolDef[] = [
     description: "The team's newest shared notes.",
     inputSchema: { type: "object", properties: { tag: s("Only notes with this tag (optional).") }, additionalProperties: false },
   },
+  // v3 Memory (SPEC §36): the team's accepted knowledge. Agents propose; a person accepts.
+  {
+    name: "remember",
+    description:
+      "Write down what the team's agents should know: a decision and why, a convention, a gotcha you hit and solved, a rule, a fact. One memory per call. A person accepts it on the board before other agents get it. Redacted on this machine first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["decision", "convention", "gotcha", "rule", "fact"], description: "What it is." },
+        title: s("The memory in one line (up to 120 characters)."),
+        body: s("Why, how, where it bit (optional, up to 2,000 characters)."),
+        scope: s('"repo" (default: this session\'s repo, when it is in a shared one), "project" (team-wide), or owner/name.'),
+        paths: { type: "array", items: { type: "string" }, description: "Only these files, directories or globs in the repo (optional)." },
+        issues: { type: "array", items: { type: "string" }, description: "Linear issue ids, e.g. B3-123 (optional)." },
+        prs: { type: "array", items: { type: "string" }, description: "PR links or owner/name#N (optional)." },
+        tags: { type: "array", items: { type: "string" }, description: "One-word tags (optional)." },
+        supersedes: s("The id of a memory this one replaces, e.g. m12 (optional)."),
+      },
+      required: ["kind", "title"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "recall",
+    description:
+      "Search the team's accepted memories (decisions, conventions, gotchas, rules, facts) before deciding something or when stuck. This repo's and directory's memories rank first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: s("What to look for, in words."),
+        kinds: { type: "array", items: { type: "string", enum: ["decision", "convention", "gotcha", "rule", "fact"] }, description: "Only these kinds (optional)." },
+        limit: { type: "number", description: "How many (1-20, default 8)." },
+        repo: s("Rank this repo first instead, owner/name (optional)."),
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "forget",
+    description: "Retire a team memory that is wrong or out of date, by id (m12). Say why: a person confirms it on the board.",
+    inputSchema: {
+      type: "object",
+      properties: { id: s("The memory's id, e.g. m12."), reason: s("Why it no longer holds (recommended).") },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memories",
+    description: "The team's accepted memories, newest first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["decision", "convention", "gotcha", "rule", "fact"], description: "Only this kind (optional)." },
+        tag: s("Only memories with this tag or kind (optional)."),
+        repo: s("Only this repo's, owner/name, or `project` for team-wide ones (optional)."),
+      },
+      additionalProperties: false,
+    },
+  },
   // v2 Delegate (SPEC §31). Approvals and gates are a person's to decide and set: no tools for them here.
   {
     name: "handoff",
@@ -169,7 +230,8 @@ export const MCP_INSTRUCTIONS =
   "Workmesh connects this session to your team's agents. Claim the Linear issue you work on, lease files before larger " +
   "edits (edits to another session's leased files are refused), read your inbox, and message a file's holder with " +
   "`send` instead of editing around them. `handoff` gives a task to a teammate's (or your other machine's) agent; " +
-  "`ask` asks the team board what teammates' agents are doing.";
+  "`ask` asks the team board what teammates' agents are doing. `recall` searches the team's memory (decisions, " +
+  "conventions, gotchas) and `remember` proposes what the team should keep.";
 
 export interface McpServerOptions {
   input: NodeJS.ReadableStream;

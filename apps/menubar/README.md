@@ -213,8 +213,9 @@ node scripts/mock-daemon.mjs --port 45193 --scenario update-menubar --menubar-ve
 WORKMESH_DEV_AUTOUPDATE=app /tmp/wm/app/Workmesh.app/Contents/MacOS/Workmesh
 ```
 
-The previous app goes to `~/Library/Application Support/Workmesh/menubar-previous/`
-whatever the bundle id, so remove that folder after a dev run.
+A dev build (any `BUNDLE_ID` but the release's) keeps the previous app in
+`~/Library/Application Support/<bundle id>/menubar-previous/`, never the installed
+app's `Workmesh/menubar-previous/`; remove that folder after a dev run.
 
 ## Layout
 

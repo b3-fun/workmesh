@@ -293,10 +293,18 @@ enum AppSelfUpdate {
     static var bundleId: String? { Bundle.main.bundleIdentifier }
     static var currentVersion: String? { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String }
 
+    /// The release's bundle id; a build with any other (BUNDLE_ID) is a development build.
+    static let releaseBundleId = "org.npclabs.workmesh.menubar"
+
+    /// Where the replaced app is kept. A development build keeps its own, so a
+    /// dev self-update never overwrites the installed app's rollback copy.
     static var previousDir: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("Workmesh/menubar-previous", isDirectory: true)
+        guard let id = bundleId, id != releaseBundleId else {
+            return base.appendingPathComponent("Workmesh/menubar-previous", isDirectory: true)
+        }
+        return base.appendingPathComponent("\(id)/menubar-previous", isDirectory: true)
     }
 
     /// Why this app can't replace itself where it runs, in plain words; nil when it can.

@@ -414,3 +414,31 @@ describe("a restarted daemon keeps the mirror (SPEC §24, §26)", () => {
     expect(b.events("claude-code:mir-restart").map((e) => e.noticeKind)).toEqual(["shell_done"]);
   });
 });
+
+describe("a tail restored from an older state file (SPEC §24, §26)", () => {
+  it("seeds mode and model on its next hook, though its tail resumes at the saved offset", async () => {
+    const statePath = path.join(home, "state", "old-forward.json");
+    const clock = { now: NOW };
+    transcript("mir-old", [ml.permissionMode("bypassPermissions"), cl.text("x", "u-old", NOW - 5000)]);
+    const a = harness({ statePath, clock });
+    a.fwd.restoreState();
+    a.claude("mir-old", { hook_event_name: "UserPromptSubmit", prompt: "go" });
+    clock.now += 1000;
+    await a.send();
+    await a.fwd.stop();
+    // The state file as a v0.10 daemon wrote it: no mirror.
+    const saved = JSON.parse(fs.readFileSync(statePath, "utf8")) as { sessions: Array<Record<string, unknown>> };
+    for (const s of saved.sessions) delete s.mirror;
+    fs.writeFileSync(statePath, JSON.stringify(saved));
+
+    clock.now += 2000;
+    const b = harness({ statePath, clock });
+    b.fwd.restoreState();
+    b.claude("mir-old", { hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: path.join(beta, "a.ts") } });
+    await b.send();
+    await new Promise((r) => setTimeout(r, 20));
+    clock.now += 1000;
+    await b.send();
+    expect(b.last("claude-code:mir-old")).toMatchObject({ mode: "bypassPermissions", model: "claude-opus-5-5" });
+  });
+});

@@ -116,9 +116,19 @@ function matcher(key: string, source: string): RegExp {
   return re;
 }
 
+/**
+ * A branch word's stem, matched at a word start: `memory` → `memor` (memory, memories), `hooks` → `hook`, `relay`
+ * stays (a vowel before the y).
+ */
+export function wordStem(word: string): string {
+  if (word.length >= 5 && /[^aeiou]y$/.test(word)) return word.slice(0, -1);
+  if (word.length >= 5 && /[^s]s$/.test(word)) return word.slice(0, -1);
+  return word;
+}
+
 /** A word at a word start in the text (`relay` finds `relay`, `relays`, `Relay's`), case-insensitively. */
 function mentions(text: string, word: string): boolean {
-  return matcher(`w:${word}`, `(?:^|[^A-Za-z0-9])${escapeRe(word)}`).test(text);
+  return matcher(`w:${word}`, `(?:^|[^A-Za-z0-9])${escapeRe(wordStem(word))}`).test(text);
 }
 
 /** An issue id as a whole token in the text. */

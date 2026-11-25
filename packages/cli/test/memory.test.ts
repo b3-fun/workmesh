@@ -11,6 +11,7 @@ import {
   branchIssues,
   branchWords,
   firstSentence,
+  wordStem,
   memoryLine,
   selectMemories,
 } from "../src/daemon/memory";
@@ -281,6 +282,10 @@ describe("session-start selection (SPEC §36)", () => {
     expect(branchWords("memory-relay")).toEqual(["memory", "relay"]);
     expect(branchWords("feat/fix-the-tray-icon")).toEqual(["tray", "icon"]);
     expect(branchWords("main")).toEqual([]);
+    expect(["memory", "hooks", "relay", "class", "key"].map(wordStem)).toEqual(["memor", "hook", "relay", "class", "key"]);
+    // A branch word finds its plural: `memory` → "memories".
+    expect(selectMemories([mem({ id: "m1", title: "how memories reach agents" })], { branch: "sean/memory-ranking", issues: [] })).toBeUndefined(); // project-wide: +1 only
+    expect(selectMemories([mem({ id: "m1", title: "how memories rank", scope: { repo: REPO, paths: ["apps/**"] } })], { repo: REPO, dir: "packages/cli", branch: "sean/memory-ranking" })!.ids).toEqual(["m1"]); // 2 − 1 + 1 (memory)
   });
 });
 

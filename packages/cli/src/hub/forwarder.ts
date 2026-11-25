@@ -1155,6 +1155,9 @@ export class HubForwarder {
       if (t.tail?.path !== file) {
         t.tail = startTail(file, codex ? "codex" : "claude-code");
         this.seedMirror(t, file, codex ? "codex" : "claude-code");
+      } else if (!t.mirror?.seeded) {
+        // A tail restored from a state file written before v0.11 (no mirror saved): seed its mode and model too.
+        this.seedMirror(t, file, codex ? "codex" : "claude-code");
       }
       return;
     }

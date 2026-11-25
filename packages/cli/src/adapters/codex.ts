@@ -630,3 +630,13 @@ export function areCodexHooksInstalled(hooksPath = codexHooksPath()): boolean {
     return false;
   }
 }
+
+/** Whether any Workmesh hook is in hooks.json (0.12, `workmesh update` refreshes an older install). */
+export function hasAnyCodexHook(hooksPath = codexHooksPath()): boolean {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(hooksPath, "utf8")) as { hooks?: Record<string, unknown> };
+    return Object.values(parsed.hooks ?? {}).some((entries) => hookListHasOurs(entries));
+  } catch {
+    return false;
+  }
+}

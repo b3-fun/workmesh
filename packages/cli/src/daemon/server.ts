@@ -1,4 +1,5 @@
 import http from "node:http";
+import pkg from "../../package.json";
 import { sessionEventSchema } from "@workmesh/core";
 import type { SessionEvent, SlackStatus, StatusSnapshot } from "@workmesh/core";
 import { secretsEqual } from "../lib/daemon-auth";
@@ -13,6 +14,7 @@ import type { HookAnswer } from "./coord-hooks";
 import { coordOpRequestSchema } from "./coord-ops";
 import type { CoordOpRequest, CoordOpResult } from "./coord-ops";
 import type { DelegateSummary, WaitAnswer } from "./delegate";
+import type { UpdateStatus } from "./updates";
 
 /** GET /hub: the forwarder's status, or `enabled: false` when not paired. */
 export type HubState = ({ enabled: true } & HubForwarderStatus) | { enabled: false };
@@ -64,6 +66,22 @@ export interface CoordSummary {
 
 /** The header a hook sends with its event: the agent's hook event name (`PreToolUse`, …). */
 export const HOOK_HEADER = "x-workmesh-hook";
+/** 0.12 (SPEC §41): the hook's Workmesh version, and at SessionStart its source and surface fingerprint. */
+export const CLIENT_HEADER = "x-workmesh-client";
+export const START_HEADER = "x-workmesh-start";
+export const SURFACE_HEADER = "x-workmesh-surface";
+
+/** What a hook says about itself (0.12): what the session it fires for started under. */
+export interface HookMeta {
+  version?: string;
+  start?: string;
+  surface?: string;
+}
+
+function headerValue(req: http.IncomingMessage, name: string, re: RegExp): string | undefined {
+  const v = req.headers[name];
+  return typeof v === "string" && re.test(v) ? v : undefined;
+}
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -104,7 +122,9 @@ export interface DaemonServerDeps {
    * v1 (SPEC §23): apply a hook's event and answer the hook (a refusal, context for the agent) from cached state.
    * Absent: hooks get `{ ok: true }` as before.
    */
-  applyHookEvent?(event: SessionEvent, hook: string): HookAnswer | undefined;
+  applyHookEvent?(event: SessionEvent, hook: string, meta?: HookMeta): HookAnswer | undefined;
+  /** 0.12 (SPEC §41): update status (GET /update). */
+  getUpdate?(): UpdateStatus;
   /** v1: an MCP or CLI coordination call (POST /coord/op). */
   coordOp?(req: CoordOpRequest): Promise<CoordOpResult>;
   /** v2 (SPEC §31): an idle session's waiter long-polls for its next waking message (POST /wake/wait). */
@@ -181,6 +201,7 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
         json(res, 200, {
           ok: true,
           pid: process.pid,
+          version: pkg.version,
           uptimeSec: Math.round((Date.now() - startedAt) / 1000),
           lastError: deps.getLastError(),
           ownership: deps.getOwnership(),
@@ -221,8 +242,13 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
         if (typeof hook === "string" && hook && deps.applyHookEvent) {
           // Fail open: a coordination error must never cost the event or block the agent.
           let answer: HookAnswer | undefined;
+          const meta: HookMeta = {
+            version: headerValue(req, CLIENT_HEADER, /^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,30}$/),
+            start: headerValue(req, START_HEADER, /^[a-z_-]{1,20}$/),
+            surface: headerValue(req, SURFACE_HEADER, /^[0-9a-f]{8,64}$/),
+          };
           try {
-            answer = deps.applyHookEvent(parsed.data, hook.slice(0, 64));
+            answer = deps.applyHookEvent(parsed.data, hook.slice(0, 64), meta);
           } catch {
             deps.applyEvent(parsed.data);
           }
@@ -311,6 +337,14 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
       if (method === "GET" && (url === "/team" || url.startsWith("/team?"))) {
         const open = new URL(url, "http://127.0.0.1").searchParams.get("open") === "1";
         json(res, 200, deps.getTeam?.(open) ?? { enabled: false });
+        return;
+      }
+      if (method === "GET" && url === "/update") {
+        if (!deps.getUpdate) {
+          json(res, 404, { ok: false, error: "not found" });
+          return;
+        }
+        json(res, 200, deps.getUpdate());
         return;
       }
       if (method === "GET" && url === "/hub") {

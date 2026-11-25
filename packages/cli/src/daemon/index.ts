@@ -7,6 +7,7 @@ import type { CodexWatcher } from "../adapters/codex";
 import { claudeProjectsDir, createWorkflowWatcher } from "../adapters/workflow";
 import type { WorkflowWatcher } from "../adapters/workflow";
 import {
+  autoUpdateSettings,
   delegateSettings,
   formatOptionsFromConfig,
   hubShareLevel,
@@ -25,20 +26,30 @@ import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
 import { codexWaker } from "./codex-wake";
-import type { CoordSummary } from "./server";
+import type { CoordSummary, HookMeta } from "./server";
 import { readGithubLogin } from "../lib/github";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
-import { checkoutsPath, handoffsDir, hubForwardStatePath, stateDir } from "../lib/paths";
+import { checkoutsPath, handoffsDir, hubForwardStatePath, sessionVersionsPath, stateDir, updateCheckPath, updateLogPath } from "../lib/paths";
+import { detectInstall, managerBin } from "../lib/install-method";
+import type { InstallInfo } from "../lib/install-method";
+import { fetchMenubarRelease, fetchRegistryInfo, npmRegistry } from "../lib/registry";
+import { readUpdateState } from "../lib/update-state";
+import { surfaceFingerprint } from "../lib/surface";
+import { SessionVersions } from "./session-versions";
+import { UpdateChecker, spawnDetachedUpdate } from "./updates";
 import { removeStateFile } from "../hub/persist";
 import { findRunningDaemon, takeStopRequest } from "../lib/daemon-control";
-import { SERVICE_ENV } from "../lib/service";
+import { SERVICE_ENV, cliEntry, stableNodePath } from "../lib/service";
 import { readPidFile, removePidFile, writePidFile } from "../lib/pidfile";
 import { createSink } from "../sinks";
 import { ClaudeLiveness, claudeConfigDir, readLiveClaudeSessions } from "./claude-liveness";
 import type { ClaudeProcess } from "./claude-liveness";
 import { Pusher } from "./pusher";
 import { createDaemonServer } from "./server";
+
+/** Hook events whose answer can carry context for the agent (Claude Code's and Codex's hook JSON). */
+const CONTEXT_HOOKS = new Set(["SessionStart", "UserPromptSubmit", "PostToolUse", "PreToolUse"]);
 
 /** How often the daemon checks Claude Code's session files for liveness. */
 const CLAUDE_LIVENESS_INTERVAL_MS = 15_000;
@@ -238,7 +249,16 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     isShared: (key) => forwarder?.isShared(key) ?? false,
     projectName: () => liveConfig.hub?.project.name,
   });
-  const applyHookEvent = (event: SessionEvent, hook: string) => {
+  // 0.12 (SPEC §41): sessions that started under an older Workmesh are told once, at their next hook with context.
+  const sessionVersions = new SessionVersions({ file: sessionVersionsPath(), current: pkg.version, surface: surfaceFingerprint() });
+  const staleNote = (event: SessionEvent, hook: string, meta: HookMeta | undefined, denied: boolean): string | undefined => {
+    const key = `${event.source}:${event.sessionId}`;
+    if (hook === "SessionStart") sessionVersions.observeStart(key, { source: meta?.start, version: meta?.version, surface: meta?.surface });
+    if (denied || event.detail?.agentId || !CONTEXT_HOOKS.has(hook)) return undefined;
+    const startedAt = event.source === "claude-code" ? liveClaude?.get(event.sessionId)?.startedAt : undefined;
+    return sessionVersions.note(key, event.source, startedAt);
+  };
+  const applyHookEvent = (event: SessionEvent, hook: string, meta?: HookMeta) => {
     let deny: string | undefined;
     try {
       deny = coordHooks.refuse(event, hook);
@@ -261,7 +281,15 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       applyEvent(event);
       if (forwarder?.isShared(`${event.source}:${event.sessionId}`)) coord?.poke();
     }
-    return coordHooks.answer(event, hook, deny);
+    const answer = coordHooks.answer(event, hook, deny);
+    let note: string | undefined;
+    try {
+      note = staleNote(event, hook, meta, deny !== undefined);
+    } catch {
+      note = undefined; // fail open
+    }
+    if (!note) return answer;
+    return { ...answer, context: answer?.context ? `${note}\n\n${answer.context}`.slice(0, 9500) : note };
   };
 
   /** v1: holds on this machine's agents and messages waiting for them, for the menu bar. */
@@ -291,6 +319,29 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       }));
     return { available: view.available, holds, unread };
   };
+
+  // 0.12 (SPEC §41): what's newer, from the hub or npm; the menu bar's release; opt-in auto-update.
+  let install: InstallInfo | undefined;
+  const installInfo = (): InstallInfo => (install ??= detectInstall(cliEntry()));
+  const runArgv = [stableNodePath(), installInfo().entry, "update"];
+  const updates = new UpdateChecker({
+    current: pkg.version,
+    install: installInfo,
+    hubLatest: () => {
+      const v = teamPoller?.view();
+      const latest = v?.team?.latestClient;
+      return latest ? { version: latest, at: v?.fetchedAt } : undefined;
+    },
+    settings: () => autoUpdateSettings(loadConfigSafe()),
+    // The registry npm is set up with here (a mirror in ~/.npmrc counts), read when the check runs (≤ every 6 h).
+    fetchNpm: async () => (await fetchRegistryInfo(await npmRegistry(managerBin("npm")))).latest,
+    ...(process.platform === "darwin" ? { fetchMenubar: () => fetchMenubarRelease() } : {}),
+    startAuto: () => spawnDetachedUpdate([...runArgv, "--auto-run"], updateLogPath()),
+    lastRun: () => readUpdateState().last,
+    runArgv,
+    file: updateCheckPath(),
+    log,
+  });
 
   // Written before listen: the file must exist by the time /health answers,
   // and a stale secret from a failed start is harmless.
@@ -355,6 +406,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       };
     },
     applyHookEvent,
+    getUpdate: () => updates.status(),
     coordOp: (req) =>
       runCoordOp(req, {
         coord: () => coord,
@@ -389,6 +441,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         handoffs: onDisk.handoffs,
         wake: onDisk.wake,
         gates: onDisk.gates,
+        update: onDisk.update,
       };
       formatOpts = formatOptionsFromConfig(liveConfig);
       pusher.applyConfig(formatOpts, liveConfig.statusPolicy);
@@ -413,6 +466,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   try {
     pusher.start();
     startForwarder(config.hub);
+    updates.start();
 
     let watcher: CodexWatcher | undefined;
     const sessionsDir = config.adapters.codex.sessionsDir ?? codexSessionsDir();
@@ -463,6 +517,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       log(`${signal} received — clearing status and shutting down`);
       void (async () => {
         if (livenessTimer) clearInterval(livenessTimer);
+        updates.stop();
+        sessionVersions.flush();
         server.close();
         try {
           await watcher?.close();

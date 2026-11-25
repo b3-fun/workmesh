@@ -18,6 +18,8 @@ import { versionManagedNode } from "../lib/hook-files";
 import { claudeConfigDir, codexHome, configPath } from "../lib/paths";
 import { resolveDir } from "./hub";
 import { runServiceInstall } from "./service";
+import { markSetup } from "../lib/update-state";
+import pkg from "../../package.json";
 import {
   ask,
   askSecret,
@@ -293,6 +295,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     // The service carries CLAUDE_CONFIG_DIR into the daemon's environment: make it the profile just hooked.
     if (opts.claudeDir) process.env.CLAUDE_CONFIG_DIR = resolveClaudeDir(opts.claudeDir);
     if (opts.service !== false) await runServiceInstall({ linger: opts.linger });
+    markSetup(pkg.version);
     return;
   }
   console.log(bold("workmesh setup"));
@@ -426,6 +429,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   }
 
   saveConfig(config);
+  markSetup(pkg.version);
   console.log("");
   console.log(green(`config saved to ${configPath()}`));
   const warning = nodePathWarning();

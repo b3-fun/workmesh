@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { markStopRequested, takeStopRequest } from "../src/lib/daemon-control";
 import {
   LAUNCHD_LABEL,
+  launchdLabel,
   SERVICE_ENV,
   installService,
   launchAgentPath,
@@ -195,14 +196,22 @@ describe("the service's program and environment", () => {
     expect(stableNodePath(path.join(cellar, "node"), "/nope")).toBe(path.join(cellar, "node"));
   });
 
-  it("carries PATH and the dirs Workmesh reads, nothing else", () => {
+  it("carries PATH, HOME and the dirs Workmesh reads, nothing else", () => {
     const env = serviceEnv("/opt/homebrew/bin/node", { HOME: "/h", XDG_STATE_HOME: "/s", SECRET_TOKEN: "x", CLAUDE_CONFIG_DIR: "/c" });
     expect(env).toEqual({
       PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
       WORKMESH_SERVICE: "1",
+      HOME: "/h",
       XDG_STATE_HOME: "/s",
       CLAUDE_CONFIG_DIR: "/c",
     });
+  });
+
+  it("a second install on one Mac (a test HOME) gets its own launchd label, carried into the job", () => {
+    expect(launchdLabel({})).toBe(LAUNCHD_LABEL);
+    expect(launchdLabel({ WORKMESH_LAUNCHD_LABEL: "org.example.wm-test" })).toBe("org.example.wm-test");
+    expect(launchdLabel({ WORKMESH_LAUNCHD_LABEL: "bad label/../x" })).toBe(LAUNCHD_LABEL);
+    expect(serviceEnv("/n/node", { WORKMESH_LAUNCHD_LABEL: "org.example.wm-test" }).WORKMESH_LAUNCHD_LABEL).toBe("org.example.wm-test");
   });
 
   it("tests never reach the real service manager", () => {

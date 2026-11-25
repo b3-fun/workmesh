@@ -4,8 +4,9 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { SessionEvent, SlackStatus, StatusSnapshot } from "@workmesh/core";
 import type { OwnershipSummary } from "../daemon/pusher";
-import type { CoordSummary, HubState } from "../daemon/server";
-import { HOOK_HEADER } from "../daemon/server";
+import type { CoordSummary, HookMeta, HubState } from "../daemon/server";
+import { CLIENT_HEADER, HOOK_HEADER, START_HEADER, SURFACE_HEADER } from "../daemon/server";
+import type { UpdateStatus } from "../daemon/updates";
 import type { HookAnswer } from "../daemon/coord-hooks";
 import type { CoordOpRequest, CoordOpResult } from "../daemon/coord-ops";
 import type { Config } from "./config";
@@ -66,6 +67,8 @@ export interface DaemonHealth {
   ok: boolean;
   pid: number;
   uptimeSec: number;
+  /** 0.12+: the daemon's Workmesh version. */
+  version?: string;
   lastError?: string;
   /** Optional: daemons predating the ownership guard don't report it. */
   ownership?: OwnershipSummary;
@@ -112,8 +115,20 @@ export function postEvent(
   event: SessionEvent,
   hook?: string,
   timeoutMs = REQUEST_TIMEOUT_MS,
+  meta: HookMeta = {},
 ): Promise<{ ok: boolean; coord?: HookAnswer }> {
-  return daemonFetch(port, "/event", "POST", event, { ...(hook ? { headers: { [HOOK_HEADER]: hook } } : {}), timeoutMs });
+  const headers: Record<string, string> = {};
+  if (hook) headers[HOOK_HEADER] = hook;
+  // 0.12 (SPEC §41): what this hook's session started under, so the daemon can tell a stale session once.
+  if (hook && meta.version) headers[CLIENT_HEADER] = meta.version;
+  if (hook && meta.start) headers[START_HEADER] = meta.start;
+  if (hook && meta.surface) headers[SURFACE_HEADER] = meta.surface;
+  return daemonFetch(port, "/event", "POST", event, { headers, timeoutMs });
+}
+
+/** 0.12: update status (an older daemon answers 404, which throws). */
+export function getUpdateStatus(port: number, timeoutMs = REQUEST_TIMEOUT_MS): Promise<UpdateStatus> {
+  return daemonFetch(port, "/update", "GET", undefined, { timeoutMs });
 }
 
 /** Hub calls go through the daemon (it holds the device token); they may take a network round trip. */

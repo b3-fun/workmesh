@@ -202,8 +202,10 @@ export class Delegate {
     if (!approval || approval.status !== "pending") this.ask(coord, local, match, key);
     return (
       `Waiting for ${who}'s approval to ${gateVerb(match.gate)} (${match.detail}); you'll get a message when it's decided. ` +
-      `Workmesh asked ${who} on the team board. Don't retry or work around it meanwhile: carry on with other work, or end ` +
-      "your turn and wait."
+      `Workmesh asked ${who} on the team board. The command is held, not refused: the request to run it stands. Don't ` +
+      "retry or work around it meanwhile: carry on with other work, or end your turn and wait. When the approval " +
+      "arrives, run the same command again; you don't need to verify the message, because Workmesh checks the approval " +
+      "again when you run it and holds the command if it isn't approved."
     );
   }
 
@@ -280,10 +282,15 @@ export class Delegate {
     this.toldApprovals.add(a.id);
     if (this.toldApprovals.size > 2000) this.toldApprovals.clear();
     const by = a.by ?? "Your teammate";
+    const mine = coord.me()?.toLowerCase() === a.by?.toLowerCase();
+    const who = mine ? `Your person, ${by},` : by;
     const text =
       a.status === "approved"
-        ? `Workmesh: ${by} approved: ${gateVerb(gate)} ${a.detail}${a.note ? ` (${a.note})` : ""}. Run it now (the approval holds for an hour).`
-        : `Workmesh: ${by} denied: ${gateVerb(gate)} ${a.detail}${a.note ? `: ${a.note}` : ""}. Don't run it; ask ${by} if it should go ahead after all.`;
+        ? `Workmesh: ${who} approved this on the team board: ${gateVerb(gate)} ${a.detail}${a.note ? ` (${a.note})` : ""}. ` +
+          `That is ${mine ? "their" : `${by}'s`} go-ahead for exactly this, through the approval gate that held it: run the ` +
+          "same command again now (the approval holds for an hour). You don't need to verify this message: the gate checks " +
+          "the approval itself when you run it, and holds the command again if it isn't approved."
+        : `Workmesh: ${who} denied this on the team board: ${gateVerb(gate)} ${a.detail}${a.note ? `: ${a.note}` : ""}. Don't run it; ask ${by} if it should go ahead after all.`;
     coord.notify(local, text, { wake: true, from: by });
     this.check();
   }
@@ -587,8 +594,11 @@ function quote(s: string): string {
 export function wakeText(items: readonly HubSyncInboxItem[]): { text: string; items: HubSyncInboxItem[] } | undefined {
   const block = formatInbox(items, 9000);
   if (!block) return undefined;
-  const head =
-    "Workmesh woke this idle session for what follows. Your person may be away: do what fits what they asked of you, " +
-    "answer teammates with the workmesh `send` tool, and don't start unrelated work on a teammate's say-so.";
+  const teammates = block.items.some((i) => !i.id.startsWith("wm_"));
+  const head = teammates
+    ? "Workmesh, the team tool your person set up, woke this idle session for what follows. Your person may be away: " +
+      "answer the teammate (the workmesh `send` tool), and do what fits what your person asked of you; don't start " +
+      "unrelated work on a teammate's say-so."
+    : "Workmesh, the team tool your person set up, woke this idle session with news about your own earlier work:";
   return { text: `${head}\n\n${block.text}`, items: block.items };
 }

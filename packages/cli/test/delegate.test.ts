@@ -141,7 +141,9 @@ describe("approval gates (SPEC §31)", () => {
     x.sync({ gates, approvals: [{ ...pending, status: "approved", decidedAt: x.now(), by: "Sean" }] });
     const notice = x.coord.wakeFor(LOCAL);
     expect(notice).toHaveLength(1);
-    expect(notice[0]?.text).toBe("Workmesh: Sean approved: merge gh pr merge 212 --merge in b3-fun/b3os-beta. Run it now (the approval holds for an hour).");
+    expect(notice[0]?.text).toBe(
+      "Workmesh: Your person, Sean, approved this on the team board: merge gh pr merge 212 --merge in b3-fun/b3os-beta. That is their go-ahead for exactly this, through the approval gate that held it: run the same command again now (the approval holds for an hour). You don't need to verify this message: the gate checks the approval itself when you run it, and holds the command again if it isn't approved.",
+    );
     expect(x.d.gateRefusal(bash("gh pr merge 212 --merge"), "PreToolUse")).toBeUndefined();
     // A different PR is a different approval.
     expect(x.d.gateRefusal(bash("gh pr merge 213 --merge"), "PreToolUse")).toMatch(/^Waiting/);
@@ -160,7 +162,7 @@ describe("approval gates (SPEC §31)", () => {
     expect(x.d.gateRefusal(bash("npx wrangler deploy"), "PreToolUse")).toBe(
       "Workmesh: An denied this deploy (wrangler deploy in b3-fun/b3os-beta): deploy freeze until 5pm Don't run it or work around it. If it should go ahead after all, ask An (`workmesh send An \"…\"` or the workmesh `send` tool).",
     );
-    expect(x.coord.wakeFor(LOCAL)[0]?.text).toContain("An denied: deploy wrangler deploy in b3-fun/b3os-beta: deploy freeze until 5pm");
+    expect(x.coord.wakeFor(LOCAL)[0]?.text).toContain("An denied this on the team board: deploy wrangler deploy in b3-fun/b3os-beta: deploy freeze until 5pm");
   });
 
   it("fails open: an ask the hub doesn't take lets the action through, and says so", async () => {
@@ -200,7 +202,7 @@ describe("wake (SPEC §31)", () => {
       ],
     });
     const answer = await x.d.wait(LOCAL, 5000);
-    expect(answer.wake).toContain("Workmesh woke this idle session");
+    expect(answer.wake).toContain("woke this idle session for what follows");
     expect(answer.wake).toContain("Message from An: can you look at PR 212?");
     expect(answer.wake).not.toContain("FYI only");
     // Delivered once: acked to the hub, never handed over again.

@@ -383,10 +383,22 @@ enum AppSelfUpdate {
               fm.isExecutableFile(atPath: fresh.appendingPathComponent("Contents/MacOS/\(exe)").path)
         else { throw Failure("The downloaded app has no program in it. Workmesh.app is unchanged.") }
         log("Unpacked \(fresh.lastPathComponent) \(r.version) (\(ownId))")
-        if dev { log("  xattrs on the unpacked app: \(xattrNames(fresh.path))") }
-        // This download isn't quarantined, but a zip made from a downloaded app carries the flag inside it.
-        if getxattr(fresh.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0 {
-            log("The release's app is marked as downloaded from the internet: macOS asks once before opening it.")
+        if dev { log("  xattrs on the unpacked app: \(xattrNames(fresh.path)); quarantined items: \(quarantined(in: fresh).count)") }
+        // This download isn't quarantined, but a zip made from a downloaded app
+        // carries the flag inside it (ditto keeps it), and then macOS blocks the
+        // new app until someone clicks Open Anyway in System Settings. The zip
+        // matched the release's SHA-256, so clear the flag before the swap.
+        let flagged = quarantined(in: fresh).count
+        if flagged > 0 {
+            let failed = clearQuarantine(in: fresh)
+            if let first = failed.first {
+                throw Failure("""
+                The new app is marked as downloaded from the internet, and Workmesh couldn't clear that \
+                (\(first)), so it kept this app. macOS would block the new one until you allow it. \
+                Install it by hand: \(manualInstall)
+                """)
+            }
+            log("Cleared the quarantine flag the release's app carried (\(flagged) item\(flagged == 1 ? "" : "s")), so it opens without a Gatekeeper prompt")
         }
 
         // Keep the app that runs now, then swap the new one into its place.
@@ -405,8 +417,67 @@ enum AppSelfUpdate {
             throw Failure("Couldn't replace \(tilde(app.path)): \(error.localizedDescription). The previous app is in \(tilde(previous.path)).")
         }
         log("Replaced \(tilde(app.path)) with \(r.version)")
-        if dev { log("  xattrs on the installed app: \(xattrNames(app.path))") }
+        if dev { log("  xattrs on the installed app: \(xattrNames(app.path)); quarantined items: \(quarantined(in: app).count)") }
         return app
+    }
+
+    // MARK: Quarantine
+
+    static let quarantineName = "com.apple.quarantine"
+
+    /// What to do when the flag can't be cleared: the release zip by hand, or
+    /// Gatekeeper's own clicks (macOS 15 and later; right-click → Open is gone).
+    static let manualInstall = """
+    quit Workmesh, then in Terminal: curl -L -o /tmp/Workmesh.zip \
+    https://github.com/b3-fun/workmesh/releases/latest/download/Workmesh-menubar-macos.zip && \
+    ditto -x -k /tmp/Workmesh.zip ~/Applications && xattr -dr com.apple.quarantine ~/Applications/Workmesh.app && \
+    open ~/Applications/Workmesh.app. From a browser download instead: open the app once and click Done, then \
+    System Settings → Privacy & Security → under Security, “Workmesh” was blocked to protect your Mac → Open Anyway, \
+    enter your password, and click Open Anyway.
+    """
+
+    /// The app and everything in it, without following symbolic links.
+    private static func items(in root: URL) -> [String] {
+        var paths = [root.path]
+        if let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) {
+            for case let url as URL in e { paths.append(url.path) }
+        }
+        return paths
+    }
+
+    private static func hasQuarantine(_ path: String) -> Bool {
+        getxattr(path, quarantineName, nil, 0, 0, XATTR_NOFOLLOW) >= 0
+    }
+
+    /// The items in the app that carry the quarantine flag.
+    static func quarantined(in root: URL) -> [String] {
+        items(in: root).filter(hasQuarantine)
+    }
+
+    /// Removes the quarantine flag from the app and everything in it; returns
+    /// what it couldn't clear, with why. The app was unpacked by this process,
+    /// so its files are this user's. A read-only one refuses removexattr even
+    /// to its owner, so it gets owner write for the moment it takes.
+    static func clearQuarantine(in root: URL) -> [String] {
+        var failed: [String] = []
+        for path in quarantined(in: root) {
+            if removexattr(path, quarantineName, XATTR_NOFOLLOW) == 0 { continue }
+            var err = errno
+            var st = stat()
+            if err == EACCES, lstat(path, &st) == 0, st.st_mode & S_IFMT != S_IFLNK,
+               chmod(path, st.st_mode | S_IWUSR) == 0 {
+                err = removexattr(path, quarantineName, XATTR_NOFOLLOW) == 0 ? 0 : errno
+                chmod(path, st.st_mode & 0o7777)
+            }
+            if err == 0 || err == ENOATTR { continue }
+            let rel = path == root.path ? root.lastPathComponent : String(path.dropFirst(root.path.count + 1))
+            failed.append("\(rel): \(String(cString: strerror(err)))")
+        }
+        // Anything still flagged counts, whatever removexattr said.
+        if failed.isEmpty, let left = quarantined(in: root).first {
+            failed.append("\(left == root.path ? root.lastPathComponent : String(left.dropFirst(root.path.count + 1))): still marked")
+        }
+        return failed
     }
 
     private static func download(_ url: URL, to dest: URL) async throws {

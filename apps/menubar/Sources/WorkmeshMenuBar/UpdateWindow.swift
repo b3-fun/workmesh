@@ -68,7 +68,7 @@ struct UpdateView: View {
     static let height: CGFloat = 400
 
     /// What the window says about the downloaded app and Gatekeeper.
-    static let gatekeeperNote = "Downloaded from the GitHub release and checked against its SHA-256. The app's own downloads aren't quarantined, so the new version opens without a Gatekeeper prompt."
+    static let gatekeeperNote = "Downloaded from the GitHub release and checked against its SHA-256. Workmesh clears the quarantine flag itself, so the new version opens without a Gatekeeper prompt."
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

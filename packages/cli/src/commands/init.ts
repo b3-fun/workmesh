@@ -1,12 +1,13 @@
-import { loadConfigSafe } from "../lib/config";
-import type { Config } from "../lib/config";
-import { isDaemonUp, reloadHub, startDaemonInBackground } from "../lib/daemon-client";
+import { loadConfig, loadConfigSafe, saveConfig } from "../lib/config";
+import type { Config, HubConfig } from "../lib/config";
+import { getHubState, isDaemonUp, reloadHub, startDaemonInBackground } from "../lib/daemon-client";
 import { stopDaemon } from "../lib/daemon-control";
-import { serviceKind } from "../lib/service";
-import { bold, cyan, dim, green, yellow } from "../lib/ui";
+import { probeSystemdUser, serviceKind } from "../lib/service";
+import { bold, cyan, dim, formatDuration, green, sleep, yellow } from "../lib/ui";
+import type { HubState } from "../daemon/server";
 import { resolveHubUrl, runHubConnect, runHubShare } from "./hub";
 import type { HubConnectOptions } from "./hub";
-import { runServiceInstall } from "./service";
+import { LINGER_FIX, runServiceInstall } from "./service";
 import { installHooksOnly } from "./setup";
 
 /**
@@ -35,6 +36,8 @@ export interface InitOptions {
   wake?: boolean;
   /** Pair again even when the hub still accepts this machine's token. */
   repair?: boolean;
+  /** Linux: `--no-linger` leaves lingering off (the daemon then stops when you log out). */
+  linger?: boolean;
 }
 
 export type TokenCheck = "ok" | "rejected" | "unknown";
@@ -44,14 +47,106 @@ export interface InitDeps {
   claudeBin?: string | null;
   connect?: (url: string, opts: HubConnectOptions) => Promise<void>;
   setShare?: (level: string) => Promise<void>;
-  checkToken?: (hub: NonNullable<Config["hub"]>) => Promise<TokenCheck>;
+  checkToken?: (hub: Pick<HubConfig, "url" | "deviceToken">) => Promise<TokenCheck>;
   serviceInstall?: () => Promise<boolean>;
   /** Restart the daemon outside a service; true when one answers. */
   restartDaemon?: (config: Config) => Promise<boolean>;
+  /** The daemon's first contact with the hub after init (tests). */
+  firstContact?: (port: number) => Promise<Contact>;
+  /** Linux: whether logging out stops the daemon (systemd without lingering). Tests. */
+  stopsAtLogout?: () => boolean;
+}
+
+/** Linux with systemd and lingering off: the user's services, the daemon among them, stop at logout. */
+function stopsAtLogout(): boolean {
+  if (serviceKind() !== "systemd") return false;
+  const sd = probeSystemdUser();
+  return sd.systemctl && sd.linger === false;
+}
+
+/**
+ * B3's hosted hub answers at both names (bullpen.b3os.org was its first): a pairing made at one is the pairing at the
+ * other. Machines paired before the rename keep `bullpen` in their config.
+ */
+export const HUB_ALIASES: ReadonlyArray<readonly string[]> = [["https://workmesh.b3os.org", "https://bullpen.b3os.org"]];
+
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** The host's parent domain (`workmesh.b3os.org` → `b3os.org`), or the host when it has no parent with a dot. */
+function parentDomain(host: string): string {
+  const labels = host.split(".");
+  return labels.length > 2 ? labels.slice(1).join(".") : host;
+}
+
+/**
+ * Whether `url` is the hub this machine is already paired with under another address (An, 11-25: paired at
+ * bullpen.b3os.org with agentblip 0.6.0, then `workmesh init https://workmesh.b3os.org` paired a second device).
+ * Known aliases are the same hub. Otherwise the machine's token is shown to `url` only when both addresses sit under
+ * one parent domain (or both on this machine), and the hub accepting it is the proof: a device token is valid only
+ * at the hub that issued it. Elsewhere, or when `url` doesn't answer, it's a different hub.
+ */
+export async function sameHub(
+  paired: Pick<HubConfig, "url" | "deviceToken">,
+  url: string,
+  check: (hub: Pick<HubConfig, "url" | "deviceToken">) => Promise<TokenCheck> = checkHubToken,
+): Promise<boolean> {
+  if (paired.url === url) return true;
+  if (HUB_ALIASES.some((names) => names.includes(paired.url) && names.includes(url))) return true;
+  let a: URL;
+  let b: URL;
+  try {
+    a = new URL(paired.url);
+    b = new URL(url);
+  } catch {
+    return false;
+  }
+  const local = LOCAL_HOSTS.has(a.hostname) && LOCAL_HOSTS.has(b.hostname) && a.port === b.port;
+  const sibling = a.protocol === "https:" && b.protocol === "https:" && parentDomain(a.hostname) === parentDomain(b.hostname) && parentDomain(a.hostname).includes(".");
+  if (!local && !sibling) return false;
+  return (await check({ url, deviceToken: paired.deviceToken })) === "ok";
+}
+
+/** Points this machine's pairing at another address of the same hub (the token, sharing and dirs stay). */
+function rehomeHub(url: string): HubConfig | undefined {
+  try {
+    const config = loadConfig();
+    if (!config.hub) return undefined;
+    config.hub = { ...config.hub, url };
+    saveConfig(config);
+    return config.hub;
+  } catch {
+    return undefined; // an unreadable config: pairing again rewrites it
+  }
+}
+
+/** What the daemon heard back from the hub after init. */
+export type Contact =
+  | { kind: "ok"; at: number; sharedSessions: number }
+  | { kind: "failed"; error: string }
+  | { kind: "off" }
+  | { kind: "no-daemon" };
+
+/** Waits (≤ `timeoutMs`) for the daemon's forwarder to reach the hub once. */
+export async function waitForFirstContact(port: number, timeoutMs = 10_000): Promise<Contact> {
+  const deadline = Date.now() + timeoutMs;
+  let last: HubState | undefined;
+  while (Date.now() < deadline) {
+    try {
+      last = await getHubState(port);
+    } catch {
+      last = undefined;
+    }
+    if (last?.enabled && last.lastSuccessAt) return { kind: "ok", at: last.lastSuccessAt, sharedSessions: last.sharedSessions ?? 0 };
+    if (last?.enabled && last.halted) return { kind: "failed", error: last.lastError ?? "token rejected" };
+    await sleep(400);
+  }
+  if (!last) return (await isDaemonUp(port)) ? { kind: "off" } : { kind: "no-daemon" };
+  if (!last.enabled) return { kind: "off" };
+  return { kind: "failed", error: last.lastError ?? "no answer from the hub yet" };
 }
 
 /** Whether the hub still accepts this machine's device token (401 = no; anything else that answers = yes). */
-export async function checkHubToken(hub: NonNullable<Config["hub"]>, fetchImpl: typeof fetch = fetch): Promise<TokenCheck> {
+export async function checkHubToken(hub: Pick<HubConfig, "url" | "deviceToken">, fetchImpl: typeof fetch = fetch): Promise<TokenCheck> {
   try {
     const res = await fetchImpl(`${hub.url}/relay/team`, {
       headers: { authorization: `Bearer ${hub.deviceToken}`, accept: "application/json" },
@@ -93,7 +188,7 @@ export async function runInit(url: string, opts: InitOptions = {}, deps: InitDep
   const before = loadConfigSafe();
   let up = false;
   if (opts.service !== false && serviceKind() && !process.env.WORKMESH_NO_SERVICE) {
-    up = await (deps.serviceInstall ?? runServiceInstall)();
+    up = await (deps.serviceInstall ?? (() => runServiceInstall({ linger: opts.linger })))();
     // launchd reloads the job on install; systemd leaves a running unit as it is, so restart it onto this build.
     if (up && serviceKind() === "systemd") up = await (deps.restartDaemon ?? restartInBackground)(before);
   }
@@ -109,7 +204,16 @@ export async function runInit(url: string, opts: InitOptions = {}, deps: InitDep
   // 3. Pairing.
   console.log(bold("\n3. hub"));
   const config = loadConfigSafe();
-  const paired = config.hub?.url === hubUrl ? config.hub : undefined;
+  let paired = config.hub?.url === hubUrl ? config.hub : undefined;
+  if (!paired && config.hub && !opts.repair && (await sameHub(config.hub, hubUrl, deps.checkToken ?? checkHubToken))) {
+    // The same hub under another address: keep the pairing (a second one would leave a ghost device on the board).
+    const from = config.hub.url;
+    paired = rehomeHub(hubUrl);
+    if (paired) {
+      config.hub = paired;
+      console.log(`  ${hubUrl} is the hub this machine paired with at ${from}: ${green("pairing kept")}, forwarding to ${hubUrl} from now`);
+    }
+  }
   let token: TokenCheck | undefined;
   if (paired && !opts.repair) token = await (deps.checkToken ?? checkHubToken)(paired);
   if (paired && !opts.repair && token !== "rejected") {
@@ -131,6 +235,32 @@ export async function runInit(url: string, opts: InitOptions = {}, deps: InitDep
       ...(opts.machine ? { machine: opts.machine } : {}),
       ...(opts.share !== undefined ? { share: opts.share } : {}),
     });
+  }
+
+  // 4. The hub hears from this machine: what makes it show as online on the board.
+  console.log(bold("\n4. check"));
+  const contact = up ? await (deps.firstContact ?? waitForFirstContact)(loadConfigSafe().port) : ({ kind: "no-daemon" } as const);
+  switch (contact.kind) {
+    case "ok":
+      console.log(
+        `  hub: ${green("heard from this machine")}${dim(` (${formatDuration(Math.max(0, Date.now() - contact.at))} ago)`)}: ` +
+          (contact.sharedSessions > 0 ? `online with ${contact.sharedSessions} shared session(s)` : "online on the board, no agents running yet"),
+      );
+      break;
+    case "failed":
+      console.log(`  hub: ${yellow(`not reached yet: ${contact.error}`)}`);
+      console.log(dim("  `workmesh doctor` says why and what to run"));
+      break;
+    case "off":
+      console.log(`  hub: ${yellow("the daemon isn't forwarding")}: run ${bold("workmesh restart")}, then ${bold("workmesh doctor")}`);
+      break;
+    case "no-daemon":
+      console.log(`  hub: ${yellow("no daemon is running, so this machine shows as offline")}: run ${bold("workmesh restart")}, then ${bold("workmesh doctor")}`);
+      break;
+  }
+
+  if ((deps.stopsAtLogout ?? stopsAtLogout)()) {
+    console.log(`  ${yellow("once you log out, systemd stops the daemon and the board shows this machine offline")}: ${bold(LINGER_FIX)}`);
   }
 
   console.log("");

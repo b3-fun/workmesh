@@ -245,6 +245,42 @@ describe("heartbeats right after a start (SPEC §24)", () => {
   });
 });
 
+describe("a paired machine with no agents (0.11.1 onboarding)", () => {
+  it("heartbeats every 30 s with nothing to share, so the board shows it online with no agents", async () => {
+    fs.rmSync(statePath, { force: true });
+    const clock = { now: NOW };
+    const d = daemon(clock);
+    d.fwd.restoreState();
+    // Ten minutes of ticks, one a second: a heartbeat every 30 s, each with no sessions and no events.
+    for (let t = 0; t < 600; t++) {
+      await d.fwd.tick();
+      clock.now += 1000;
+    }
+    expect(d.bodies.length).toBe(20);
+    expect(d.bodies.every((b) => b.sessions.length === 0 && b.events.length === 0 && b.client === "workmesh/0.10.0")).toBe(true);
+    // Presence only: held back to full:false for the first two minutes, full (an empty set is the truth) after.
+    expect(d.bodies.slice(0, 4).every((b) => !b.full)).toBe(true);
+    expect(d.bodies.slice(5).every((b) => b.full)).toBe(true);
+  });
+
+  it("remembers when the hub last heard from it, across a restart (doctor reads it with the daemon down)", async () => {
+    fs.rmSync(statePath, { force: true });
+    const clock = { now: NOW };
+    const d = daemon(clock);
+    d.fwd.restoreState();
+    await d.fwd.tick();
+    await d.fwd.stop();
+    expect((readStateFile(statePath) as { lastContactAt?: number }).lastContactAt).toBe(NOW);
+    // The next daemon can't reach the hub: the saved time stays what it was.
+    clock.now += 60_000;
+    const next = daemon(clock, { replies: [{ status: 503 }] });
+    next.fwd.restoreState();
+    await next.fwd.tick();
+    await next.fwd.stop();
+    expect((readStateFile(statePath) as { lastContactAt?: number }).lastContactAt).toBe(NOW);
+  });
+});
+
 describe("liveness fields (SPEC §24)", () => {
   it("alive from the process check; quietSince once a working session has had no event for a minute", async () => {
     fs.rmSync(statePath, { force: true });

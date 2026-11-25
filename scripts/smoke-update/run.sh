@@ -36,13 +36,14 @@ step() { printf '\n== %s\n' "$1" | tee -a "$out/summary.txt"; }
 tarballs="$H/tarballs"
 mkdir -p "$tarballs" "$H/bin" "$H/.claude" "$H/.codex" "$H/.config/workmesh"
 cp "$cli/package.json" "$H/package.json.orig"
+trap 'cp "$H/package.json.orig" "$cli/package.json"' EXIT
 for v in 0.12.0 0.12.1 0.12.2 0.12.3; do
   node -e 'const f=process.argv[1],p=require(f);p.version=process.argv[2];require("fs").writeFileSync(f,JSON.stringify(p,null,2)+"\n")' "$cli/package.json" "$v"
   (cd "$cli" && npm run build >/dev/null 2>&1) || { echo "build $v failed" >&2; exit 1; }
   if [ "$v" != 0.12.0 ]; then
     # Builds of one checkout give sessions the same tools, so the stale-session note would rightly stay quiet: mark
     # each later release's tool fingerprint as different, the way a release that adds a tool or hook would be.
-    node -e 'const f=process.argv[1],fs=require("fs"),s=fs.readFileSync(f,"utf8");if(!s.includes(""Stop:wake""))process.exit(1);fs.writeFileSync(f,s.replace(""Stop:wake"",""Stop:wake", "smoke:"+process.argv[2]+"""))' "$cli/dist/index.js" "$v" || { echo "surface marker $v failed" >&2; exit 1; }
+    node -e 'const f=process.argv[1],fs=require("fs"),s=fs.readFileSync(f,"utf8"),w=JSON.stringify("Stop:wake");if(!s.includes(w))process.exit(1);fs.writeFileSync(f,s.replace(w,w+", "+JSON.stringify("smoke:"+process.argv[2])))' "$cli/dist/index.js" "$v" || { echo "surface marker $v failed" >&2; exit 1; }
   fi
   if [ "$v" = 0.12.2 ]; then
     # A bad release: the daemon exits at once. The CLI itself works, so only its checks can catch it.
@@ -65,7 +66,7 @@ cleanup() {
   kill "$reg_pid" "$hub_pid" 2>/dev/null
   launchctl bootout "gui/$uid/$LABEL" 2>/dev/null
 }
-trap cleanup EXIT
+trap 'cleanup; cp "$H/package.json.orig" "$cli/package.json"' EXIT
 latest() { curl -s -X POST -H 'content-type: application/json' -d "{\"version\":\"$1\"}" "http://127.0.0.1:$REG_PORT/_latest" >/dev/null; curl -s -X POST -H 'content-type: application/json' -d "{\"version\":\"$1\"}" "$hub/api/latest" >/dev/null; }
 
 ln -s "$node_bin" "$H/bin/node"
@@ -115,7 +116,9 @@ for _ in $(seq 1 90); do update_status | grep -q '"source":"hub"' && break; slee
 update_status > "$out/04-get-update.json"
 grep -q '"latest":"0.12.1"' "$out/04-get-update.json" && grep -q '"available":true' "$out/04-get-update.json" && ok "GET /update: 0.12.1 available" || no "GET /update ($out/04-get-update.json)"
 grep -q '"source":"hub"' "$out/04-get-update.json" && ok "…read from the hub's latestClient" || no "source not the hub ($out/04-get-update.json)"
-n=$(grep -c "GET /@b3os" "$out/registry.log"); [ "$n" -le 3 ] && ok "the daemon asked npm at most once ($n registry reads in all, the CLI's included)" || no "registry reads: $n"
+# Since 0.12.1 came out nothing but the daemon has asked the registry (the CLI's reads came before).
+n=$(sed -n '/latest -> 0.12.1/,$p' "$out/registry.log" | grep -c "GET /@b3os")
+[ "$n" -le 1 ] && ok "the daemon asked npm at most once ($n read)" || no "the daemon's registry reads: $n"
 grep -q '"run":\[' "$out/04-get-update.json" && ok "GET /update carries the argv the menu bar runs" || no "run argv"
 run workmesh status > "$out/04-status.log" 2>&1
 grep -q "0.12.1 available: \`workmesh update\`" "$out/04-status.log" && ok "status: 0.12.1 available: \`workmesh update\`" || no "status notice ($out/04-status.log)"

@@ -238,7 +238,6 @@ this". Wire: SPEC §26.
   hub names each agent on its comments (`createAsUser`, the person's avatar) and the agent session stays Workmesh's.
   PRs are never attached to the issue by the hub: an attached PR closes the issue when it merges, and Linear's GitHub
   integration already links PRs that name the issue.
-
 - 11-25 v2 relay: everything new fails open and stops nothing unless its person opted in: gates are off until a
   person sets them for their own agents and need a fresh v2 sync; a handoff from someone else runs only after its
   recipient accepts it (own handoffs by the `auto-self` default), in a new worktree so nobody's working tree is

@@ -102,6 +102,8 @@ describe("daemon GET /team", () => {
       enabled: true,
       hubUrl: "https://workmesh.b3os.org",
       boardUrl: "https://workmesh.b3os.org",
+      hubName: "B3",
+      deviceId: "dev_X",
       share: "conversation",
       connected: true,
       halted: false,

@@ -174,6 +174,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         enabled: true,
         hubUrl: hub.url,
         boardUrl: hub.url,
+        hubName: hub.project.name,
+        deviceId: hub.deviceId,
         share: st.share,
         connected: !st.halted && st.lastSendOk === true,
         halted: st.halted || view.halted,

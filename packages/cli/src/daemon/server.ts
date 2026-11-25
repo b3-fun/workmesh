@@ -25,6 +25,14 @@ export type TeamState =
       hubUrl: string;
       /** Where "Open board" goes. */
       boardUrl: string;
+      /** The project's name ("B3"), for "Connected to B3". */
+      hubName: string;
+      /**
+       * This machine's device id: a needsMe item whose session starts with
+       * `<deviceId>:` is one of this machine's sessions (the local list is
+       * authoritative for those).
+       */
+      deviceId: string;
       share: HubShareLevel;
       /** The last send to the hub succeeded. */
       connected: boolean;

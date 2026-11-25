@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { claudeMirrorItems, claudeMirrorLine, claudeModelItem, codexMirrorItems, codexMirrorLine } from "./mirror";
+import type { MirrorItem } from "./mirror";
 
 /**
  * Transcript tailing for conversation sharing (docs/SPEC.md §9). The hub
@@ -8,10 +10,11 @@ import path from "node:path";
  * complete lines appended since its saved byte offset, at most
  * MAX_READ_BYTES per read, asynchronously (never on the hook response path).
  *
- * What a line may yield is fixed here: the agent's own text blocks and the
- * turn-duration record. Thinking, tool inputs, tool results, user lines,
- * subagent (sidechain) lines and API request copies are never parsed into
- * anything.
+ * What a line may yield is fixed here: the agent's own text blocks, the
+ * turn-duration record, and (v0.11, mirror.ts) the session's title, mode and
+ * model, the agent tool's task notices, compactions and background-task
+ * launches. Thinking, tool inputs and outputs, the person's lines, subagent
+ * (sidechain) lines and API request copies are never parsed into text.
  */
 
 export const MAX_READ_BYTES = 2 * 1024 * 1024;
@@ -20,8 +23,16 @@ export type TranscriptFormat = "claude-code" | "codex";
 
 export type TranscriptItem =
   | { kind: "message"; id: string; ts?: number; text: string }
-  | { kind: "turnDuration"; ts?: number; durationMs: number }
-  | AgentMessageItem;
+  | {
+      kind: "turnDuration";
+      ts?: number;
+      durationMs: number;
+      /** v0.11 (SPEC §26): background agents and workflows the turn left running (Claude Code). */
+      pendingAgents?: number;
+      pendingWorkflows?: number;
+    }
+  | AgentMessageItem
+  | MirrorItem;
 
 /**
  * v0.6: a message between agents (SPEC §15). `in` = another agent wrote to this
@@ -130,7 +141,8 @@ function claudePeerMessage(e: Record<string, unknown>, ts: number | undefined): 
 export function parseClaudeLine(line: string): TranscriptItem[] {
   // Cheap prefilter: tool results, attachments and API request copies dominate.
   const peer = line.includes('"kind":"peer"');
-  if (!peer && !line.includes('"type":"assistant"') && !line.includes('"turn_duration"')) return [];
+  const mirror = claudeMirrorLine(line);
+  if (!peer && !mirror && !line.includes('"type":"assistant"') && !line.includes('"turn_duration"')) return [];
   let e: Record<string, unknown>;
   try {
     e = JSON.parse(line) as Record<string, unknown>;
@@ -142,14 +154,26 @@ export function parseClaudeLine(line: string): TranscriptItem[] {
   if (peer && e.type === "user") return claudePeerMessage(e, ts);
   if (e.type === "system" && e.subtype === "turn_duration") {
     const ms = e.durationMs;
-    return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? [{ kind: "turnDuration", ts, durationMs: Math.round(ms) }] : [];
+    const count = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? Math.min(v, 999) : undefined);
+    return typeof ms === "number" && Number.isFinite(ms) && ms >= 0
+      ? [
+          {
+            kind: "turnDuration",
+            ts,
+            durationMs: Math.round(ms),
+            pendingAgents: count(e.pendingBackgroundAgentCount),
+            pendingWorkflows: count(e.pendingWorkflowCount),
+          },
+        ]
+      : [];
   }
+  if (mirror && e.type !== "assistant") return claudeMirrorItems(e, ts);
   if (e.type !== "assistant") return [];
   if (e.isApiErrorMessage === true || e.isMeta === true) return [];
   const message = e.message as { content?: unknown; model?: unknown; id?: unknown } | undefined;
   if (!message || message.model === "<synthetic>" || !Array.isArray(message.content)) return [];
   const base = typeof e.uuid === "string" ? e.uuid : typeof message.id === "string" ? message.id : `${ts ?? ""}`;
-  const out: TranscriptItem[] = [];
+  const out: TranscriptItem[] = [...claudeModelItem(message, ts)];
   (message.content as ClaudeBlock[]).forEach((b, i) => {
     if (!b || b.type !== "text" || typeof b.text !== "string") return; // never thinking or tool_use
     const text = b.text.trim();
@@ -193,16 +217,22 @@ function codexAgentSend(p: Record<string, unknown>, ts: number | undefined): Age
 
 export function parseCodexLine(line: string): TranscriptItem[] {
   const call = line.includes('"function_call"');
-  if (!call && !line.includes('"assistant"') && !line.includes('"task_complete"')) return [];
+  const mirror = codexMirrorLine(line);
+  if (!call && !mirror && !line.includes('"assistant"') && !line.includes('"task_complete"')) return [];
   let e: Record<string, unknown>;
   try {
     e = JSON.parse(line) as Record<string, unknown>;
   } catch {
     return [];
   }
-  const p = e?.payload as Record<string, unknown> | undefined;
-  if (!p || typeof p !== "object") return [];
+  if (!e || typeof e !== "object") return [];
   const ts = parseTs(e.timestamp);
+  if (mirror) {
+    const items = codexMirrorItems(e, ts);
+    if (items.length) return items;
+  }
+  const p = e.payload as Record<string, unknown> | undefined;
+  if (!p || typeof p !== "object") return [];
   if (call && e.type === "response_item" && p.type === "function_call") return codexAgentSend(p, ts);
   if (e.type === "event_msg" && p.type === "task_complete") {
     const ms = p.duration_ms;
@@ -356,4 +386,40 @@ export async function findCodexRollout(sessionsDir: string, id: string, maxDays 
     }
   }
   return undefined;
+}
+
+/**
+ * v0.11 (SPEC §26): the session's latest mode and model from the last `bytes` of its transcript, read once when a
+ * tail starts. Both are metadata (states, not text), so reading them from before the session was shared is within
+ * §8; titles and every text item wait for the tail.
+ */
+export async function readMirrorSeed(
+  file: string,
+  format: TranscriptFormat,
+  bytes = 64 * 1024,
+): Promise<{ mode?: string; model?: string }> {
+  let fh: fs.promises.FileHandle | undefined;
+  try {
+    fh = await fs.promises.open(file, "r");
+    const st = await fh.stat();
+    const start = Math.max(0, st.size - bytes);
+    const buf = Buffer.alloc(st.size - start);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+    const lines = buf.subarray(0, bytesRead).toString("utf8").split("\n");
+    if (start > 0) lines.shift();
+    const out: { mode?: string; model?: string } = {};
+    for (let i = lines.length - 1; i >= 0 && (!out.mode || !out.model); i--) {
+      const line = lines[i]!;
+      if (!line) continue;
+      for (const item of parseLine(format, line)) {
+        if (item.kind === "mode") out.mode ??= item.mode;
+        else if (item.kind === "model") out.model ??= item.model;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  } finally {
+    await fh?.close().catch(() => {});
+  }
 }

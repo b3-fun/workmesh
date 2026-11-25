@@ -104,6 +104,19 @@ export const sessionEventDetailSchema = z.object({
   /** Stop: background work still running when the turn ended (Claude Code `background_tasks`). */
   backgroundShells: z.number().int().nonnegative().max(999).optional(),
   backgroundAgents: z.number().int().nonnegative().max(999).optional(),
+  /**
+   * v0.11 (SPEC §26): Stop: the running background tasks by id and kind (never their descriptions or commands), so
+   * the hub forwarder can count them and end each one when its notice arrives.
+   */
+  backgroundTasks: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(64),
+        kind: z.enum(["shells", "monitors", "agents", "workflows", "other"]),
+      }),
+    )
+    .max(100)
+    .optional(),
   /** An outbound agent-to-agent message (Claude Code SendMessage): its recipient and text. */
   messageTo: z.string().max(DETAIL_LIMITS.messagePeer).optional(),
   messageText: z.string().max(DETAIL_LIMITS.messageText).optional(),

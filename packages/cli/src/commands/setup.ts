@@ -17,6 +17,7 @@ import { isDaemonUp } from "../lib/daemon-client";
 import { versionManagedNode } from "../lib/hook-files";
 import { claudeConfigDir, codexHome, configPath } from "../lib/paths";
 import { resolveDir } from "./hub";
+import { runServiceInstall } from "./service";
 import {
   ask,
   askSecret,
@@ -134,6 +135,8 @@ export interface SetupOptions {
   codex?: boolean;
   /** Register the `workmesh` MCP server with Claude Code and Codex (default true; `--no-mcp` skips it). */
   mcp?: boolean;
+  /** Run the daemon under launchd / systemd (default true; `--no-service` skips it). SPEC §24. */
+  service?: boolean;
 }
 
 /** `--claude-dir`, else $CLAUDE_CONFIG_DIR, else ~/.claude. */
@@ -263,8 +266,8 @@ export function installHooksOnly(
   if (opts.claudeDir) {
     console.log(
       dim(
-        "  the daemon reads sessions and workflows from $CLAUDE_CONFIG_DIR (a daemon a hook starts inherits it); " +
-          "for a daemon started elsewhere set adapters.claudeCode.configDir in config.json",
+        "  the daemon reads sessions and workflows from $CLAUDE_CONFIG_DIR (the service setup installs, and a daemon a " +
+          "hook starts, get it); for a daemon started elsewhere set adapters.claudeCode.configDir in config.json",
       ),
     );
   }
@@ -283,6 +286,9 @@ export function installHooksOnly(
 export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   if (opts.hooksOnly) {
     installHooksOnly(opts);
+    // The service carries CLAUDE_CONFIG_DIR into the daemon's environment: make it the profile just hooked.
+    if (opts.claudeDir) process.env.CLAUDE_CONFIG_DIR = resolveClaudeDir(opts.claudeDir);
+    if (opts.service !== false) await runServiceInstall();
     return;
   }
   console.log(bold("workmesh setup"));
@@ -421,6 +427,13 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   const warning = nodePathWarning();
   if (warning) console.log(yellow(`note: ${warning}`));
   console.log(sharingSummary(config));
+  // The service (re)starts the daemon, so it runs with the config just saved.
+  if (opts.service !== false && (await runServiceInstall())) {
+    console.log("\nnext steps:");
+    console.log(`  ${bold("workmesh status")}           see live agent sessions`);
+    console.log(`  ${bold("workmesh doctor")}           verify everything`);
+    return;
+  }
   if (await isDaemonUp(config.port)) {
     // The daemon captures its config (sink, token, granularity) at startup —
     // without a restart the changes above silently never apply.

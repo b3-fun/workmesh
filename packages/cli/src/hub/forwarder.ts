@@ -35,6 +35,7 @@ import type {
 } from "@workmesh/protocol";
 import type { z } from "zod";
 import { GitResolver } from "./git";
+import { readStateFile, writeStateFile } from "./persist";
 import { scrubText } from "./redact";
 import {
   MAX_READ_BYTES,
@@ -136,6 +137,19 @@ export interface HubForwarderOptions {
    * poller says so, so an older hub never shows each subagent as a session.
    */
   structured?: boolean;
+  // v0.10 liveness and persistence (SPEC §24)
+  /** The relay's name and version, sent on every ingest: `workmesh/0.10.0`. */
+  client?: string;
+  /** Where the forwarder keeps its state across restarts (`~/.local/state/workmesh/hub-forward.json`). Off when unset. */
+  statePath?: string;
+  /** The agent's process is running (true), or not knowable (undefined), for a store session. Sent as `alive`. */
+  aliveOf?: (s: AgentSession) => boolean | undefined;
+  /** After a start, no empty `full` heartbeat for this long until something is shared. Default 2 min. */
+  startupGraceMs?: number;
+  /** A saved session whose agent process is gone (Claude Code's session files): ended at once on restore. */
+  isGone?: (s: AgentSession) => boolean;
+  /** Puts restored sessions back in the daemon's store (`SessionStore.restore`). */
+  seedSessions?: (sessions: AgentSession[]) => void;
 }
 
 export interface HubForwarderStatus {
@@ -169,6 +183,8 @@ export interface HubForwarderStatus {
   structured?: boolean;
   /** v0.6: subagent sessions tracked (live or ending). */
   subagentSessions?: number;
+  /** v0.10: what the start read back from the state file (SPEC §24). */
+  restored?: { sessions: number; events: number; ended: number };
 }
 
 /** A shared place a path resolved to. */
@@ -235,6 +251,8 @@ interface Tracked {
   usageDirty?: boolean;
   usageNextAt?: number;
   usagePending?: boolean;
+  /** v0.10: restored from the state file with its process gone: its final upsert says `alive: false`. */
+  gone?: boolean;
 }
 
 /** A Claude Code subagent, tracked from its hooks and transcript (SPEC §15). */
@@ -280,6 +298,15 @@ const MAX_WORKFLOW_TRANSCRIPTS = 64;
 const AGENT_ID_SHAPE = /^a[0-9a-f]{8,32}$/;
 /** Transcript message ids remembered per session (dedupe across re-reads). */
 const MAX_SENT_MESSAGE_IDS = 2000;
+/** v0.10: a working session with no hook event this long sends `quietSince` (the board says "quiet" after 5 min). */
+const QUIET_REPORT_MS = 60_000;
+/** v0.10: a state file older than this is ignored at start (its sessions are long gone). */
+const STATE_MAX_AGE_MS = 24 * 3600_000;
+/** v0.10: unsent events kept in the state file, the newest. */
+const STATE_MAX_EVENTS = 1000;
+const STATE_VERSION = 1;
+/** v0.10: the state file is written at most this often (and on stop). */
+const PERSIST_EVERY_MS = 1000;
 
 /**
  * Validates a record against a strict hub schema, dropping optional fields
@@ -384,6 +411,21 @@ export class HubForwarder {
   private accepted = 0;
   private github: string | undefined;
   private structured: boolean;
+  // v0.10 (SPEC §24)
+  private readonly client: string | undefined;
+  private statePath: string | undefined;
+  private readonly aliveOf: ((s: AgentSession) => boolean | undefined) | undefined;
+  private readonly isGone: ((s: AgentSession) => boolean) | undefined;
+  private readonly seedSessions: ((sessions: AgentSession[]) => void) | undefined;
+  private readonly startedAt: number;
+  private readonly startupGraceMs: number;
+  /** Last heartbeat-driven send (full, or held back to `full: false` right after a start). */
+  private lastBeatAt = 0;
+  /** A session has been in a sent shared set since this forwarder started. */
+  private sharedSinceStart = false;
+  private lastPersistAt = 0;
+  private lastPersisted: string | undefined;
+  private restoredCounts: { sessions: number; events: number; ended: number } | undefined;
   /** A Slack workspace host seen in a permalink (`b3.slack.com`), to link messages read by id. */
   private slackHost: string | undefined;
 
@@ -429,6 +471,13 @@ export class HubForwarder {
     this.maxBufferBytes = opts.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
     this.github = opts.github && HUB_GITHUB_LOGIN_RE.test(opts.github) ? opts.github : undefined;
     this.structured = opts.structured ?? false;
+    this.client = opts.client;
+    this.statePath = opts.statePath;
+    this.aliveOf = opts.aliveOf;
+    this.isGone = opts.isGone;
+    this.seedSessions = opts.seedSessions;
+    this.startedAt = this.now();
+    this.startupGraceMs = opts.startupGraceMs ?? 120_000;
   }
 
   /** v0.6: the person's GitHub login changed (read from `gh` after start). */
@@ -448,6 +497,8 @@ export class HubForwarder {
 
   start(): void {
     if (this.timer || this.halted) return;
+    // The saved state comes back before the first send (SPEC §24): no heartbeat goes out without it.
+    if (!this.restoredCounts) this.restoreState();
     this.timer = setInterval(() => {
       void this.tick();
     }, this.batchIntervalMs);
@@ -471,6 +522,8 @@ export class HubForwarder {
       })(),
       new Promise<void>((resolve) => setTimeout(resolve, flushTimeoutMs).unref?.()),
     ]);
+    // Whatever didn't make it out (the hub unreachable, the flush timed out) waits in the state file.
+    this.persist(true);
   }
 
   status(): HubForwarderStatus {
@@ -495,6 +548,7 @@ export class HubForwarder {
       conversationHeldUntil: this.conversationHeldUntil > this.now() ? this.conversationHeldUntil : undefined,
       structured: this.structured,
       subagentSessions: [...this.sessions.values()].filter((t) => t.sub && t.sub.ended === undefined).length,
+      restored: this.restoredCounts,
     };
   }
 
@@ -1269,9 +1323,23 @@ export class HubForwarder {
         updatedAt: ended ?? s.updatedAt,
         stateSince: ended ?? s.stateSince,
         ...this.structureFields(s, t, ended !== undefined),
+        ...this.livenessFields(s, t, ended !== undefined),
       },
       SESSION_REQUIRED,
     );
+  }
+
+  /**
+   * v0.10 (SPEC §24): `alive` from the daemon's process check (a session
+   * ended because its process is gone says `false`), and `quietSince` for a
+   * working session with no hook event for a minute (a long tool call, or a
+   * stuck agent). Both stable between events, so they don't churn upserts.
+   */
+  private livenessFields(s: AgentSession, t: Tracked, ended: boolean): Partial<HubSessionUpsert> {
+    if (ended) return t.gone ? { alive: false } : {};
+    const alive = this.aliveOf?.(s);
+    const quiet = s.state === "working" && this.now() - s.updatedAt >= QUIET_REPORT_MS;
+    return { alive: alive === true ? true : undefined, quietSince: quiet ? s.updatedAt : undefined };
   }
 
   /** v0.6 upsert fields of a store session: role, parent, agent type, title, model, tokens, status line. */
@@ -1521,10 +1589,12 @@ export class HubForwarder {
   /** One send cycle; `force` sends even when nothing changed (shutdown flush). */
   tick(force = false): Promise<void> {
     if (this.inFlight) return this.inFlight;
-    const run = this.tickUnsafe(force).catch((err: unknown) => {
-      this.lastError = err instanceof Error ? err.message : String(err);
-      this.log(`hub: send cycle failed: ${this.lastError}`);
-    });
+    const run = this.tickUnsafe(force)
+      .catch((err: unknown) => {
+        this.lastError = err instanceof Error ? err.message : String(err);
+        this.log(`hub: send cycle failed: ${this.lastError}`);
+      })
+      .finally(() => this.persist());
     this.inFlight = run.finally(() => {
       this.inFlight = undefined;
     });
@@ -1541,16 +1611,22 @@ export class HubForwarder {
     await this.refreshAgents(now);
     this.reconcile(now);
     for (let round = 0; round < MAX_REQUESTS_PER_TICK; round++) {
-      const full = round === 0 && now - this.lastFullAt >= this.heartbeatMs;
+      // A heartbeat every heartbeatMs, so the hub always hears from a running relay (SPEC §24: presence).
+      const beat = round === 0 && now - Math.max(this.lastFullAt, this.lastBeatAt) >= this.heartbeatMs;
+      let full = beat;
       const changed: Array<[Tracked, string]> = [];
+      let open = 0;
       for (const t of this.sessions.values()) {
         if (!t.shared || !t.current) continue;
         if (t.sub && !this.structured) continue; // an older hub would show each subagent as a session
+        if (t.current.state !== "ended") open++;
         const json = JSON.stringify(t.current);
         if (json !== t.sentJson || (full && t.current.state !== "ended")) changed.push([t, json]);
       }
-      if (!full && !(force && round === 0) && changed.length === 0 && this.queue.length === 0) return;
-      const more = await this.sendOnce(now, full, changed);
+      // Never an empty full heartbeat right after a start (SPEC §24): this relay may not know yet what it shares.
+      if (full && open === 0 && !this.sharedSinceStart && now - this.startedAt < this.startupGraceMs) full = false;
+      if (!beat && !(force && round === 0) && changed.length === 0 && this.queue.length === 0) return;
+      const more = await this.sendOnce(now, full, changed, beat);
       if (!more || this.queue.length === 0 || this.halted) return;
     }
   }
@@ -1580,7 +1656,12 @@ export class HubForwarder {
   }
 
   /** One ingest request. True when it succeeded (the caller may send another). */
-  private async sendOnce(now: number, fullWanted: boolean, changed: Array<[Tracked, string]>): Promise<boolean> {
+  private async sendOnce(
+    now: number,
+    fullWanted: boolean,
+    changed: Array<[Tracked, string]>,
+    beat = fullWanted,
+  ): Promise<boolean> {
     changed.sort((a, b) => (b[0].current?.updatedAt ?? 0) - (a[0].current?.updatedAt ?? 0));
     const limit = HUB_MAX_BODY_BYTES - BODY_MARGIN_BYTES;
     // Sessions first: they are small, and a full heartbeat must list them all.
@@ -1613,6 +1694,7 @@ export class HubForwarder {
       share: this.share,
       // v0.6: the avatar rides on heartbeats.
       ...(full && this.github ? { person: { github: this.github } } : {}),
+      ...(this.client ? { client: this.client } : {}),
       full,
       sessions: batchSessions.map(([t]) => t.current),
       events: ordered,
@@ -1655,9 +1737,13 @@ export class HubForwarder {
         if (t.current?.state === "ended") {
           if (t.sub) this.dropSub(t);
           else this.sessions.delete(t.key);
+        } else {
+          this.sharedSinceStart = true;
         }
       }
       if (full) this.lastFullAt = now;
+      // A heartbeat held back to full:false still counts: the next one is due a heartbeat later.
+      else if (beat && !fullWanted) this.lastBeatAt = now;
       this.accepted += accepted;
       this.failures = 0;
       this.maxEvents = Math.min(HUB_MAX_EVENTS_PER_REQUEST, this.maxEvents * 2);
@@ -1736,4 +1822,223 @@ export class HubForwarder {
       this.log(`hub: ${message} (attempt ${this.failures}; ${this.queue.length} events queued)`);
     }
   }
+
+  // --- persistence (SPEC §24) ------------------------------------------------------
+
+  /**
+   * What a restart needs to carry on where this forwarder stopped: the shared
+   * sessions (their last store state, targets, repos, labels, issues,
+   * conversation start and transcript offsets) and the newest unsent events.
+   * Unshared sessions are not kept: they send nothing, and are learned again.
+   */
+  exportState(): PersistedForward {
+    const sessions: PersistedTracked[] = [];
+    for (const t of this.sessions.values()) {
+      if (!t.shared && !t.sub) continue;
+      if (!t.sub && !t.last) continue;
+      sessions.push({
+        key: t.key,
+        cwd: t.cwd,
+        shared: t.shared,
+        roots: [...t.roots.values()],
+        lastTarget: t.lastTarget,
+        recent: t.recent,
+        issues: t.issues,
+        label: t.label,
+        last: t.last,
+        current: t.current,
+        sentJson: t.sentJson,
+        convoSince: t.convoSince,
+        tail: t.tail ? { ...t.tail } : undefined,
+        promptAt: t.promptAt,
+        rollout: t.rollout,
+        workflowDir: t.workflowDir,
+        bg: t.bg,
+        sub: t.sub ? { ...t.sub } : undefined,
+        subs: t.subs ? [...t.subs] : undefined,
+        usage: t.usage,
+        sentLinks: t.sentLinks ? [...t.sentLinks].slice(-200) : undefined,
+        sentMessages: t.sentMessages ? [...t.sentMessages].slice(-500) : undefined,
+      });
+    }
+    return {
+      v: STATE_VERSION,
+      savedAt: this.now(),
+      url: this.url,
+      sessions,
+      queue: this.queue.slice(-STATE_MAX_EVENTS),
+    };
+  }
+
+  /**
+   * Reads back a saved state (from `statePath`, or one handed over by the
+   * forwarder this one replaces) before the first send. Sessions whose
+   * process is gone (`isGone`) are kept just long enough to send their end,
+   * with `alive: false`; the rest are returned for the daemon to put back in
+   * its store, so they stay live until their own hooks or the store's sweep
+   * say otherwise. Anything malformed is skipped, never thrown.
+   */
+  restoreState(opts: { state?: unknown } = {}): AgentSession[] {
+    const raw = opts.state ?? (this.statePath ? readStateFile(this.statePath) : undefined);
+    const counts = { sessions: 0, events: 0, ended: 0 };
+    const seed: AgentSession[] = [];
+    const state = asPersisted(raw);
+    if (!state || state.url !== this.url || this.now() - state.savedAt > STATE_MAX_AGE_MS) {
+      this.restoredCounts = counts;
+      return seed;
+    }
+    const gone = new Set<string>();
+    for (const p of state.sessions) {
+      try {
+        if (this.sessions.has(p.key)) continue;
+        const t: Tracked = {
+          key: p.key,
+          shared: p.shared === true,
+          roots: new Map((p.roots ?? []).filter(isTarget).map((r) => [r.root, r])),
+          issues: (p.issues ?? []).filter((i): i is string => typeof i === "string").slice(-20),
+        };
+        if (typeof p.cwd === "string") this.setCwd(t, p.cwd);
+        if (isTarget(p.lastTarget)) t.lastTarget = p.lastTarget;
+        if (Array.isArray(p.recent)) t.recent = p.recent.filter((r): r is string => typeof r === "string").slice(0, HUB_MAX_REPOS);
+        if (p.label && typeof p.label.raw === "string") t.label = { raw: p.label.raw, hub: typeof p.label.hub === "string" ? p.label.hub : undefined };
+        if (p.current) {
+          const current = hubSessionUpsertSchema.safeParse(p.current);
+          if (current.success) t.current = current.data;
+        }
+        if (typeof p.sentJson === "string") t.sentJson = p.sentJson;
+        if (typeof p.convoSince === "number") t.convoSince = p.convoSince;
+        if (typeof p.promptAt === "number") t.promptAt = p.promptAt;
+        if (p.tail && typeof p.tail.path === "string" && typeof p.tail.offset === "number") {
+          // The tail resumes at its saved offset: text written while the daemon was down still arrives, once.
+          t.tail = { path: p.tail.path, format: p.tail.format === "codex" ? "codex" : "claude-code", offset: p.tail.offset, ino: p.tail.ino, skipping: p.tail.skipping === true };
+          t.tailDirty = true;
+        }
+        if (typeof p.rollout === "string") t.rollout = p.rollout;
+        if (typeof p.workflowDir === "string") t.workflowDir = p.workflowDir;
+        if (p.bg) t.bg = p.bg;
+        if (p.usage) t.usage = p.usage;
+        t.usageDirty = true;
+        if (Array.isArray(p.sentLinks)) t.sentLinks = new Set(p.sentLinks.filter((x): x is string => typeof x === "string"));
+        if (Array.isArray(p.sentMessages)) t.sentMessages = new Set(p.sentMessages.filter((x): x is string => typeof x === "string"));
+        if (p.sub) {
+          if (gone.has(p.sub.parentKey)) continue; // its parent is gone: never sent again
+          t.sub = { ...p.sub, meta: p.sub.meta === "pending" ? "none" : p.sub.meta };
+          this.sessions.set(t.key, t);
+          this.sessions.get(t.sub.parentKey)?.subs?.add(t.key);
+          counts.sessions++;
+          continue;
+        }
+        const last = p.last;
+        if (!last || typeof last.key !== "string" || last.key !== p.key) continue;
+        t.last = last;
+        if (Array.isArray(p.subs)) t.subs = new Set(p.subs.filter((x): x is string => typeof x === "string"));
+        this.sessions.set(t.key, t);
+        counts.sessions++;
+        if (this.isGone?.(last)) {
+          // Not put back in the store: the first reconcile ends it, and says why.
+          t.gone = true;
+          gone.add(t.key);
+          counts.ended++;
+        } else {
+          seed.push(last);
+        }
+      } catch {
+        // one bad record costs only itself
+      }
+    }
+    for (const raw of state.queue) {
+      const ev = hubActivityEventSchema.safeParse(raw);
+      if (!ev.success || this.queue.length >= this.maxBuffer) continue;
+      const bytes = Buffer.byteLength(JSON.stringify(ev.data));
+      this.sizes.set(ev.data, bytes);
+      this.queue.push(ev.data);
+      this.queuedBytes += bytes;
+      counts.events++;
+    }
+    this.restoredCounts = counts;
+    if (seed.length) this.seedSessions?.(seed);
+    if (counts.sessions || counts.events) {
+      this.log(
+        `hub: restored ${counts.sessions} shared session(s) and ${counts.events} unsent event(s)` +
+          (counts.ended ? `; ${counts.ended} whose process is gone will be ended` : ""),
+      );
+    }
+    return seed;
+  }
+
+  /** Stops writing the state file (a forwarder being replaced hands its state over in memory instead). */
+  detachState(): void {
+    this.statePath = undefined;
+  }
+
+  /** Writes the state file when it changed, at most once a second unless `now` (shutdown). Never throws. */
+  private persist(force = false): void {
+    if (!this.statePath || this.halted) return;
+    const now = this.now();
+    if (!force && now - this.lastPersistAt < PERSIST_EVERY_MS) return;
+    try {
+      const { savedAt: _savedAt, ...rest } = this.exportState();
+      const body = JSON.stringify(rest);
+      if (body === this.lastPersisted && !force) return;
+      writeStateFile(this.statePath, { savedAt: now, ...rest });
+      this.lastPersisted = body;
+      this.lastPersistAt = now;
+    } catch (err) {
+      this.log(`hub: could not save forwarder state: ${err instanceof Error ? err.message : String(err)}`);
+      this.lastPersistAt = now;
+    }
+  }
+}
+
+// --- persisted state (SPEC §24) ------------------------------------------------------
+
+interface PersistedTracked {
+  key: string;
+  cwd?: string;
+  shared: boolean;
+  roots: Target[];
+  lastTarget?: Target;
+  recent?: string[];
+  issues: string[];
+  label?: { raw: string; hub?: string };
+  last?: AgentSession;
+  current?: HubSessionUpsert;
+  sentJson?: string;
+  convoSince?: number;
+  tail?: TranscriptTail;
+  promptAt?: number;
+  rollout?: string;
+  workflowDir?: string;
+  bg?: { shells: number; agents: number };
+  sub?: SubState;
+  subs?: string[];
+  usage?: Usage;
+  sentLinks?: string[];
+  sentMessages?: string[];
+}
+
+/** The state file's shape (`hub-forward.json`). */
+export interface PersistedForward {
+  v: number;
+  savedAt: number;
+  url: string;
+  sessions: PersistedTracked[];
+  queue: HubActivityEvent[];
+}
+
+function isTarget(v: unknown): v is Target {
+  return !!v && typeof v === "object" && typeof (v as Target).root === "string";
+}
+
+function asPersisted(raw: unknown): PersistedForward | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const s = raw as Partial<PersistedForward>;
+  if (s.v !== STATE_VERSION || typeof s.savedAt !== "number" || typeof s.url !== "string") return undefined;
+  return {
+    v: s.v,
+    savedAt: s.savedAt,
+    url: s.url,
+    sessions: Array.isArray(s.sessions) ? s.sessions.filter((x): x is PersistedTracked => !!x && typeof x.key === "string") : [],
+    queue: Array.isArray(s.queue) ? s.queue : [],
+  };
 }

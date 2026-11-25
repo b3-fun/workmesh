@@ -12,7 +12,7 @@
 - **Repo**: github.com/b3-fun/workmesh (open source, MIT; renamed from b3-fun/agentblip, old URLs redirect)
 - **npm**: `@b3os/workmesh` (bins `workmesh` and the `agentblip` alias), published from the npclabs npm account
 - **Status**: building
-- **Last updated**: 2026-11-25 (v1 Coordinate: wire merged, relay side on branch `coord-v1`)
+- **Last updated**: 2026-11-25 (v1 Coordinate relay side merged; v0.10 liveness: forwarder state across restarts, daemon service, presence from the hub)
 
 ---
 
@@ -171,6 +171,16 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   Subagent sessions send `name` (task title at conversation level, else agent type). A session whose cwd is outside
   every shared repo sends `repos` (shared repos touched by file tools or by shell commands naming a seen root, most
   recent first, `Tracked.recent`); its `repo` is the first.
+- v0.10 liveness (SPEC §24): `HubForwarder` saves its shared sessions, transcript offsets and unsent queue to
+  `~/.local/state/workmesh/hub-forward.json` (`hub/persist.ts`: atomic, 0600, ≤ 1/s, on stop) and reads it back in
+  `start()` before the first send (`restoreState`; `seedSessions` → `SessionStore.restore`; `isGone` from Claude
+  Code's session files ends dead ones with `alive: false`). No empty `full` heartbeat in the first 2 min after a
+  start; heartbeats still go every 30 s. Every ingest carries `client: workmesh/<version>`; upserts carry `alive`
+  (process seen) and `quietSince` (working, no hook event for 60 s). The daemon runs as a service (`lib/service.ts`,
+  `workmesh service install|uninstall|status`, installed by `setup`): launchd `org.npclabs.workmesh.daemon`
+  (KeepAlive unless a clean exit) or systemd `--user` `workmesh.service`; `stop` writes `daemon.stop-requested` so
+  the daemon exits 0 for a stop and 75 for any other SIGTERM under the service; a service daemon waits for a running
+  one to exit. `WORKMESH_NO_SERVICE=1` turns service use off (the CLI tests set it).
 
 ## The hosted hub (private)
 

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import pkg from "../../package.json";
 import { SessionStore, formatStatus } from "@workmesh/core";
 import type { SessionEvent } from "@workmesh/core";
 import { codexSessionsDir, createCodexWatcher } from "../adapters/codex";
@@ -16,11 +17,14 @@ import type { CoordSummary } from "./server";
 import { readGithubLogin } from "../lib/github";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
-import { stateDir } from "../lib/paths";
-import { findRunningDaemon } from "../lib/daemon-control";
+import { hubForwardStatePath, stateDir } from "../lib/paths";
+import { removeStateFile } from "../hub/persist";
+import { findRunningDaemon, takeStopRequest } from "../lib/daemon-control";
+import { SERVICE_ENV } from "../lib/service";
 import { readPidFile, removePidFile, writePidFile } from "../lib/pidfile";
 import { createSink } from "../sinks";
 import { ClaudeLiveness, claudeConfigDir, readLiveClaudeSessions } from "./claude-liveness";
+import type { ClaudeProcess } from "./claude-liveness";
 import { Pusher } from "./pusher";
 import { createDaemonServer } from "./server";
 
@@ -36,7 +40,16 @@ export interface RunDaemonOptions {
 export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Promise<void> {
   // A pidfile whose process is gone (or was reused by another program) is
   // ignored; a daemon still shutting down gets a few seconds to finish.
-  const existingPid = await findRunningDaemon({ exitWaitMs: opts.exitWaitMs });
+  let existingPid = await findRunningDaemon({ exitWaitMs: opts.exitWaitMs });
+  if (existingPid !== undefined && process.env[SERVICE_ENV]) {
+    // Under launchd / systemd (SPEC §24) while another daemon (a hook's, or one started by hand) has the port:
+    // wait for it to go, then take over. Exiting instead would have the service restart this one every 10 s.
+    console.log(`[${new Date().toISOString()}] daemon pid ${existingPid} is running; the service's daemon waits for it to exit`);
+    while (existingPid !== undefined) {
+      await new Promise((r) => setTimeout(r, 5000));
+      existingPid = await findRunningDaemon({ exitWaitMs: 0 });
+    }
+  }
   if (existingPid !== undefined) {
     throw new Error(`daemon already running (pid ${existingPid}) — \`workmesh stop\` first`);
   }
@@ -75,15 +88,25 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   // v0.6: the GitHub login `gh` reports, read once per start (the config's copy from `hub connect` until then).
   let githubLogin: string | undefined;
   let githubRead = false;
+  // v0.10 (SPEC §24): Claude Code's live processes, from the liveness check below; the forwarder reports `alive`.
+  const claudeOn = config.adapters.claudeCode.enabled;
+  let liveClaude: Map<string, ClaudeProcess> | undefined = claudeOn ? readLiveClaudeSessions() : undefined;
   const startForwarder = (hub: HubConfig | undefined): void => {
     const previous = forwarder;
     forwarder = undefined;
+    // A forwarder being replaced (hub include/exclude/connect) hands its state over in memory.
+    const carried = previous?.exportState();
+    previous?.detachState();
     if (previous) void previous.stop().catch(() => {});
     teamPoller?.stop();
     teamPoller = undefined;
     coord?.stop();
     coord = undefined;
-    if (!hub) return;
+    if (!hub) {
+      // Disconnected: nothing to carry on with.
+      removeStateFile(hubForwardStatePath());
+      return;
+    }
     const fwd = new HubForwarder({
       url: hub.url,
       token: hub.deviceToken,
@@ -97,7 +120,16 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       stickyShare: hubStickyShare(hub),
       codexSessionsDir: config.adapters.codex.sessionsDir,
       github: githubLogin ?? hub.github,
+      // v0.10 liveness and persistence (SPEC §24)
+      client: `workmesh/${pkg.version}`,
+      statePath: hubForwardStatePath(),
+      aliveOf: (s) => (s.source === "claude-code" && liveClaude?.has(s.sessionId) ? true : undefined),
+      isGone: (s) => s.source === "claude-code" && liveClaude !== undefined && !liveClaude.has(s.sessionId),
+      seedSessions: (list) => {
+        if (store.restore(list) > 0) pusher.notify();
+      },
     });
+    if (carried) fwd.restoreState({ state: carried });
     forwarder = fwd;
     teamPoller = new TeamPoller({
       url: hub.url,
@@ -335,7 +367,9 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       const liveness = new ClaudeLiveness();
       const checkLiveness = (): void => {
         const now = Date.now();
-        const actions = liveness.step(store.list(), readLiveClaudeSessions(claudeDir), now);
+        const live = readLiveClaudeSessions(claudeDir);
+        liveClaude = live;
+        const actions = liveness.step(store.list(), live, now);
         for (const [key, name] of actions.names) store.annotate(key, { name });
         for (const key of actions.touch) store.touch(key, now);
         for (const key of actions.reap) {
@@ -376,7 +410,10 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         // Only our own claim: a daemon started right after ours closed its
         // port may already have written its pid.
         if (readPidFile() === process.pid) removePidFile();
-        process.exit(0);
+        // Under launchd / systemd (SPEC §24): a SIGTERM that isn't `workmesh stop` (a kill, a crash
+        // handler) exits non-zero, so the service brings the daemon back.
+        const stopped = takeStopRequest(process.pid);
+        process.exit(process.env[SERVICE_ENV] && signal === "SIGTERM" && !stopped ? 75 : 0);
       })();
     };
     process.on("SIGINT", () => shutdown("SIGINT"));

@@ -630,18 +630,22 @@ takes the state it reports.
 
 **The relay keeps its place across restarts** (`packages/cli`):
 - The hub forwarder writes its state to `~/.local/state/workmesh/hub-forward.json` (0600, atomic rename, at most once
-  a second, and on SIGTERM/SIGINT): the shared sessions (their last state, roots, repos, labels, issues, conversation
-  start time and transcript offsets), and the unsent queue (newest 1,000 events). A daemon that starts reads it back
-  before its first send, drops sessions whose process is gone (Claude Code: `~/.claude/sessions/<pid>.json`), keeps
-  the rest, and carries on sending where it stopped: no text from before a session was shared, no event twice (ids are
-  stable, the hub dedupes).
+  a second when it changed, and on SIGTERM/SIGINT): the shared sessions (their last state, roots, repos, labels,
+  issues, conversation start time and transcript offsets) and the unsent queue (newest 1,000 events). Unshared
+  sessions are not kept. A daemon that starts reads it back before its first send, puts the sessions back in its
+  store, ends the ones whose process is gone (Claude Code: `~/.claude/sessions/<pid>.json`) with `alive: false`, and
+  carries on where it stopped: no text from before a session was shared, no event twice (ids are stable, the hub
+  dedupes). A file for another hub, or older than a day, is ignored; `hub disconnect` deletes it.
 - No `full` heartbeat goes out before that read is done, and none that is empty during the first 2 minutes after a
-  start; those heartbeats go as `full: false`.
-- On macOS `workmesh setup` runs the daemon under launchd (`~/Library/LaunchAgents/org.npclabs.workmesh.daemon.plist`:
-  RunAtLoad, KeepAlive, ThrottleInterval 10, logs in `~/Library/Logs/workmesh-daemon.log`), so a crash or kill brings
-  it back within seconds and a reboot or wake starts it; `workmesh restart` asks launchd (`launchctl kickstart -k`)
-  when the job is installed, and `workmesh doctor` reports it. Hooks still start a daemon when none answers. On Linux
-  `workmesh setup --service` writes a systemd `--user` unit.
+  start (until something is shared); those heartbeats go as `full: false`, still every 30 s.
+- `workmesh setup` (and `setup --hooks-only`; `--no-service` skips it) runs the daemon as a service: on macOS under
+  launchd (`~/Library/LaunchAgents/org.npclabs.workmesh.daemon.plist`: RunAtLoad, KeepAlive unless it exited cleanly,
+  ThrottleInterval 10, log in `~/Library/Logs/workmesh-daemon.log`), on Linux as a systemd `--user` unit
+  (`workmesh.service`, Restart=on-failure). A crash or kill brings it back within seconds, a login or reboot starts
+  it; `workmesh stop` leaves it stopped (the daemon exits 0 only for a stop it was told about). `workmesh restart`,
+  `start --detach` and the hooks' autostart go through the service when it is installed, and a service daemon that
+  finds another one running waits for it to exit instead of starting a second. `workmesh service
+  install|uninstall|status` manages it by hand; `workmesh doctor` reports it and the state file.
 
 ---
 

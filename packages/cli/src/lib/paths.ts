@@ -88,3 +88,17 @@ export function startFailedMarkerPath(): string {
 export function ownershipStatePath(): string {
   return path.join(stateDir(), "ownership.json");
 }
+
+/**
+ * v0.10: `workmesh stop` names the pid it is stopping here before SIGTERM, so a
+ * daemon under launchd / systemd exits 0 (stay stopped) for a stop and non-zero
+ * (bring me back) for any other SIGTERM.
+ */
+export function stopRequestPath(): string {
+  return path.join(stateDir(), "daemon.stop-requested");
+}
+
+/** v0.10: the hub forwarder's saved state (shared sessions, transcript offsets, unsent queue), 0600 (SPEC §24). */
+export function hubForwardStatePath(): string {
+  return path.join(stateDir(), "hub-forward.json");
+}

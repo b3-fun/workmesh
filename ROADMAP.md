@@ -22,7 +22,8 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.5 Multiplayer menu bar | The team in the menu bar | **done** (11-24): menu bar 0.5.0, hub `/relay/team` live |
 | v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **done** (11-24): relay #5, board in workmesh-cloud #1; polish next |
 | v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **done** (11-24): names, markup, orchestrators, graph fit (relay in the next release, 0.9.1); Linear titles live |
-| v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub side in workmesh-cloud |
+| Liveness | Presence from the hub, not the browser; a restart never ends sessions; the daemon as a launchd / systemd service; current client versions; quiet and stalled sessions | **done** (11-25): wire #11, relay (in 0.10.0 with v1, not yet on npm), hub in workmesh-cloud #4 |
+| v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub and board live (workmesh-cloud #5) |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
@@ -107,6 +108,25 @@ Found on the live board with real sessions, 11-24 (wire: SPEC §19):
 - **Publish:** relay 0.9.0 is out; these relay changes ship as 0.9.1. Still to do: the menu bar build as a release
   asset.
 
+### Liveness and persistence (done 11-25)
+Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interrupted." Contract: SPEC §24.
+- **Found:** the board worked out presence in the browser from a `lastSeenAt` the hub stopped re-sending while a
+  machine was busy, so two minutes after the page loaded it showed the person offline with "No open sessions" while
+  their events kept streaming in. And a restarted daemon forgot which sessions it shared: its first heartbeat said
+  "none", and the hub ended them all.
+- **Presence (done):** the hub computes it (online, reconnecting after 90 s, then asleep or offline after 5 min) and
+  pushes every change; the board and the menu bar only show it.
+- **Restarts (done):** the relay saves its shared sessions, transcript offsets and unsent events and picks them up on
+  start; it never sends an empty full heartbeat right after a start; the hub treats a session missing from a
+  heartbeat as unconfirmed (it ends after 30 min, or at once on SessionEnd or a dead process).
+- **Service (done):** `workmesh setup` runs the daemon under launchd (macOS) or systemd `--user` (Linux): a crash, kill
+  or reboot brings it back; `workmesh service` and `doctor` manage and report it.
+- **Versions, quiet, lanes (done):** every ingest names its client; Machines shows each device's current version and
+  flags old ones; a working row reads "quiet 7m", then "stalled?" after an hour; ended sessions leave the lanes after
+  an hour.
+- **Next:** publish relay 0.10.0 (npm, two key taps) so teammates get the service and the saved state; the menu bar
+  build that shows "asleep"/"reconnecting".
+
 ### v1 Coordinate (Linear B3-7167, in progress 11-25)
 - MCP server in every session: `roster`, `send`, `inbox`, `claim`, `lease`, `note`.
 - File leases enforced by a PreToolUse deny that names the holder; claims mirrored to Linear as agent sessions under
@@ -125,8 +145,15 @@ Found on the live board with real sessions, 11-24 (wire: SPEC §19):
   bar. Fails open: nothing is refused when the hub or daemon is unreachable, except a known hold (up to 30 min).
   Verified with a real Claude Code session against a stand-in hub (refusal, guidance, MCP tools, a message delivered
   and acked, fail-open timing); Codex output by its 0.164 hook schemas and fixtures.
-- **Next:** the hub side (workmesh-cloud: lease table, claims, holds from the board and Linear comments, routing
-  messages, notes), then publish 0.10.0 and roll out; Linear agent identities per person (needs An).
+- **Hub and board (live 11-25, workmesh-cloud #5):** the hosted hub serves every v1 endpoint: exclusive leases with
+  expiry and release when a session ends, one claimant per issue, messages routed to an agent, a session or a person's
+  newest live session (inbox and acks), notes, and `/relay/sync` with recent edits. Anyone on the team can hold a
+  session from the board, and a "hold" or "pause" comment on the Linear issue a session claimed holds it ("resume" or
+  "go ahead" releases it; read-only, once a minute). The board shows held sessions in Waiting ("Held by An · reason"),
+  claimed issues on chips with the claimant, a Work tab (claims, leased files and the edits they turned away, notes),
+  Workmesh messages in Messages with a reply box, and turned-away edits in the feed.
+- **Next:** publish 0.10.0 and roll out; Linear agent identities per person (needs An); claims mirrored to Linear (needs
+  a key that can write).
 
 ### v2 Delegate (Linear B3-7168)
 - Messages delivered into running and idle sessions (Claude Code session inbox, Codex app-server).
@@ -135,6 +162,12 @@ Found on the live board with real sessions, 11-24 (wire: SPEC §19):
 
 ## Decision log
 
+- 11-25 Liveness: presence is computed and pushed by the hub, never derived in a client; a heartbeat can no longer end
+  a session (missing for 30 min, SessionEnd or a gone process can); the daemon runs as a launchd / systemd service
+  that restarts it unless `workmesh stop` asked it to stop; the forwarder's saved state is local only (0600).
+- 11-25 v1 board: a held session waits on a person, so it sits in Waiting (with who held it and why) rather than its
+  lane; any teammate may hold, only the session's owner or the holder releases. Claims, leased files and notes share
+  one Work tab beside Messages.
 - 11-25 v1 relay: hooks are answered from the daemon's cached sync, never a network call, and everything fails open
   (a lease counts only while the last sync is under 90 s old; only a hold the daemon already knew about outlives an
   unreachable hub, for 30 minutes), so Workmesh never stops anyone's work because the hub is down. A lease binds the

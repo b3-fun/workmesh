@@ -207,4 +207,21 @@ describe("SessionStore", () => {
     store.touch("claude-code:nope", 3000); // unknown key: no-op
     expect(store.snapshot().total).toBe(1);
   });
+
+  it("restore puts saved sessions back without overriding newer ones, and sweep ages them", () => {
+    const store = new SessionStore();
+    const t = 1_795_545_600_000;
+    store.apply({ source: "claude-code", sessionId: "live", kind: "working", activity: "editing a.ts", ts: t }, t);
+    const saved = [
+      { key: "claude-code:live", source: "claude-code", sessionId: "live", state: "idle" as const, agents: 1, startedAt: t - 9, updatedAt: t - 9, stateSince: t - 9 },
+      { key: "claude-code:old", source: "claude-code", sessionId: "old", state: "working" as const, activity: "thinking", agents: 1, startedAt: t - 60_000, updatedAt: t - 60_000, stateSince: t - 60_000 },
+      { key: "bad-key", source: "claude-code", sessionId: "x", state: "idle" as const, agents: 1, startedAt: t, updatedAt: t, stateSince: t },
+      { key: "codex:future", source: "codex", sessionId: "future", state: "idle" as const, agents: 1, startedAt: t, updatedAt: t + 3600_000, stateSince: t },
+    ];
+    expect(store.restore(saved, t)).toBe(1);
+    expect(store.get("claude-code:live")?.state).toBe("working");
+    expect(store.get("claude-code:old")).toMatchObject({ state: "working", updatedAt: t - 60_000 });
+    store.sweep(t + 4 * 60_000);
+    expect(store.get("claude-code:old")?.state).toBe("idle");
+  });
 });

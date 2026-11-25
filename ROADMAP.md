@@ -31,7 +31,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | PR details | PR title, state (open, draft, merged, closed), author, review and checks on the board, from a read-only GitHub App on b3-fun, instead of a bare `repo#n` | **done** (11-25): hub and board workmesh-cloud #24 |
 | v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **in progress** (11-25): wire #32 (SPEC §35–36); relay built (0.12.0, not published) |
 | Keeping current | `workmesh update` (install the newest release the way it was installed, refresh hooks, MCP and the daemon, roll back on failed checks), update notices from the hub, opt-in auto-update, a once-per-session note to sessions on older tools, "Update available" in the menu bar, versions on the board | **done** (11-25): wire #33 (SPEC §40), relay #37 (SPEC §41) and menu bar #36 in 0.12.0 (not published), hub and board workmesh-cloud #25–#27 (live) |
-| Codex parity | Everything a Claude Code session gets on the team hub, for Codex, proven live: board session and mirror, MCP tools, lease and hold refusals, wake, gates, handoffs run with `codex exec`, a truthful `doctor` | **in review** (11-25): relay (SPEC §42), 0.12.x not published |
+| Codex parity | Everything a Claude Code session gets on the team hub, for Codex, proven live: board session and mirror, MCP tools, lease and hold refusals, wake, gates, handoffs run with `codex exec`, a truthful `doctor` | **done** (11-25): relay #38 (SPEC §42), ships with the next release (not published) |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -334,7 +334,7 @@ an upgrade went on without the new tools until someone restarted them (An's test
   install, notice, update, stale note, a broken release rolled back, the daemon updating itself.
 - **Next:** 0.12.0 is the last release that needs a message: `npm i -g @b3os/workmesh@latest && workmesh update`.
 
-### Codex parity (Linear B3-7168, in review 11-25)
+### Codex parity (Linear B3-7168, done 11-25)
 
 Sean: teammates use Codex too, and the 11-25 two-person test was all Claude Code. Live run: codex-cli 0.164 (its
 background app server auto-updated to 0.172) in temp `CODEX_HOME`s, two relays paired with a local hub as Sean and An,

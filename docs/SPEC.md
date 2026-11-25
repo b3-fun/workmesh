@@ -12,7 +12,7 @@ https://workmesh.b3os.org; the hosted hub's code and internals are private (§14
 | Hub | hosted by B3 (private) | Pairs machines, keeps what they share, writes summaries, serves the board. |
 
 If this file and the code disagree, fix one of them in the same change. Section numbers are stable because code cites
-them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13) covered the hub's internals, which moved to the
+them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18) covered the hub's internals, which moved to the
 hosted hub's own docs. Sections 1–13 were written while the hub was Bullpen and the relay was agentblip; where they say
 agentblip, read the Workmesh CLI.
 
@@ -396,3 +396,50 @@ person or session on its own instead of failing):
   serves the last answer on its loopback API (`GET /team`); the menu bar reads only that.
 - A `200` here is also how a relay knows the hub reads v0.6 session structure: from then on it sends subagents as
   their own sessions (§15). A `404` turns that off again.
+
+---
+
+# v0.7: polish from real use (Sean, 2026-11-24)
+
+Found on the live board with real sessions. All of it is optional on the wire (still `v: 1`): old relays and old hubs
+keep working, and a hub reads what an old relay sends the way this section says.
+
+## 19. Names, injected content, orchestrators
+
+**Subagent names.** A relay sends `name` (≤ 120) on every subagent session (§15: Claude Code subagents, Codex spawned
+threads that have no name of their own) so no reader has to show a key: the task `title` where the title may be sent
+(conversation level, the same redacted text cut to 120), else the `agentType` (`Explore`, `general-purpose`). `name`
+stays metadata: at the metadata level it is never more than the agent type.
+
+**Injected content.** Agent tools put their own markup into the text a relay reads, and none of it was written by the
+person or the agent: a background task's completion notice arrives as a prompt (`<task-notification>…`), another
+agent's message arrives wrapped (`<agent-message from="…">…</agent-message>`, `<cross-session-message>`,
+`<teammate-message>`), a message can open with provenance markers (`<artifact-content-authored-by-others/>` plus a
+one-line notice), and `<system-reminder>` blocks ride along anywhere. `stripInjected` in `@workmesh/protocol` (zod-free,
+also importable alone as `@workmesh/protocol/injected`) is the one reading of it, tested on real-shaped fixtures:
+- A leading block or marker whose tag is a lowercase name joined by `-` or `_` is injected: a block goes with
+  everything in it (an unclosed one, cut at the text cap, takes the rest), a self-closing marker with its notice line.
+  `<system-reminder>` blocks go wherever they are. Plain HTML a person pasted (`<div>`, `<time>`) and tags mentioned in
+  prose stay.
+- A wrapper around another agent's message keeps its body (cleaned the same way); a slash command recorded as
+  `<command-name>` markup reads as the person typed it (`/review PR 12`).
+- Prompts: one that is wholly injected (a notice, a wrapped message, only markers) is no prompt at all: the relay
+  starts the turn and sends none (Claude Code and Codex hooks alike). One that opens with markers before the
+  person's words is sent without them.
+- Agent text (`message`, `agent_message`): sent without the markup; a `message` with nothing left is not sent, an
+  `agent_message` goes without `text`.
+- The relay cleans before redacting and before the 4,000 cap. The hub runs the same function on ingest as a backstop
+  (it drops a wholly injected prompt, strips the rest) and the board on rows stored before v0.7.
+
+**Orchestrators.** A session whose cwd is outside every shared repo (§3.3 rule 4: an orchestrator started in
+`~/Documents`) becomes shared when it touches a shared repo. Its `SessionUpsert` adds:
+
+| Field | Type | Level | Notes |
+|---|---|---|---|
+| `repos` | string[] 1–10, `owner/name`, no repeats | metadata | only for such a session: the shared repos it has touched (a file tool on a path inside one, or a shell command naming a shared root it has seen), most recent first; `repo` is the first |
+
+A session started in a repo never sends `repos`, whatever else it touches. The hub reads `repos` tolerantly: an entry
+that isn't `owner/name` is dropped on its own, repeats once, past 10 the first ten, an empty list as absent. The board
+groups an orchestrator under its `repo` (the repo it touched most recently), marks it as an orchestrator, and names
+the repos it works across.
+

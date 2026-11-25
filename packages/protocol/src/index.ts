@@ -46,6 +46,8 @@ export const HUB_TITLE_ACCEPT_MAX = 5 * HUB_TITLE_MAX;
 export const HUB_STATUS_LINE_MAX = 120;
 /** v0.6: links on one event. */
 export const HUB_MAX_LINKS = 10;
+/** v0.7 (SPEC §19): shared repos an orchestrator session names as the ones it works across. */
+export const HUB_MAX_REPOS = 10;
 /** v0.6: token counts and cost a relay reports for one session (a larger value is a parse error, not a real run). */
 export const HUB_MAX_TOKENS = 1e13;
 export const HUB_MAX_COST_USD = 1e7;
@@ -191,6 +193,17 @@ export const hubSessionUpsertSchema = z.strictObject({
   costUsd: costUsd.optional(),
   /** One line from the relay's vocabulary: "waiting on 1 shell", "running commands". */
   statusLine: statusLine.optional(),
+  // v0.7 (SPEC §19).
+  /**
+   * Only for a session whose cwd is outside every shared repo (§3.3 rule 4: an orchestrator): the shared repos it has
+   * touched, most recent first. Its `repo` is the first of them.
+   */
+  repos: z
+    .array(repoName)
+    .min(1)
+    .max(HUB_MAX_REPOS)
+    .refine((r) => new Set(r).size === r.length, "repos must not repeat")
+    .optional(),
 });
 export type HubSessionUpsert = z.infer<typeof hubSessionUpsertSchema>;
 
@@ -292,6 +305,19 @@ const linksAccept = z
     return out;
   });
 
+/** v0.7 repos, read tolerantly: a bad entry is dropped, not a schema error; duplicates once; an empty list is absent. */
+const reposAccept = z
+  .array(z.unknown())
+  .max(10 * HUB_MAX_REPOS)
+  .transform((items) => {
+    const out: string[] = [];
+    for (const item of items) {
+      const r = repoName.safeParse(item);
+      if (r.success && !out.includes(r.data) && out.length < HUB_MAX_REPOS) out.push(r.data);
+    }
+    return out.length ? out : undefined;
+  });
+
 export const hubSessionUpsertAcceptSchema = z.object({
   key: sessionKey,
   source: z.string().min(1).max(64),
@@ -318,6 +344,8 @@ export const hubSessionUpsertAcceptSchema = z.object({
   tokensOut: opt(tokenCountAccept),
   costUsd: opt(costUsd),
   statusLine: opt(statusLine),
+  /** v0.7: entries that aren't `owner/name` are dropped on their own; past HUB_MAX_REPOS the first ones are kept. */
+  repos: opt(reposAccept),
 });
 export type HubSessionUpsertAccepted = z.infer<typeof hubSessionUpsertAcceptSchema>;
 
@@ -579,3 +607,6 @@ export const hubTeamAcceptSchema = z.object({
   serverNow: epochMsAccept.nullish().catch(undefined).transform((v) => v ?? undefined),
 });
 export type HubTeamAccepted = z.infer<typeof hubTeamAcceptSchema>;
+
+// v0.7: system-injected content in agent text (zod-free; also importable alone as `@workmesh/protocol/injected`).
+export * from "./injected";

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   HUB_DEVICE_TOKEN_RE,
   HUB_MAX_LINKS,
+  HUB_MAX_REPOS,
   HUB_TITLE_ACCEPT_MAX,
   HUB_TITLE_MAX,
   hubTeamAcceptSchema,
@@ -338,5 +339,41 @@ describe("team (v0.5, SPEC §15)", () => {
     expect(got.sessions[0]).toMatchObject({ state: "idle", subagents: 3 });
     expect(got.serverNow).toBeUndefined();
     expect(hubTeamAcceptSchema.parse({})).toEqual({ me: { name: "", email: undefined, github: undefined }, people: [], needsMe: [], sessions: [], serverNow: undefined });
+  });
+});
+
+describe("hub wire v0.7 (SPEC §19)", () => {
+  const orch = {
+    ...session,
+    key: "claude-code:orch",
+    name: "documents-21",
+    repo: "b3-fun/workmesh",
+    repos: ["b3-fun/workmesh", "b3-fun/workmesh-cloud", "b3-fun/b3os-beta"],
+  } as const;
+
+  it("a relay can send the repos an orchestrator works across; the hub takes them unchanged", () => {
+    const sent = hubSessionUpsertSchema.parse(orch);
+    expect(hubSessionUpsertAcceptSchema.parse(sent)).toEqual(sent);
+    expect(hubSessionUpsertSchema.safeParse(session).success).toBe(true); // optional: older bodies stay valid
+  });
+
+  it("strict: owner/name only, no repeats, at least one, at most HUB_MAX_REPOS", () => {
+    const bad = [
+      { ...orch, repos: [] },
+      { ...orch, repos: ["workmesh"] },
+      { ...orch, repos: ["b3-fun/workmesh", "b3-fun/workmesh"] },
+      { ...orch, repos: Array.from({ length: HUB_MAX_REPOS + 1 }, (_, i) => `b3-fun/r${i}`) },
+      { ...orch, repos: "b3-fun/workmesh" },
+    ];
+    for (const s of bad) expect(hubSessionUpsertSchema.safeParse(s).success, JSON.stringify(s.repos)).toBe(false);
+  });
+
+  it("accept: drops bad entries and repeats on their own, keeps the first ten, reads empty as absent", () => {
+    const read = (repos: unknown) => hubSessionUpsertAcceptSchema.parse({ ...orch, repos }).repos;
+    expect(read(["b3-fun/a", "not a repo", 7, "b3-fun/a", "b3-fun/b"])).toEqual(["b3-fun/a", "b3-fun/b"]);
+    expect(read(Array.from({ length: 30 }, (_, i) => `b3-fun/r${i}`))).toHaveLength(HUB_MAX_REPOS);
+    expect(read([])).toBeUndefined();
+    expect(read(null)).toBeNull();
+    expect(hubSessionUpsertAcceptSchema.safeParse({ ...orch, repos: "b3-fun/a" }).success).toBe(false);
   });
 });

@@ -32,6 +32,7 @@ import type {
   HubProjectRule,
   HubSessionUpsert,
   HubShareLevel,
+  HubTasks,
 } from "@workmesh/protocol";
 import type { z } from "zod";
 import { GitResolver } from "./git";
@@ -43,9 +44,12 @@ import {
   acceptCodexTranscript,
   defaultCodexSessionsDir,
   findCodexRollout,
+  readMirrorSeed,
   readTail,
   startTail,
 } from "./transcript";
+import { TaskSet, applyToTasks, tasksStatusLine } from "./mirror";
+import type { MirrorItem, TaskKind } from "./mirror";
 import type { AgentMessageItem, TranscriptItem, TranscriptTail } from "./transcript";
 import {
   ClaudeUsageReader,
@@ -220,7 +224,7 @@ interface Tracked {
   /** A Stop waiting for the transcript's turn-duration record. */
   pendingTurn?: { stopTs: number; promptAt?: number; deadline: number };
   /** A turn-duration record read before its Stop arrived (Codex writes it first). */
-  turnRecord?: { durationMs: number; ts?: number };
+  turnRecord?: { durationMs: number; ts?: number; pending?: { agents?: number; workflows?: number } };
   /** Transcript text blocks already sent (ids), bounded. */
   sentMessages?: Set<string>;
   // v0.6 structure (SPEC §15)
@@ -246,6 +250,23 @@ interface Tracked {
   usagePending?: boolean;
   /** v0.10: restored from the state file with its process gone: its final upsert says `alive: false`. */
   gone?: boolean;
+  /** v0.11 (SPEC §26): what the person's terminal shows around the conversation. */
+  mirror?: MirrorState;
+}
+
+/** v0.11: a session's title, mode, model and running background tasks, as its transcript and hooks report them. */
+interface MirrorState {
+  /** Raw (redacted at send time, conversation level only); a custom title (a /rename) beats the AI one. */
+  title?: { text: string; custom: boolean };
+  mode?: string;
+  model?: string;
+  /** Background tasks running now (Stop's `background_tasks`, launches in the tail, ending notices). */
+  tasks?: TaskSet;
+  /** Last compaction notice (Codex writes two records for one). */
+  lastCompactAt?: number;
+  /** Last monitor event notice (a chatty monitor is sent at most every MONITOR_EVENT_GAP_MS). */
+  lastMonitorEventAt?: number;
+  seeded?: boolean;
 }
 
 /** A Claude Code subagent, tracked from its hooks and transcript (SPEC §15). */
@@ -266,6 +287,8 @@ interface SubState {
   meta: "none" | "pending" | "done";
   /** When it stopped (SubagentStop, or its parent went away). */
   ended?: number;
+  /** v0.11: it stopped with background tasks of its own and waits on them (SPEC §26). */
+  bgWait?: boolean;
 }
 
 const SESSION_REQUIRED = new Set(["key", "source", "state", "startedAt", "updatedAt", "stateSince"]);
@@ -281,7 +304,13 @@ const DEFAULT_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 /** After a hub refuses message/turn events, try again this much later. */
 const CONVERSATION_HOLD_MS = 10 * 60_000;
 /** Kinds an older hub may refuse (its enum predates them): held back after a 400 that had them. */
-const CONVERSATION_KINDS: ReadonlySet<string> = new Set(["message", "turn", "agent_message"]);
+const CONVERSATION_KINDS: ReadonlySet<string> = new Set(["message", "turn", "agent_message", "notice"]);
+/** v0.11: a subagent waiting on its own background tasks stays open this long without news. */
+const SUBAGENT_BG_WAIT_END_MS = 24 * 3600_000;
+/** v0.11: one monitor's events reach the hub at most this often per session. */
+const MONITOR_EVENT_GAP_MS = 10_000;
+/** v0.11: two compaction records this close together are one compaction. */
+const COMPACT_DEDUPE_MS = 60_000;
 /** A subagent with no hook or transcript activity for this long is over (its SubagentStop was missed). */
 const SUBAGENT_IDLE_END_MS = 30 * 60_000;
 /** Usage (tokens, model) re-read at most this often per session. */
@@ -331,6 +360,11 @@ function conform<T>(
     if (!removed) return undefined;
   }
   return undefined;
+}
+
+const MIRROR_KINDS: ReadonlySet<string> = new Set(["title", "mode", "model", "notice", "taskStart", "plan"]);
+function isMirrorItem(item: TranscriptItem): item is MirrorItem {
+  return MIRROR_KINDS.has(item.kind);
 }
 
 /** Seconds or an HTTP date → ms from now, clamped to [1 s, 10 min]. */
@@ -698,6 +732,7 @@ export class HubForwarder {
       if (st.state !== "working") st.stateSince = event.ts ?? this.now();
       st.state = "working";
       st.ended = undefined;
+      st.bgWait = undefined;
       st.updatedAt = Math.max(st.updatedAt, event.ts ?? this.now());
       const dir = claudeSubagentsDir(acceptClaudeTranscript(d?.transcriptPath));
       if (dir && d?.agentId) st.transcript ??= path.join(dir, `agent-${d.agentId}.jsonl`);
@@ -747,6 +782,10 @@ export class HubForwarder {
       return;
     }
     if (!d || d.agentId) return;
+    if (d.hookEvent === "Stop" && d.backgroundTasks) {
+      // v0.11: the session's running background tasks, the whole truth at this moment.
+      (this.mirrorOf(t).tasks ??= new TaskSet()).replace(d.backgroundTasks);
+    }
     if (d.hookEvent === "Stop") {
       const shells = d.backgroundShells ?? 0;
       const agents = d.backgroundAgents ?? 0;
@@ -796,7 +835,14 @@ export class HubForwarder {
     } else {
       const file = d.agentTranscriptPath;
       if (file && path.isAbsolute(file) && file.endsWith(".jsonl")) sub.transcript = path.normalize(file);
-      sub.ended = ts;
+      if (t.usage?.tasks) {
+        // v0.11: it stopped with background work of its own; it waits on it (SPEC §26).
+        if (sub.state !== "idle") sub.stateSince = ts;
+        sub.state = "idle";
+        sub.bgWait = true;
+      } else {
+        sub.ended = ts;
+      }
       sub.label = undefined;
     }
     sub.updatedAt = Math.max(sub.updatedAt, ts);
@@ -1060,10 +1106,19 @@ export class HubForwarder {
     if (!this.conversationShared(t)) {
       // Left the shared repo, or never in it: forget the tail so text resumes
       // only from the moment it is shared again.
-      t.tail = undefined;
       t.convoSince = undefined;
       t.pendingTurn = undefined;
       t.promptAt = undefined;
+      if (!t.shared) {
+        t.tail = undefined;
+        return;
+      }
+      // v0.11 (SPEC §26): a shared session at the metadata level still reads
+      // its transcript for the mirror's states and counts (mode, model, task
+      // notices without their titles); handleItem sends nothing else from it.
+      this.attachTranscript(event, t);
+      t.tailDirty = true;
+      this.schedulePump();
       return;
     }
     const now = this.now();
@@ -1097,7 +1152,10 @@ export class HubForwarder {
     const raw = event.detail?.transcriptPath;
     const file = codex ? acceptCodexTranscript(raw, event.sessionId) : acceptClaudeTranscript(raw);
     if (file) {
-      if (t.tail?.path !== file) t.tail = startTail(file, codex ? "codex" : "claude-code");
+      if (t.tail?.path !== file) {
+        t.tail = startTail(file, codex ? "codex" : "claude-code");
+        this.seedMirror(t, file, codex ? "codex" : "claude-code");
+      }
       return;
     }
     if (!codex || t.tail) return;
@@ -1117,8 +1175,9 @@ export class HubForwarder {
           search.nextAt = this.now() + 30_000;
           return;
         }
-        if (!t.tail && this.conversationShared(t)) {
+        if (!t.tail && t.shared) {
           t.tail = startTail(found, "codex");
+          this.seedMirror(t, found, "codex");
           t.tailDirty = true;
         }
       })
@@ -1142,19 +1201,29 @@ export class HubForwarder {
     });
   }
 
-  private emitTurn(t: Tracked, stopTs: number, durationMs: number | undefined): void {
+  private emitTurn(
+    t: Tracked,
+    stopTs: number,
+    durationMs: number | undefined,
+    pending?: { agents?: number; workflows?: number },
+  ): void {
     const ms = durationMs !== undefined && durationMs >= 0 && durationMs <= HUB_MAX_DURATION_MS ? Math.round(durationMs) : undefined;
     this.enqueue({
       key: t.key,
       ts: Math.round(stopTs),
       kind: "turn",
       durationMs: ms,
+      tasks: this.turnTasks(t, pending),
       repo: t.cwdTarget?.repo,
       branch: t.cwdTarget?.branch,
     });
   }
 
   private handleItem(t: Tracked, item: TranscriptItem): void {
+    if (isMirrorItem(item)) {
+      this.handleMirrorItem(t, item);
+      return;
+    }
     if (!this.conversationShared(t)) return;
     if (item.kind === "agentMessage") {
       const seen = (t.sentMessages ??= new Set());
@@ -1172,12 +1241,13 @@ export class HubForwarder {
       this.enqueueMessage(t, item.text, item.ts ?? this.now());
       return;
     }
+    const pending = { agents: item.pendingAgents, workflows: item.pendingWorkflows };
     if (t.pendingTurn) {
-      this.emitTurn(t, t.pendingTurn.stopTs, item.durationMs);
+      this.emitTurn(t, t.pendingTurn.stopTs, item.durationMs, pending);
       t.pendingTurn = undefined;
       t.turnRecord = undefined;
     } else {
-      t.turnRecord = { durationMs: item.durationMs, ts: item.ts };
+      t.turnRecord = { durationMs: item.durationMs, ts: item.ts, pending };
     }
   }
 
@@ -1193,13 +1263,15 @@ export class HubForwarder {
       t.pendingTurn = undefined;
       if (!this.conversationShared(t)) continue;
       let ms: number | undefined;
+      let pending: { agents?: number; workflows?: number } | undefined;
       if (t.turnRecord && (p.promptAt === undefined || (t.turnRecord.ts ?? p.stopTs) >= p.promptAt)) {
         ms = t.turnRecord.durationMs;
+        pending = t.turnRecord.pending;
       } else if (p.promptAt !== undefined) {
         ms = p.stopTs - p.promptAt;
       }
       t.turnRecord = undefined;
-      this.emitTurn(t, p.stopTs, ms);
+      this.emitTurn(t, p.stopTs, ms, pending);
     }
   }
 
@@ -1262,6 +1334,131 @@ export class HubForwarder {
     }
   }
 
+  // --- the session mirror (SPEC §26) ---------------------------------------------
+
+  private mirrorOf(t: Tracked): MirrorState {
+    return (t.mirror ??= {});
+  }
+
+  /** Once per tail: the latest mode and model from the file's end (metadata, so earlier lines may count). */
+  private seedMirror(t: Tracked, file: string, format: "claude-code" | "codex"): void {
+    const m = this.mirrorOf(t);
+    if (m.seeded) return;
+    m.seeded = true;
+    void readMirrorSeed(file, format).then((seed) => {
+      m.mode ??= seed.mode;
+      m.model ??= seed.model;
+    });
+  }
+
+  /** A transcript line for the mirror: states and counts at either level, titles and plans at conversation. */
+  private handleMirrorItem(t: Tracked, item: MirrorItem): void {
+    const m = this.mirrorOf(t);
+    switch (item.kind) {
+      case "title":
+        if (item.custom || !m.title?.custom) m.title = { text: item.text, custom: item.custom };
+        return;
+      case "mode":
+        m.mode = item.mode;
+        return;
+      case "model":
+        m.model = item.model;
+        return;
+      case "taskStart":
+        applyToTasks((m.tasks ??= new TaskSet()), item);
+        return;
+      case "plan": {
+        if (!this.conversationShared(t) || this.seenItem(t, item.id)) return;
+        const plan = item.steps
+          .map((s) => ({ step: this.titleOf(s.step) ?? "", status: s.status }))
+          .filter((s) => s.step.length > 0);
+        if (plan.length === 0) return;
+        this.enqueue({ key: t.key, ts: Math.round(item.ts ?? this.now()), kind: "notice", noticeKind: "plan", plan, repo: this.repoOf(t)?.repo, branch: this.repoOf(t)?.branch });
+        return;
+      }
+      case "notice": {
+        if (this.seenItem(t, item.id)) return;
+        if (m.tasks) applyToTasks(m.tasks, item);
+        this.noticeForSubagent(t, item);
+        const ts = Math.round(item.ts ?? this.now());
+        if (item.noticeKind === "compact") {
+          if (m.lastCompactAt !== undefined && Math.abs(ts - m.lastCompactAt) < COMPACT_DEDUPE_MS) return;
+          m.lastCompactAt = ts;
+        }
+        if (item.noticeKind === "monitor_event") {
+          if (m.lastMonitorEventAt !== undefined && ts - m.lastMonitorEventAt < MONITOR_EVENT_GAP_MS) return;
+          m.lastMonitorEventAt = ts;
+        }
+        this.enqueue({
+          key: t.key,
+          ts,
+          kind: "notice",
+          noticeKind: item.noticeKind,
+          // The title a notice names is conversation text; a monitor event's output is never read.
+          desc: this.conversationShared(t) && item.noticeKind !== "monitor_event" ? this.descOf(item.title) : undefined,
+          durationMs: item.durationMs !== undefined && item.durationMs <= HUB_MAX_DURATION_MS ? item.durationMs : undefined,
+          ok: item.ok,
+          tasks: m.tasks?.counts(),
+          repo: this.repoOf(t)?.repo,
+          branch: this.repoOf(t)?.branch,
+        });
+        return;
+      }
+    }
+  }
+
+  /** A transcript item id seen before (a re-read), else remembers it. */
+  private seenItem(t: Tracked, id: string): boolean {
+    const seen = (t.sentMessages ??= new Set());
+    if (seen.has(id)) return true;
+    seen.add(id);
+    if (seen.size > MAX_SENT_MESSAGE_IDS) seen.delete(seen.values().next().value as string);
+    return false;
+  }
+
+  private repoOf(t: Tracked): Target | undefined {
+    return t.cwdTarget ?? t.lastTarget;
+  }
+
+  /** A background agent's notice in its parent's transcript moves that subagent: waiting on its work, or done. */
+  private noticeForSubagent(t: Tracked, item: Extract<MirrorItem, { kind: "notice" }>): void {
+    if (!item.taskId || !AGENT_ID_SHAPE.test(item.taskId) || !item.noticeKind.startsWith("agent_")) return;
+    const sub = this.sessions.get(`${t.key}/${item.taskId}`)?.sub;
+    if (!sub) return;
+    const ts = item.ts ?? this.now();
+    if (item.noticeKind === "agent_waiting") {
+      if (sub.state !== "idle" || sub.ended !== undefined) sub.stateSince = ts;
+      sub.state = "idle";
+      sub.bgWait = true;
+      sub.ended = undefined;
+    } else if (item.ends) {
+      sub.bgWait = undefined;
+      sub.ended ??= ts;
+    }
+    sub.updatedAt = Math.max(sub.updatedAt, ts);
+  }
+
+  /** Background tasks still running at a turn's end: the session's own count, and the agents its record names. */
+  private turnTasks(t: Tracked, pending?: { agents?: number; workflows?: number }): HubTasks | undefined {
+    const c = { ...(t.mirror?.tasks?.counts() ?? {}) };
+    if (pending?.agents) c.agents = Math.max(c.agents ?? 0, pending.agents);
+    if (pending?.workflows) c.workflows = Math.max(c.workflows ?? 0, pending.workflows);
+    return Object.keys(c).length ? c : undefined;
+  }
+
+  /** v0.11 upsert fields of a main session: mode, running tasks, model, and (conversation level) its title. */
+  private mirrorFields(s: AgentSession, t: Tracked, ended: boolean): Partial<HubSessionUpsert> {
+    const m = t.mirror;
+    if (!m || s.source === "workflow") return {};
+    const subagent = s.source === "codex" && t.codexMeta?.meta?.parentThreadId !== undefined;
+    return {
+      mode: ended ? undefined : m.mode,
+      tasks: ended ? undefined : m.tasks?.counts(),
+      ...(t.usage?.model || !m.model ? {} : { model: m.model }),
+      ...(!subagent && m.title && this.conversationShared(t) ? { title: this.titleOf(m.title.text) } : {}),
+    };
+  }
+
   // --- sessions ----------------------------------------------------------------
 
   private buildUpsert(s: AgentSession, t: Tracked, ended?: number): HubSessionUpsert | undefined {
@@ -1295,6 +1492,7 @@ export class HubForwarder {
         updatedAt: ended ?? s.updatedAt,
         stateSince: ended ?? s.stateSince,
         ...this.structureFields(s, t, ended !== undefined),
+        ...this.mirrorFields(s, t, ended !== undefined),
         ...this.livenessFields(s, t, ended !== undefined),
       },
       SESSION_REQUIRED,
@@ -1347,7 +1545,13 @@ export class HubForwarder {
       const agents = Math.max(t.bg?.agents ?? 0, this.structured ? liveSubs : 0);
       // "waiting on 1 shell": only while the session itself waits on that work.
       const waitingOnIt = s.state !== "working" || s.background === true || s.activity === "delegating to subagents";
-      if (waitingOnIt) statusLine = backgroundStatusLine(shells, agents)?.slice(0, HUB_STATUS_LINE_MAX);
+      const counts = t.mirror?.tasks?.counts();
+      if (waitingOnIt) {
+        statusLine = (counts ? tasksStatusLine({ ...counts, agents: Math.max(counts.agents ?? 0, agents) }) : backgroundStatusLine(shells, agents))?.slice(
+          0,
+          HUB_STATUS_LINE_MAX,
+        );
+      }
     }
     return { role: "main", statusLine, ...usage };
   }
@@ -1384,7 +1588,10 @@ export class HubForwarder {
         name: this.subagentName(title, sub.agentType),
         state: ended ? "ended" : sub.state,
         activity: ended ? undefined : sub.label,
-        statusLine: ended ? undefined : sub.label?.slice(0, HUB_STATUS_LINE_MAX),
+        statusLine: ended
+          ? undefined
+          : (sub.bgWait ? (tasksStatusLine(t.usage?.tasks) ?? "waiting on background work") : sub.label)?.slice(0, HUB_STATUS_LINE_MAX),
+        tasks: ended ? undefined : t.usage?.tasks,
         repo: target?.repo,
         branch: target?.branch,
         startedAt: sub.startedAt,
@@ -1412,8 +1619,9 @@ export class HubForwarder {
       t.lastTarget = parent.lastTarget;
     }
     if (sub.ended === undefined) {
-      const quiet = now - sub.updatedAt > SUBAGENT_IDLE_END_MS;
-      if (!parent || !live.has(sub.parentKey) || quiet) sub.ended = Math.min(now, quiet ? sub.updatedAt + SUBAGENT_IDLE_END_MS : now);
+      const idleEnd = sub.bgWait ? SUBAGENT_BG_WAIT_END_MS : SUBAGENT_IDLE_END_MS;
+      const quiet = now - sub.updatedAt > idleEnd;
+      if (!parent || !live.has(sub.parentKey) || quiet) sub.ended = Math.min(now, quiet ? sub.updatedAt + idleEnd : now);
     }
     // Never sent (older hub, or not shared): nothing to end on the hub.
     if (sub.ended !== undefined && (!this.structured || !t.shared) && t.sentJson === undefined) {
@@ -1492,7 +1700,7 @@ export class HubForwarder {
       }
       const got = await r.read();
       if (got?.more) t.usageDirty = true;
-      return got ? { tokensIn: got.tokensIn, tokensOut: got.tokensOut, model: got.model } : undefined;
+      return got ? { tokensIn: got.tokensIn, tokensOut: got.tokensOut, model: got.model, tasks: got.tasks } : undefined;
     }
     if (t.key.startsWith("codex:") && t.rollout) return readCodexUsage(t.rollout);
     if (t.workflowDir) {
@@ -1575,6 +1783,10 @@ export class HubForwarder {
 
   private async tickUnsafe(force: boolean): Promise<void> {
     if (this.halted) return;
+    // v0.11 (SPEC §26): every open session's tail is checked each tick, so a
+    // line the agent tool writes between hooks (a task notice, a title) is
+    // read within about a second; an unchanged file costs one stat.
+    for (const t of this.sessions.values()) if (t.tail && this.getSession(t.key)) t.tailDirty = true;
     // Transcript reads first (bounded, async), so a turn's last message rides
     // in the same batch as its turn event.
     if ([...this.sessions.values()].some((t) => t.tailDirty || t.pendingTurn)) await this.pump();
@@ -1831,6 +2043,9 @@ export class HubForwarder {
         usage: t.usage,
         sentLinks: t.sentLinks ? [...t.sentLinks].slice(-200) : undefined,
         sentMessages: t.sentMessages ? [...t.sentMessages].slice(-500) : undefined,
+        mirror: t.mirror
+          ? { title: t.mirror.title, mode: t.mirror.mode, model: t.mirror.model, tasks: t.mirror.tasks?.entries() }
+          : undefined,
       });
     }
     return {
@@ -1892,6 +2107,7 @@ export class HubForwarder {
         t.usageDirty = true;
         if (Array.isArray(p.sentLinks)) t.sentLinks = new Set(p.sentLinks.filter((x): x is string => typeof x === "string"));
         if (Array.isArray(p.sentMessages)) t.sentMessages = new Set(p.sentMessages.filter((x): x is string => typeof x === "string"));
+        if (p.mirror && typeof p.mirror === "object") t.mirror = restoreMirror(p.mirror);
         if (p.sub) {
           if (gone.has(p.sub.parentKey)) continue; // its parent is gone: never sent again
           t.sub = { ...p.sub, meta: p.sub.meta === "pending" ? "none" : p.sub.meta };
@@ -1987,6 +2203,27 @@ interface PersistedTracked {
   usage?: Usage;
   sentLinks?: string[];
   sentMessages?: string[];
+  /** v0.11 (SPEC §26): title (raw, local file only), mode, model, running background tasks by id. */
+  mirror?: { title?: { text: string; custom: boolean }; mode?: string; model?: string; tasks?: Array<{ id: string; kind: TaskKind }> };
+}
+
+const TASK_KINDS: ReadonlySet<string> = new Set(["shells", "monitors", "agents", "workflows", "other"]);
+
+/** A saved mirror state, read defensively (the tail resumes at its offset, so it isn't seeded again). */
+function restoreMirror(p: NonNullable<PersistedTracked["mirror"]>): MirrorState {
+  const m: MirrorState = { seeded: true };
+  const str = (v: unknown, max: number) => (typeof v === "string" && v.length > 0 && v.length <= max ? v : undefined);
+  if (p.title && typeof p.title === "object" && str(p.title.text, 2000)) m.title = { text: p.title.text, custom: p.title.custom === true };
+  m.mode = str(p.mode, 40);
+  m.model = str(p.model, 80);
+  if (Array.isArray(p.tasks)) {
+    const tasks = new TaskSet();
+    for (const e of p.tasks) {
+      if (e && typeof e.id === "string" && TASK_KINDS.has(e.kind)) tasks.add(e.id.slice(0, 64), e.kind);
+    }
+    if (tasks.size) m.tasks = tasks;
+  }
+  return m;
 }
 
 /** The state file's shape (`hub-forward.json`). */

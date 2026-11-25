@@ -34,7 +34,11 @@ const texts = (items: Awaited<ReturnType<typeof readTail>>["items"]): string[] =
 describe("parseClaudeLine: only the agent's own text and the turn record", () => {
   it("emits assistant text blocks with the record's timestamp", () => {
     const items = parseClaudeLine(cl.text("Tests pass; opening the PR.", "u1", 1_000));
-    expect(items).toEqual([{ kind: "message", id: "u1:0", ts: 1_000, text: "Tests pass; opening the PR." }]);
+    // v0.11: an assistant line also names its model (metadata, SPEC §26).
+    expect(items).toEqual([
+      { kind: "model", ts: 1_000, model: "claude-opus-5-5" },
+      { kind: "message", id: "u1:0", ts: 1_000, text: "Tests pass; opening the PR." },
+    ]);
   });
 
   it("never yields thinking, tool calls, tool results, user lines, API copies, sidechains or synthetic errors", () => {
@@ -51,7 +55,8 @@ describe("parseClaudeLine: only the agent's own text and the turn record", () =>
       "{not json",
       "",
     ]) {
-      expect(parseClaudeLine(line), line).toEqual([]);
+      // Nothing but the model (metadata, SPEC §26) may come out of these lines.
+      expect(parseClaudeLine(line).filter((i) => i.kind !== "model"), line).toEqual([]);
     }
   });
 

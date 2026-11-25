@@ -23,6 +23,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **done** (11-24): relay #5, board in workmesh-cloud #1; polish next |
 | v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **done** (11-24): names, markup, orchestrators, graph fit (relay in the next release, 0.9.1); Linear titles live |
 | Liveness | Presence from the hub, not the browser; a restart never ends sessions; the daemon as a launchd / systemd service; current client versions; quiet and stalled sessions | **done** (11-25): wire #11, relay (in 0.10.0 with v1, not yet on npm), hub in workmesh-cloud #4 |
+| v0.11 Session mirror | The board's session page reads like the person's terminal: title, harness and model; prompts, messages, folded tool runs; background-agent and shell notices; turn lines with what's still running; mode, background tasks and agents in a footer | **in progress** (11-25): wire merged (#13, SPEC §26); relay built; board Terminal view in workmesh-cloud |
 | v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub and board live (workmesh-cloud #5) |
 | Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); relay MCP tool `ask` next |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
@@ -132,6 +133,21 @@ Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interru
 - **Next:** publish relay 0.10.0 (npm, two key taps) so teammates get the service and the saved state; the menu bar
   build that shows "asleep"/"reconnecting".
 
+### v0.11 Session mirror (Linear B3-7166, in progress 11-25)
+Sean, 11-25: "better representation of what the users see on their actual codex/claude sessions, ideally synced to
+this". Wire: SPEC §26.
+- **Wire (done, #13):** a `notice` event kind (background agents, shells, monitors, workflows, compaction, plan) with
+  its subject's title in `desc` at the conversation level; `tasks` (running background tasks by kind) on sessions,
+  turns and notices; `mode` on sessions; a main session's `title`; Codex `plan` steps.
+- **Relay (built):** reads Claude Code's own records from the transcript tail (AI or custom title, permission mode,
+  model, compactions, task notices by Claude Code's templates, background launches), the Stop hook's running tasks by
+  id, each subagent's own shells and monitors from its transcript (a subagent that stops with background work stays
+  open as "waiting on 1 shell, 1 monitor" until its finished notice), and Codex turn context, compactions and plan
+  updates. Metadata devices send the counts and states only. Tails are checked every second, so a notice written
+  between hooks arrives in about two seconds.
+- **Board (next):** a Terminal view on the session page, default for conversation-level sessions, in Geist Mono with
+  the CLI's glyphs; the turn-summary view stays one click away.
+
 ### v1 Coordinate (Linear B3-7167, in progress 11-25)
 - MCP server in every session: `roster`, `send`, `inbox`, `claim`, `lease`, `note`.
 - File leases enforced by a PreToolUse deny that names the holder; claims mirrored to Linear as agent sessions under
@@ -175,6 +191,11 @@ Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interru
 - Shared knowledge: rulings and conventions loaded at session start for everyone's agents.
 
 ## Decision log
+
+- 11-25 v0.11 mirror: the notices come from Claude Code's own `<task-notification>` templates, read on the machine;
+  only the title a template names (an agent's task, a background command's description, a workflow's name) may
+  leave, at the conversation level, and a monitor event never carries its output. Background tasks travel as counts
+  by kind, never their commands. `title` on a main session reuses the subagent field (conversation text either way).
 
 - 11-25 Ask: answers come only from tool reads of the hub's own data; actions are proposals a person confirms on a
   card, never run from a model's turn; agents asking get read tools only and no prompt or message text.

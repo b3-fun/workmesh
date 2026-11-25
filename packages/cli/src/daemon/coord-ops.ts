@@ -257,6 +257,8 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         to,
         text,
         ...(str(a.thread, 64) ? { thread: str(a.thread, 64) } : {}),
+        // v2 (SPEC §30): wake an idle recipient (absent: the hub's default, a person's message wakes).
+        ...(typeof a.wake === "boolean" ? { wake: a.wake } : {}),
       });
       if (!r.ok) return hubError(r);
       if (!r.body.ok) return fail(`Workmesh: ${r.body.error || "the hub didn't take the message"}`);

@@ -30,8 +30,7 @@ If your own machine runs Workmesh's hooks from a checkout, develop in a git work
 agent session's hooks run its `packages/cli/dist/index.js`, and a half-built bundle breaks them. Swap a new build in
 with one `mv`.
 
-Try your machine against a hub: `npm i -g @b3os/workmesh && workmesh setup --hooks-only && workmesh start --detach &&
-workmesh hub connect https://workmesh.b3os.org`.
+Try your machine against a hub: `npm i -g @b3os/workmesh && workmesh init https://workmesh.b3os.org`.
 
 ## Layout
 

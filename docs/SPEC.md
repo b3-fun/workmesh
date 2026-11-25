@@ -809,3 +809,80 @@ v2 on this hub", and an empty list as "v2, nothing now".
 
 A relay keeps every item it can read and drops the rest one by one (an unknown handoff status or gate action drops
 that item, so a relay never acts on a state it can't read).
+
+## 31. The relay side (`packages/cli`, 0.11.0)
+
+Everything below is opt-in where it could stop an agent, and fails open: no gate holds a command unless its person
+turned that gate on and the hub answers v2 with a sync under 90 s old; a request that doesn't reach the hub lets the
+command run; a waiter that can't reach the daemon ends.
+
+- **Sync.** The v1 sync (§23) carries the v2 lists; their absence means "no v2" (nothing gated, no handoffs). The
+  relay's v2 calls (`/relay/handoffs`, `/relay/approvals`, `/relay/gates`) treat a `404` as "this hub has no v2" for
+  10 minutes, without turning v1 coordination off.
+- **Approval gates** (`daemon/gates.ts`, `daemon/delegate.ts`). At `PreToolUse` of a shell tool in a shared session,
+  a small table reads the command's words the way the shell splits them (`cd`, env assignments, wrappers such as
+  `sudo`, `npx`, `pnpm dlx`, and `sh -c "…"` are looked through) for: `merge` (`gh pr merge`, `gh api … /pulls/N/merge`
+  with PUT, `glab mr merge`), `deploy` (wrangler deploy/publish/rollback and pages/versions deploy, `vercel --prod`,
+  `netlify deploy --prod`, fly/flyctl deploy, railway up, firebase deploy, kubectl apply/rollout/…, helm, terraform /
+  tofu apply, pulumi up, cdk deploy, serverless deploy, gcloud … deploy, aws cloudformation/lambda/ecs deploys, and
+  `deploy*` scripts through npm/pnpm/yarn/bun/make/just), `publish` (npm/pnpm/yarn/bun publish, `release*` scripts,
+  cargo, twine, uv, poetry, gem, docker push, gh release create, changeset, semantic-release, goreleaser),
+  `force_push` (`git push` with `-f`, `--force`, `--force-with-lease`, `--force-if-includes`, `--mirror` or a `+`
+  refspec), `spend` (a few paid-infra creates: aws ec2 run-instances, gcloud compute instances create, hcloud, doctl,
+  vastai, runpodctl, fly scale), and `custom` (the person's own regexes, `gates.custom` in config). When the person's
+  policy (`gates`, owner = this device's person) gates the action, the relay looks for an approval for this session,
+  gate and detail: approved (decided within the hour) lets the command run; denied refuses it with who and why;
+  pending, or none yet, holds it with "Waiting for Sean's approval to merge (gh pr merge 212 --merge in
+  b3-fun/b3os-beta); you'll get a message when it's decided", and with none yet the daemon asks (`request`) in the
+  background, never in the hook path. A request the hub doesn't take (an error, a `404`, no answer) lets that
+  command through for 10 minutes and tells the agent so. A decision reaches the session that asked as a notice
+  (below), waking it. The `detail` is program, subcommand, the PR or target, safe flags and the repo, never a flag
+  value or env value, and is redacted (§9). Agents can't set gates or decide approvals: `gates` and
+  `approvals approve|deny` refuse a caller the daemon identifies as an agent session, and the MCP server has no tools
+  for them. (A cooperative guard rail, not a sandbox: anything running as the person can call the hub.)
+- **Handoffs** (`daemon/delegate.ts`, `daemon/handoff-runner.ts`). MCP `handoff { to, task, repo?, issue?, context? }`
+  (repo: the calling session's, by default; `to: "me"` is the person themselves) and `handoffs { action: list |
+  accept | decline, id?, note? }`; CLI `workmesh handoff`, `handoffs`, `handoffs policy`, `roots`. Task and context
+  are redacted (§9). The policy `handoffs.accept` in config: `auto-self` (absent = this): a handoff the person sent
+  themselves is accepted by a machine of theirs at once (the sending machine waits 20 s so another of their machines
+  may take it first), anyone else's waits for the person; `ask`: every handoff waits; `never`: this machine runs
+  none. Accepted for this device (`device`), or accepted on the board with no device, the runner `start`s it (the
+  hub's first-start-wins decides between the person's machines) and runs it: it finds a main checkout of `repo` (the
+  shared repos this machine's sessions worked in, remembered in `checkouts.json`, and repos up to two levels under
+  `handoffs.roots`), makes `git worktree add -b workmesh/handoff-<id> <checkout>-handoff-<id> <origin's default
+  branch>` (`handoffs.worktree: false` runs in the checkout), and starts the agent detached, wrapped in `sh` so its
+  exit code lands in a file: `claude -p <prompt> --session-id <uuid chosen before start> --output-format json
+  --permission-mode <handoffs.permissionMode, default auto> --name "handoff: …"`, or `codex exec --json -C <dir> -s
+  workspace-write -o <file> <prompt>` (its thread id, read from the first event, goes to the hub as a second
+  `start`). A handoff with no repo runs in a scratch dir under the state dir, which is shared (it is Workmesh's own
+  and holds nothing else). At exit the runner sends `done` (exit 0) or `fail`, with the agent's last words as the
+  note at the conversation level (redacted, ≤ 500) and only how it ended at `metadata`. Runs survive a daemon
+  restart (`handoffs/running.json`, 0600), at most `handoffs.maxRunning` (2) at once, stopped after
+  `handoffs.maxMinutes` (120). The session that sent a handoff gets a notice when it is accepted, declined, started,
+  done or failed (the last three wake it).
+- **Notices.** The daemon writes notices for its own sessions (an approval decided, a handoff's progress) into the
+  same inbox as teammates' messages, delivered the same way and never acked to the hub.
+- **Wake.** An inbox item wakes an idle session when its `wake` says so, else when a person wrote it; the daemon's
+  notices about outcomes wake too. Claude Code: `workmesh setup` (and `init`; `--no-wake` skips it) adds a Stop hook
+  `{ type: "command", command: "<node> <cli> wake-wait claude-code", asyncRewake: true, timeout: 3600 }`. Claude Code
+  runs it in the background after each turn; it long-polls the daemon (`POST /wake/wait {session, timeoutMs ≤ 55 s}`,
+  bearer secret) and exits 2 with the messages on stderr, which Claude Code shows the model ("Stop hook feedback")
+  and so starts a turn, or exits 0 when the session ends, a newer waiter takes over, its parent goes, the daemon is
+  gone for 5 minutes, or after 59 minutes; the next Stop arms a new one. It runs only for Claude Code 2.1.330 or newer,
+  read from the transcript's `version` (an older one could run an async hook in the foreground). The daemon hands a
+  waiter messages only while its session isn't working (a working session gets them at its next tool boundary, §23),
+  marks them delivered when it answers, and frees a waiter whose request closed. Codex: for an idle thread the daemon
+  runs `codex queue --thread <id> --message <text>` once per message (verified on codex-cli 0.164: an idle TUI holding
+  the thread starts a turn within seconds; a thread nobody holds keeps it until resumed); a failure leaves the message
+  for the next tool boundary. `workmesh wake off` turns waking off. The texts say where they come from: a wake for a
+  teammate's message asks the agent to answer and not to start unrelated work on a teammate's say-so; an approval
+  notice says the gate re-checks on the retry, so the agent needn't trust the notice to act on it.
+- **Team knowledge.** The SessionStart note (§23) adds the project's notes tagged `rule` or `convention` (newest first,
+  one line each, ≤ 15 lines with the claims) and the person's open claims.
+- **Menu bar.** `GET /team` adds `delegate: { available, handoffs, approvals }` (handoffs offered to the person or
+  running here; pending approvals this machine's agents asked for or the person may decide); Workmesh.app shows
+  "Handoffs for you" (Accept / Decline) and "Approvals" (Approve / Deny), answered through `POST /coord/op` as the
+  person.
+- **`workmesh init <hub-url>`.** Hooks and MCP (as `setup --hooks-only`), the daemon (the service when it can,
+  restarted on this build; else in the background), and `hub connect` unless this machine is paired with that hub and
+  the hub still accepts its token (`--repair` pairs again; `--share` sets the level either way).

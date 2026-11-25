@@ -41,6 +41,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
         text: s("The message (up to 4,000 characters)."),
         kind: { type: "string", enum: ["person", "agent", "session"], description: "What `to` names, when it is ambiguous." },
         thread: s("A thread id to reply in."),
+        wake: { type: "boolean", description: "Wake the recipient if it is idle (default: only a person's messages wake)." },
       },
       required: ["to", "text"],
       additionalProperties: false,

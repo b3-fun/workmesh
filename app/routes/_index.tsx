@@ -172,8 +172,8 @@ export default function Index(_: Route.ComponentProps) {
               <CodeBlock
                 commands={[
                   { cmd: "npm install -g @b3os/workmesh" },
-                  { cmd: "workmesh setup", note: "# pairs Slack, installs agent hooks" },
-                  { cmd: "workmesh hub connect <url>", note: "# joins your team's board" },
+                  { cmd: "workmesh init <hub-url>", note: "# hooks, daemon, joins your team's board" },
+                  { cmd: "workmesh setup", note: "# optional: your Slack status too" },
                 ]}
               />
               <p className="mt-3 font-mono text-xs text-fg-faint">
@@ -354,7 +354,7 @@ export default function Index(_: Route.ComponentProps) {
               <CodeBlock
                 title="team board"
                 commands={[
-                  { cmd: "workmesh hub connect <url>", note: "# approve in the browser" },
+                  { cmd: "workmesh init <hub-url>", note: "# approve in the browser" },
                   { cmd: "workmesh hub share metadata", note: "# or conversation" },
                 ]}
               />

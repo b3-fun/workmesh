@@ -26,7 +26,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.11 Session mirror | The board's session page reads like the person's terminal: title, harness and model; prompts, messages, folded tool runs; background-agent and shell notices; turn lines with what's still running; mode, background tasks and agents in a footer | **done** (11-25): wire #13, relay #14 + #20 (on Sean's Mac, in the next release), hub and board workmesh-cloud #8 (live) |
 | v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub and board live (workmesh-cloud #5) |
 | Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); relay MCP tool `ask` next |
-| v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | **in progress** (11-25): wire (SPEC §30); relay and hub building |
+| v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **in progress** (11-25): wire merged (#22, SPEC §30); relay built (SPEC §31, 0.11.0 not published); hub and board in workmesh-cloud |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -199,12 +199,40 @@ this". Wire: SPEC §26.
 - Messages delivered into running and idle sessions (Claude Code session inbox, Codex app-server).
 - Handoffs to another person's runner through that person's policy; approval gates at merge, deploy, spend.
 - Shared knowledge: rulings and conventions loaded at session start for everyone's agents.
-- **Wire (SPEC §30):** `POST /relay/handoffs` (create, accept, decline, start, done, fail; the first `start` wins
-  when no device accepted), `POST /relay/approvals` (request, approve, deny), `POST /relay/gates` (a person's own
-  gates), `wake` on messages and inbox items, and optional `handoffs`, `gates`, `approvals` lists on `/relay/sync`.
+- **Wire (merged, #22, SPEC §30):** `POST /relay/handoffs` (create, accept, decline, start, done, fail; the first
+  `start` wins when no device accepted), `POST /relay/approvals` (request, approve, deny), `POST /relay/gates` (a
+  person's own gates), `wake` on messages and inbox items, and optional `handoffs`, `gates`, `approvals` lists on
+  `/relay/sync`.
+- **Relay (built, SPEC §31, CLI 0.11.0 not published):**
+  - `workmesh init <hub-url>`: hooks, MCP tools, the daemon (restarted on the current build) and pairing in one
+    command; safe to run again (pairing kept while the hub accepts the token, `--repair` pairs again).
+  - Wake: an `asyncRewake` Stop hook long-polls the daemon and wakes an idle Claude Code session with its next
+    message (a person's message, an approval decided, a handoff's outcome); Codex threads through `codex queue`.
+  - Handoffs: MCP `handoff` / `handoffs`, CLI `handoff`, `handoffs`, `roots`; policy `auto-self` (default: your own
+    handoffs run at once, teammates' wait for your Accept), `ask`, `never`; an accepted handoff runs in a new git
+    worktree with `claude -p` (or `codex exec`), shared on the board and linked by its session, reporting done/fail.
+  - Approval gates: `workmesh gates set merge,deploy`; gated shell commands (a tested table: merges, deploys,
+    publishes, force pushes, paid-infra creates, custom patterns) wait for an approval, the decision wakes the agent;
+    fails open.
+  - Session start: the project's `rule` / `convention` notes and the person's open claims.
+  - Menu bar: Handoffs for you (Accept / Decline) and Approvals (Approve / Deny).
+- **Checked live (11-25)** with Claude Code 2.1.332 in a throwaway session against a stand-in hub: the SessionStart
+  note carried a `rule` note; a person's message woke the idle session about 4 s after the hub had it, and the hook
+  re-armed; `gh pr merge` was held with the approval text and the request reached the hub; approving woke the
+  session. Haiku then asked its person to confirm before merging (Claude Code shows the wake as "Stop hook
+  feedback", which a model won't take as consent), so the texts now say the gate re-checks the approval on the retry;
+  that wording isn't re-run live yet (the test account hit its spend limit). Handoff runs, Codex wake and `init` are
+  checked with fixtures: a stand-in `claude` binary, `codex queue` per a live probe of codex-cli 0.164, a temp HOME.
+- **Next:** the hub and board side (workmesh-cloud); publish 0.11.0; a live handoff between two people's machines;
+  whether the approval retry needs the person's word in the terminal in practice.
 
 ## Decision log
 
+- 11-25 v2 relay: everything new fails open and stops nothing unless its person opted in: gates are off until a
+  person sets them for their own agents and need a fresh v2 sync; a handoff from someone else runs only after its
+  recipient accepts it (own handoffs by the `auto-self` default), in a new worktree so nobody's working tree is
+  touched; waking needs Claude Code 2.1.330+ (read from the transcript) and is one opt-out setting. Agents can't set
+  gates or decide approvals. `workmesh init` is the one onboarding command.
 - 11-25 v2 wire: a handoff runs only after its recipient accepts it (a self-handoff by the sender's own policy);
   an accept from a relay names the runner, one from the board lets the first relay to `start` win. Gates are a
   person's choice for their own agents, enforced only by their own relay; absent lists on sync mean "no v2", so an

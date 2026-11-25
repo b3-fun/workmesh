@@ -43,6 +43,19 @@ rolling expiration means a dead daemon clears itself instead of lying.
 
 ```bash
 npm i -g @b3os/workmesh
+workmesh init https://workmesh.b3os.org   # hooks, MCP tools, the daemon, pairing (approve in the browser)
+```
+
+`workmesh init <hub-url>` (0.11+) does the whole setup in one go and prints each step: it
+installs or refreshes the agent hooks and the `workmesh` MCP server, runs the daemon (under
+launchd / systemd when it can) and restarts it on the current build, then pairs this machine
+with the hub, opening the browser to approve. Running it again is safe: hooks that are
+already right stay as they are, and pairing is skipped while the hub still accepts this
+machine (`--repair` pairs again). `--share conversation|metadata`, `--no-codex`, `--no-open`,
+`--machine <name>`, `--claude-dir <path>`, `--no-mcp`, `--no-service` and `--no-wake` pass
+through. The same steps by hand:
+
+```bash
 workmesh setup --hooks-only        # Claude Code hooks, plus Codex's if Codex is installed
 workmesh start --detach            # the daemon, in the background
 workmesh hub connect <url>         # join your team's board (approve in the browser)
@@ -482,6 +495,41 @@ up to 30 minutes until a sync confirms it was lifted. Lease paths, claimed issue
 the text of messages and notes you send (redacted first) go to the hub; nothing else
 about your files does.
 
+### Delegate: handoffs, approval gates, waking idle sessions
+
+Since 0.11 (SPEC §30-31), on a hub that serves them (an older hub answers 404 and none of
+this happens):
+
+- **Handoffs.** An agent (the `handoff` MCP tool) or you (`workmesh handoff An "…" --repo
+  b3-fun/x`) hand a task to a teammate, or to `me` for another of your machines. The
+  recipient accepts it on the board or in their menu bar (`workmesh handoffs accept <id>`
+  works too); their machine then starts a new agent for it: it finds its checkout of the
+  repo (repos your sessions worked in, and dirs you name with `workmesh roots add ~/code`),
+  makes a git worktree on a fresh `workmesh/handoff-…` branch from the default branch (your
+  working tree is never touched), and runs `claude -p` (or `codex exec`) there in the
+  background. The session is shared like any other in that repo, so it shows on the board,
+  linked to the handoff; when it ends the hub hears `done` or `failed` with a short note,
+  and the sender's agent is told. Which handoffs run without a click is your policy,
+  `workmesh handoffs policy`: `auto-self` (the default: ones you send yourself run at once on
+  one of your machines; teammates' wait for your Accept), `ask` (all wait) or `never`.
+- **Approval gates.** `workmesh gates set merge,deploy` makes your own agents ask before they
+  merge a PR, deploy, publish, force-push or spend (`workmesh gates off` turns them off;
+  nothing is gated until you opt in). A gated shell command (`gh pr merge 212`, `wrangler
+  deploy`, `npm publish`, `git push --force`, …) is held with "Waiting for Sean's approval
+  to merge (gh pr merge 212 --merge in b3-fun/b3os-beta)", and the board, your menu bar and
+  `workmesh approvals` show it to approve or deny. The agent is told the decision. Agents
+  can't set gates or decide approvals. Gates fail open: when the hub can't be reached, or
+  the request doesn't reach it, the command runs. Only the few words naming the action
+  leave your machine, and only for actions you gated.
+- **Waking idle sessions.** A message for a session that sits idle (a teammate's message, an
+  approval decided, a handoff finished) wakes it: in Claude Code through an `asyncRewake`
+  Stop hook that waits for the session's next message (Claude Code 2.1.330+), in Codex
+  through `codex queue`. A message from an agent waits for the next turn unless its sender
+  asks to wake. `workmesh wake off` turns it off.
+- **Team knowledge.** The note at the start of each shared session also carries the
+  project's notes tagged `rule` or `convention` (`workmesh note "…" --tag rule`) and your
+  open claims.
+
 ### What the hub stores, and open questions
 
 > **To be filled in by Sean.** The hub's code is private, so this section can't be checked
@@ -521,6 +569,7 @@ Open questions:
 
 | Command | Does |
 |---|---|
+| `workmesh init <hub-url>` | One-step setup for a team hub: hooks and MCP tools, the daemon (restarted on this build), pairing; safe to run again (`--share`, `--no-codex`, `--no-open`, `--machine`, `--claude-dir`, `--no-mcp`, `--no-service`, `--no-wake`, `--repair`) |
 | `workmesh setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt; `--hooks-only` just installs or refreshes the hooks and the `workmesh` MCP server (`--no-mcp` skips it); `--claude-dir <path>` picks the Claude Code profile (default `$CLAUDE_CONFIG_DIR`, else `~/.claude`); `--codex` / `--no-codex` decide about Codex (default: only when installed) |
 | `workmesh uninstall` | Remove Workmesh's hooks and MCP server from Claude Code (`settings.json`, `.claude.json`) and Codex (`hooks.json`, `config.toml`), keeping everything else, and its launchd / systemd daemon service (which stops the daemon it ran); backs up each file first (`--claude-dir <path>`, `--no-codex`, `--no-service`) |
 | `workmesh start [--detach]` | Run the daemon, foreground or in the background |
@@ -546,6 +595,13 @@ Open questions:
 | `workmesh inbox` | Messages waiting for this machine's agents (inside an agent session: for that session) |
 | `workmesh note <text...>` / `notes` | Leave a note every teammate's agent can read; list the newest |
 | `workmesh whoami` | Your person on the hub, and which agent session a command speaks for |
+| `workmesh handoff <to> <task...>` | Hand a task to a teammate or `me` (`--repo`, `--issue`, `--context`); their machine starts an agent once they accept |
+| `workmesh handoffs [accept\|decline <id>]` | Handoffs offered to you and sent by you; accept or decline one (`--note`) |
+| `workmesh handoffs policy [auto-self\|ask\|never]` | Which handoffs this machine runs without a click |
+| `workmesh roots [add\|remove <dir>]` | Where your repos live, for handoffs |
+| `workmesh gates [set <list>\|off]` | Approval gates on your own agents: `merge`, `deploy`, `publish`, `force_push`, `spend`, `custom` |
+| `workmesh approvals [approve\|deny <id>]` | Approvals your agents asked for, and ones you may decide (`--note`) |
+| `workmesh wake [on\|off]` | Whether an idle session wakes for its messages (default on) |
 | `workmesh mcp` | The coordination tools as an MCP server (stdio); `workmesh setup` registers it with Claude Code (user scope) and Codex |
 | `workmesh doctor [--json]` | Diagnose config, daemon, hooks (`--claude-dir <path>` for another profile; fails when a hook's Node binary is gone), MCP registration, hub forward, coordination, and connectivity |
 

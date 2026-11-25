@@ -16,11 +16,12 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | Milestone | What | Status |
 |---|---|---|
 | v0 See | Every B3 session on one live board; metadata only; Access login; pairing | **done** (11-24) |
-| v0.2 Conversation + summaries | Prompts, agent messages, tool descriptions, turn durations; now lines, turn summaries, waiting reasons, digest (OpenRouter) | **done** on the hub; relay 0.7.0 merged; first `@b3os/workmesh` publish in progress |
+| v0.2 Conversation + summaries | Prompts, agent messages, tool descriptions, turn durations; now lines, turn summaries, waiting reasons, digest (OpenRouter) | **done** (11-24); `@b3os/workmesh` 0.8.0 on npm |
 | v0.3 B3OS look | Board rebuilt from the B3OS console component library, exactly | **done** (11-24) |
-| v0.4 One system | Monorepo, rename to Workmesh, shared protocol package | **done** (11-24); hub deploys from CI next |
-| v0.5 Multiplayer menu bar | The team in the menu bar | **in progress**: relay + menu bar on branch `relay-v06`; hub `/relay/team` in parallel |
-| v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **in progress**: wire merged (#3), relay capture on `relay-v06`; board in parallel |
+| v0.4 One system | Rename to Workmesh, shared protocol package; open-source client here, hosted platform private (b3-fun/workmesh-cloud) | **done** (11-24); hub deploys from CI next |
+| v0.5 Multiplayer menu bar | The team in the menu bar | **done** (11-24): menu bar 0.5.0, hub `/relay/team` live |
+| v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **done** (11-24): relay #5, board in workmesh-cloud #1; polish next |
+| v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **next** |
 | v1 Coordinate | Claims, file leases, hold, Linear agent identities | later |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
@@ -85,6 +86,15 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
   the person's prompt. Not captured: cost (no agent records it per subagent), Codex inbound agent messages, main
   Claude Code sessions' tokens.
 
+### v0.7 Polish from real use (next)
+Found on the live board with real sessions, 11-24:
+- The live feed names subagents by their raw key (`claude-code:f2533…`); show the type and task instead.
+- Agent messages can carry injected markup (e.g. a leading `<artifact-…>` block); hide system-injected content from the Messages tab and the feed.
+- Sessions started outside a repo (an orchestrator in `~/Documents`) group under "No repo"; group them by the repo they touched most, or as "Orchestrators".
+- Graph opens zoomed out with empty space; fit to the nodes on load.
+- Linear chips show ids only until the hub has `LINEAR_API_KEY` (read-only key or the Linear app from v1).
+- Publish relay 0.9.0 (subagents, messages, links, avatars, team menu bar) so teammates get v0.6 capture; ship the menu bar build as a release asset.
+
 ### v1 Coordinate (Linear B3-7167)
 - MCP server in every session: `roster`, `send`, `inbox`, `claim`, `lease`, `note`.
 - File leases enforced by a PreToolUse deny that names the holder; claims mirrored to Linear as agent sessions under
@@ -97,6 +107,8 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 - Shared knowledge: rulings and conventions loaded at session start for everyone's agents.
 
 ## Decision log
+
+- 11-24 Split: the installed client (this repo: CLI, daemon, hooks, menu bar, protocol) stays open source; the hosted platform (hub, board, summaries, integrations) lives in the private b3-fun/workmesh-cloud and is run by us (Sean).
 
 - 11-24 Build our own thin hub beside Linear rather than adopt Multica or fork Codecast (research: Linear document
   "Research: multiplayer agents").

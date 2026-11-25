@@ -44,6 +44,16 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 PLIST
 
 echo "Built $APP"
+
+# ZIP=1: the release asset the menu bar app updates itself from. Made from this
+# local build with ditto, so it carries no quarantine flag inside it.
+if [ "${ZIP:-}" = "1" ]; then
+  ZIPFILE="$OUT/Workmesh-menubar-macos.zip"
+  rm -f "$ZIPFILE"
+  (cd "$OUT" && /usr/bin/ditto -c -k --keepParent "$APP_NAME.app" "Workmesh-menubar-macos.zip")
+  echo "Zipped $ZIPFILE"
+  echo "  sha256 $(shasum -a 256 "$ZIPFILE" | cut -d' ' -f1)"
+fi
 echo "Run it:  open \"$APP\"    (or double-click)"
 echo
 echo "Unsigned build — first launch: right-click → Open, or"

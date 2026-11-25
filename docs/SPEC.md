@@ -12,7 +12,7 @@ https://workmesh.b3os.org; the hosted hub's code and internals are private (§14
 | Hub | hosted by B3 (private) | Pairs machines, keeps what they share, writes summaries, serves the board. |
 
 If this file and the code disagree, fix one of them in the same change. Section numbers are stable because code cites
-them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22) covered the hub's internals, which moved to the
+them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22, §25) covered the hub's internals, which moved to the
 hosted hub's own docs. Sections 1–13 were written while the hub was Bullpen and the relay was agentblip; where they say
 agentblip, read the Workmesh CLI.
 
@@ -164,7 +164,7 @@ paths, never the values):
 
 Order of checks: `413`, then `401` for a missing or malformed token, then `400`, then `401` for an unknown or revoked
 token. `429` after 300 requests per device per minute. On `full: true`, the device's sessions that are missing from
-`sessions` and not already ended are marked `ended`.
+`sessions` and not already ended are marked `ended` (before v0.10; since then they are `missing` first, §24).
 
 ### 3.3 What may leave a machine (relay rules, enforced in `packages/cli`)
 
@@ -549,3 +549,49 @@ read and drops the rest one by one):
   daemon makes the hub calls.
 - **Guidance.** A shared session gets a short note at its start (or when it first becomes shared): it is on Workmesh
   with its team, and how to claim, lease, read its inbox and message instead of editing leased files.
+
+---
+
+# v0.10: liveness and persistence (Sean, 2026-11-25)
+
+"I see myself as offline at times, maybe when the daemon is interrupted." Two causes: the board worked out presence in
+the browser from a `lastSeenAt` the hub stopped sending while a device was busy, and a restarted daemon forgot which
+sessions it shared, so its first heartbeat ended them all. Still `v: 1`; every field below is optional.
+
+## 24. Liveness
+
+**Wire** (`packages/protocol`):
+- Ingest body `client`: the relay's name and version, `workmesh/0.10.0` (`HUB_CLIENT_RE`), on every request. The hub
+  keeps the latest one per device (before this it only had the pairing's).
+- `SessionUpsert.alive`: `true` when the relay saw the agent's process running, `false` when it is gone (the hub
+  ends the session at once), absent when the relay can't know (a Codex thread, a custom source).
+- `SessionUpsert.quietSince`: the session is working and alive but has sent no event since then (a long tool call, or
+  an agent that is stuck).
+- `GET /relay/team` people gain `presence` (below); `online` stays for older menu bars and is true for `online` and
+  `reconnecting`.
+
+**Presence** is the hub's, computed from ingests and pushed to boards; no client works it out from timestamps:
+`online` (an ingest within 90 s), `reconnecting` (90 s to 5 min), then `asleep` if the device went quiet with sessions
+open (a Mac that slept, a daemon that was killed) or `offline` if it had none. A person's presence is the best of their
+devices'. A relay sends at least one request every 30 s while it runs (a heartbeat, `full` or not), so only a stopped,
+killed or sleeping relay leaves `online`.
+
+**Heartbeats never end sessions on their own.** A session missing from a `full` heartbeat is `missing`: it keeps its
+state, the board shows it as unconfirmed for 10 minutes and then folds it away, and the hub ends it after 30 minutes
+missing. It ends at once on a SessionEnd (`state: "ended"`) or `alive: false`. A missing session that shows up again
+takes the state it reports.
+
+**The relay keeps its place across restarts** (`packages/cli`):
+- The hub forwarder writes its state to `~/.local/state/workmesh/hub-forward.json` (0600, atomic rename, at most once
+  a second, and on SIGTERM/SIGINT): the shared sessions (their last state, roots, repos, labels, issues, conversation
+  start time and transcript offsets), and the unsent queue (newest 1,000 events). A daemon that starts reads it back
+  before its first send, drops sessions whose process is gone (Claude Code: `~/.claude/sessions/<pid>.json`), keeps
+  the rest, and carries on sending where it stopped: no text from before a session was shared, no event twice (ids are
+  stable, the hub dedupes).
+- No `full` heartbeat goes out before that read is done, and none that is empty during the first 2 minutes after a
+  start; those heartbeats go as `full: false`.
+- On macOS `workmesh setup` runs the daemon under launchd (`~/Library/LaunchAgents/org.npclabs.workmesh.daemon.plist`:
+  RunAtLoad, KeepAlive, ThrottleInterval 10, logs in `~/Library/Logs/workmesh-daemon.log`), so a crash or kill brings
+  it back within seconds and a reboot or wake starts it; `workmesh restart` asks launchd (`launchctl kickstart -k`)
+  when the job is installed, and `workmesh doctor` reports it. Hooks still start a daemon when none answers. On Linux
+  `workmesh setup --service` writes a systemd `--user` unit.

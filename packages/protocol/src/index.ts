@@ -78,6 +78,8 @@ export const HUB_TOOL_RE = /^[\w.:-]+$/;
 export const HUB_GITHUB_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 /** A link id: issue keys, `owner/repo#12`, Slack `C0123/1712345678.123456`. No spaces, no URLs. */
 export const HUB_LINK_ID_RE = /^[\w.:#/-]+$/;
+/** v0.10 (SPEC §24): the relay's name and version on every ingest, `workmesh/0.10.0`. */
+export const HUB_CLIENT_RE = /^[a-z][a-z0-9-]{0,30}\/[0-9A-Za-z][0-9A-Za-z.+-]{0,31}$/;
 
 /** A link URL: https, no credentials in the authority, no whitespace (SPEC §15). */
 export function isSafeLinkUrl(u: string): boolean {
@@ -141,6 +143,13 @@ export type HubAgentChannel = z.infer<typeof hubAgentChannelSchema>;
 export const hubLinkTypeSchema = z.enum(["linear", "slack", "github_pr", "github_issue", "url"]);
 export type HubLinkType = z.infer<typeof hubLinkTypeSchema>;
 
+/**
+ * v0.10 (SPEC §24): a device's presence as the hub computes it from its ingests. `online`: heard within 90 s;
+ * `reconnecting`: 90 s to 5 min; then `asleep` when it went quiet with sessions open, else `offline`.
+ */
+export const hubPresenceSchema = z.enum(["online", "reconnecting", "asleep", "offline"]);
+export type HubPresence = z.infer<typeof hubPresenceSchema>;
+
 // Field validators shared by both readings.
 const sessionKey = z.string().min(1).max(200);
 const repoName = z.string().max(200).regex(HUB_REPO_RE, "repo must be owner/name");
@@ -156,6 +165,7 @@ const tokenCount = z.number().int().nonnegative().max(HUB_MAX_TOKENS);
 const costUsd = z.number().nonnegative().max(HUB_MAX_COST_USD);
 const peer = z.string().min(1).max(200);
 const githubLogin = z.string().max(40).regex(HUB_GITHUB_LOGIN_RE, "github must be a GitHub login");
+const clientName = z.string().max(64).regex(HUB_CLIENT_RE, "client must be name/version");
 const linkId = z.string().min(1).max(200).regex(HUB_LINK_ID_RE, "link id must be an id, not text");
 const linkUrl = z.string().max(500).refine(isSafeLinkUrl, "link url must be https without credentials");
 const linkLabel = z.string().min(1).max(120);
@@ -205,6 +215,11 @@ export const hubSessionUpsertSchema = z.strictObject({
     .max(HUB_MAX_REPOS)
     .refine((r) => new Set(r).size === r.length, "repos must not repeat")
     .optional(),
+  // v0.10 (SPEC §24): liveness from the relay's own process checks.
+  /** The agent's process is running (`true`) or gone (`false`: the hub ends the session). Absent: not knowable. */
+  alive: z.boolean().optional(),
+  /** Working, alive, and no events since this time (epoch ms): a long tool call or a stuck agent. */
+  quietSince: epochMs.optional(),
 });
 export type HubSessionUpsert = z.infer<typeof hubSessionUpsertSchema>;
 
@@ -265,6 +280,8 @@ export const hubIngestRequestSchema = z.strictObject({
   share: hubShareLevelSchema.optional(),
   /** v0.6: the person's GitHub login, read from the local `gh` CLI. */
   person: hubPersonSchema.optional(),
+  /** v0.10 (SPEC §24): the relay's name and version, `workmesh/0.10.0`, on every request. */
+  client: clientName.optional(),
   /** Heartbeat: `sessions` is the complete shared set for this device. */
   full: z.boolean(),
   sessions: z.array(hubSessionUpsertSchema).max(HUB_MAX_SESSIONS_PER_REQUEST),
@@ -347,6 +364,9 @@ export const hubSessionUpsertAcceptSchema = z.object({
   statusLine: opt(statusLine),
   /** v0.7: entries that aren't `owner/name` are dropped on their own; past HUB_MAX_REPOS the first ones are kept. */
   repos: opt(reposAccept),
+  /** v0.10: a malformed value reads as absent (unknown), never a 400. */
+  alive: opt(z.boolean()).catch(undefined),
+  quietSince: opt(epochMsAccept).catch(undefined),
 });
 export type HubSessionUpsertAccepted = z.infer<typeof hubSessionUpsertAcceptSchema>;
 
@@ -387,6 +407,8 @@ export const hubIngestAcceptSchema = z.object({
       github: opt(githubLogin).catch(undefined),
     }),
   ).catch(undefined),
+  /** v0.10: any short string is kept (a relay from another vendor names itself its own way); a bad one is absent. */
+  client: opt(z.string().trim().min(1).max(64)).catch(undefined),
   full: z.boolean().default(false),
   sessions: z.array(hubSessionUpsertAcceptSchema).max(HUB_MAX_SESSIONS_PER_REQUEST).default([]),
   events: z.array(hubActivityEventAcceptSchema).max(HUB_MAX_EVENTS_PER_REQUEST).default([]),
@@ -480,8 +502,10 @@ export const hubTeamPersonSchema = z.object({
   name: teamName,
   email: z.string().max(200).optional(),
   github: githubLogin.optional(),
-  /** A device of theirs reached the hub in the last 2 minutes. */
+  /** A device of theirs is `online` or `reconnecting` (v0.10; before it: reached the hub in the last 2 minutes). */
   online: z.boolean(),
+  /** v0.10 (SPEC §24): the best presence among their devices. */
+  presence: hubPresenceSchema.optional(),
   /** Their open sessions by state (offline devices' sessions not counted). */
   counts: hubTeamCountsSchema,
 });
@@ -567,6 +591,7 @@ export const hubTeamAcceptSchema = z.object({
       email: teamTextAccept(200),
       github: githubLogin.nullish().catch(undefined).transform((v) => v ?? undefined),
       online: z.boolean().catch(false),
+      presence: hubPresenceSchema.nullish().catch(undefined).transform((v) => v ?? undefined),
       counts: z
         .object({ working: teamCountAccept, waiting: teamCountAccept, idle: teamCountAccept })
         .catch({ working: 0, waiting: 0, idle: 0 }),

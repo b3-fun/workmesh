@@ -46,7 +46,7 @@ The open-source half of Workmesh (MIT): the CLI, daemon, hooks and MCP server (`
 `@b3os/workmesh`), the relay ↔ hub wire protocol (`packages/protocol`, contract in [docs/SPEC.md](docs/SPEC.md)), the
 macOS menu bar app (`apps/menubar`), and agentblip.com, the site and Slack-status relay. The hub's code is private.
 
-Workmesh was called agentblip until 0.7; the `agentblip` command still works.
+Workmesh was called agentblip until 0.7; [moving over](docs/guide/updating-and-uninstalling.md#coming-from-agentblip) keeps your setup.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers development, tests and releases. [ROADMAP.md](ROADMAP.md) is the roadmap and
 decision log. Custom integrations: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).

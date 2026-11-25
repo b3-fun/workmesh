@@ -63,7 +63,8 @@ Logs: `~/Library/Logs/workmesh-daemon.log` on a Mac (launchd), `journalctl --use
 
 ## npm install fails with "File exists: …/bin/agentblip"
 
-The old `agentblip` package is installed globally and owns that command. `npm rm -g agentblip`, then install again.
+You're installing 0.12.0 or older while the old `agentblip` package is installed globally: both provide an `agentblip`
+command. Install `@b3os/workmesh@latest` (0.12.1 and newer don't), or `npm rm -g agentblip` and install again.
 
 ## The board shows me offline
 

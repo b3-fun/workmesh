@@ -83,21 +83,23 @@ Code profile.
 
 ## Coming from agentblip
 
-Workmesh was called agentblip until 0.7, and the old name still works:
+Workmesh was called agentblip until 0.7. Moving over keeps your setup:
 
 - The first `workmesh` command copies `~/.config/agentblip/config.json` (pairings, sharing level, settings),
   `daemon.secret` and `ownership.json` to the Workmesh directories, with the same `0600` permissions. The old files
   stay as a backup.
 - `workmesh setup --hooks-only` repoints hooks an agentblip install wrote, in place, without duplicating them.
 - `workmesh restart` stops a daemon agentblip started, then starts the new one.
-- `AGENTBLIP_*` environment variables are read when the `WORKMESH_*` one is unset, and `agentblip` stays an alias of
-  `workmesh`.
+- `AGENTBLIP_*` environment variables are read when the `WORKMESH_*` one is unset.
 - `Workmesh.app` (bundle id `org.npclabs.workmesh.menubar`) replaces `agentblip.app`.
 
-If the old `agentblip` npm package is installed globally, remove it first: both packages provide an `agentblip`
-command, and npm refuses the install with `npm error File exists: …/bin/agentblip`.
+Since 0.12.1 the command is `workmesh` only, so installing over an old global `agentblip` works in one go. Remove the
+old package afterwards if you like; nothing uses it once `init` has repointed the hooks:
 
 ```bash
-npm rm -g agentblip
 npm i -g @b3os/workmesh@latest && workmesh init https://workmesh.b3os.org
+npm rm -g agentblip   # optional cleanup
 ```
+
+On 0.12.0 and older, npm refuses the install with `npm error File exists: …/bin/agentblip` while the old package is
+installed: run `npm rm -g agentblip` first.

@@ -205,6 +205,8 @@ this". Wire: SPEC §26.
 
 ## Decision log
 
+- 11-25 Workmesh has its own Linear project, "Workmesh" (team NPC Labs), separate from B3OS Beta (Sean). Issues B3-7165..7168 moved there with their ids.
+
 - 11-25 v2 wire: a handoff runs only after its recipient accepts it (a self-handoff by the sender's own policy);
   an accept from a relay names the runner, one from the board lets the first relay to `start` win. Gates are a
   person's choice for their own agents, enforced only by their own relay; absent lists on sync mean "no v2", so an
@@ -270,5 +272,5 @@ this". Wire: SPEC §26.
 
 ## Links
 
-- Linear (project "B3OS Beta"): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2).
+- Linear (project "Workmesh"): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2).
 - Live hub: https://workmesh.b3os.org (also https://bullpen.b3os.org)

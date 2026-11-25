@@ -208,7 +208,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 
 - **Contract:** `docs/SPEC.md` is the relay ↔ hub contract (wire format, what may leave a machine, sharing levels,
   redaction, privacy rules). Change it in the same commit as any code that departs from it.
-- **Linear:** parent B3-7165, v0 B3-7166 (project "B3OS Beta", team NPC Labs). Sean's agents prefix every Linear
+- **Linear:** parent B3-7165, v0 B3-7166 (project "Workmesh", team NPC Labs). Sean's agents prefix every Linear
   comment with "(Claude, for Sean)", comment at each merge and deploy, and re-read the issue's comments before each
   merge or deploy. A person's comment is an instruction; "hold" pauses the work.
 - **Deploy:** agentblip.com deploys from CI on every push to `main` (`.github/workflows/deploy.yml`). The hub

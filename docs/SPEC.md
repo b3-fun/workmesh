@@ -457,3 +457,82 @@ Sean chose a single public monorepo: the relay, the hub and the board in `b3-fun
 - **Deploys:** the hub deploys by hand from `main` (`npm run deploy -w @workmesh/hub`, wrangler OAuth on an NPC Labs
   account) until CI has an NPC Labs Workers token. CI runs every workspace's tests and typecheck, the CLI build, the
   site build and the board build. agentblip.com still deploys from CI on every push to `main`.
+
+---
+
+# v0.5 and v0.6: the team in the menu bar, subagents, agent messages, links (Sean, 2026-11-24)
+
+## 15. Wire additions (still `v: 1`; all optional, old hubs and old relays keep working)
+
+The code form is `packages/protocol` (strict to send, accept to read, as in §14). An old hub drops the new keys
+(unknown keys are dropped) and 400s the new event kind, so a relay holds `agent_message` events back for 10 minutes
+after such a 400, as it does for `message`/`turn`.
+
+`SessionUpsert` adds:
+
+| Field | Type | Level | Notes |
+|---|---|---|---|
+| `parent` | string ≤ 200 | metadata | `key` of the session this one runs under (a subagent, a workflow agent) |
+| `role` | `main` \| `subagent` \| `workflow` \| `background` | metadata | absent = a top-level session; the hub reads an unknown role as absent |
+| `agentType` | string ≤ 64 | metadata | Claude Code's `subagent_type` (`general-purpose`, `Explore`), a workflow agent's type |
+| `title` | string ≤ 200 | conversation | a subagent's task description, redacted (§9); the hub accepts ≤ 1,000 and cuts |
+| `model` | string ≤ 80 | metadata | the model id the agent's transcript reports |
+| `tokensIn`, `tokensOut` | int ≥ 0 | metadata | cumulative for the session: input (incl. cache reads and writes) and output |
+| `costUsd` | number ≥ 0 | metadata | only when the agent records it; never estimated by the relay |
+| `statusLine` | string ≤ 120 | metadata | from the relay's fixed vocabulary only: "waiting on 1 shell", "running commands", "editing vm.rs" |
+
+`ActivityEvent` adds:
+- kind `agent_message`: one agent wrote to another. `from`, `to` (≤ 200: agent names, agent ids or session keys,
+  never a person's handle), `channel` (`claude-session` = Claude Code `SendMessage` and messages between sessions,
+  `codex-mail` = Codex inter-agent messages, `workmesh` = Workmesh's own, later). `text` (≤ 4,000, redacted) only at
+  `conversation`; at `metadata` the event goes without it. The hub reads an unknown channel as absent.
+- `links`: up to 10 of `{ type: "linear" | "slack" | "github_pr" | "github_issue" | "url", id?, url?, label? }`, each
+  with an `id` (≤ 200, no spaces: `B3-7166`, `b3-fun/workmesh#12`, `C0123ABC/1712345678.123456`) or a `url` (≤ 500,
+  https, no credentials), `label` ≤ 120. What a relay sends:
+  - `linear`: the ids it already sends in `issues` (§3.3 rule 6), with `https://linear.app/<workspace>/issue/<id>`
+    when the workspace is known. Metadata.
+  - `github_pr` / `github_issue`: from `gh pr|issue create|view|merge|…` commands and their responses, only when
+    `<owner>/<repo>` is shared (§3.3 rule 7). Metadata.
+  - `slack`: from Slack MCP tool calls (send, read thread, …): channel id and message ts, the permalink when the
+    response carries one or the workspace host is known, `label` = the channel name when the call names it.
+    Conversation level only.
+  - `url`: not sent by the relay in this pass.
+  The hub reads links tolerantly: a link it can't read is dropped on its own, past 10 it keeps the first ten.
+
+Ingest body adds `person: { github?: string ≤ 40 }`: the person's GitHub login as the local `gh` CLI reports it
+(`gh api user --jq .login`, read at `hub connect` and at daemon start, 5 s timeout, skipped when `gh` is absent or not
+logged in), sent on every heartbeat for the board's and menu bar's avatars. The hub reads a malformed value as absent.
+
+What still never leaves a machine (§3.3 holds): tool input or output, file contents, full commands, a subagent's
+prompt or its text messages (the main thread's only, §9), anything from an unshared session. A subagent is shared
+exactly when its parent session is.
+
+## 16. `GET /relay/team` (v0.5, the menu bar's read)
+
+Device token (`Authorization: Bearer bp_…`), under the `/relay/*` Access bypass. `401` as for ingest; an older hub
+answers `404`, which a relay reads as "no team view yet" and retries after 10 minutes. The response is the team as the
+device's person sees it (`hubTeamResponseSchema`; relays read it with `hubTeamAcceptSchema`, which drops a malformed
+person or session on its own instead of failing):
+
+```jsonc
+{
+  "me": { "name": "Sean", "email": "sean@npclabs.org", "github": "seangeng" },
+  "people": [{ "name": "An", "github": "an-b3", "online": true, "counts": { "working": 2, "waiting": 0, "idle": 1 } }],
+  "needsMe": [{ "session": "<hubKey>", "reason": "Approve the deploy", "since": 1795545600000,
+                "name": "documents-07", "source": "claude-code", "repo": "b3-fun/workmesh", "owner": "Sean" }],
+  "sessions": [{ "key": "<hubKey>", "owner": "An", "name": "codex-3", "source": "codex", "state": "working",
+                 "now": "Fixing the ingest test", "repo": "b3-fun/workmesh", "branch": "main", "subagents": 2,
+                 "stateSince": 1795545600000 }],
+  "serverNow": 1795545700000
+}
+```
+
+- `people`: everyone in the project, `me` included; `online` = a device of theirs reached the hub in the last 2
+  minutes; `counts` = their open, top-level sessions by state.
+- `needsMe`: the viewer's own `waiting` sessions, oldest first (later: asks addressed to the viewer); `reason` = the
+  waiting reason, else the activity label.
+- `sessions`: open top-level sessions (not ended, not subagents), `state` may be `offline`; `now` = now line, else
+  waiting reason, else activity label; `subagents` = live subagents under it.
+- Text in `now` and `reason` follows the owner's sharing level, as on the board.
+- The relay polls it every 15 s while the menu is open or something needs the person, every 60 s otherwise, and
+  serves the last answer on its loopback API (`GET /team`); the menu bar reads only that.

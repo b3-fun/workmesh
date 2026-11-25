@@ -15,8 +15,7 @@
     "url": "https://github.com/b3-fun/workmesh/issues"
   },
   "bin": {
-    "workmesh": "./dist/index.js",
-    "agentblip": "./dist/index.js"
+    "workmesh": "./dist/index.js"
   },
   "files": [
     "dist"

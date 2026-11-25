@@ -40,8 +40,20 @@ After an update, agent sessions that were already running keep the older MCP ser
 
 When a release is out the menu shows "Update available". Click it: a window runs `workmesh update` and shows the
 output. If the release has a newer menu bar app, the window offers to relaunch with it. The app downloads the release's
-zip, checks its SHA-256 against the release, and keeps the old copy in
-`~/Library/Application Support/Workmesh/menubar-previous/`.
+zip, checks its SHA-256 against the release, clears the quarantine flag on the new version, swaps it in and relaunches.
+There is nothing to allow: macOS doesn't ask again, however you installed it the first time.
+
+It keeps one copy of the version it replaced, in `~/Library/Application Support/Workmesh/menubar-previous/`; each
+update replaces that copy. To go back, quit Workmesh and put that app back in place of yours:
+
+```bash
+rm -rf ~/Applications/Workmesh.app
+ditto ~/Library/Application\ Support/Workmesh/menubar-previous/Workmesh.app ~/Applications/Workmesh.app
+open ~/Applications/Workmesh.app
+```
+
+The app updates itself only where it can write: not from Downloads (macOS runs a quarantined app from a read-only
+copy there) or a disk image. It says so and changes nothing; move it to `~/Applications` and try again.
 
 ## Uninstall
 

@@ -69,20 +69,34 @@ Then revoke the machine on the board (Your machines → Revoke). Details and wha
 approvals and handoffs for you, your sessions, and your teammates' agents. It reads everything from the daemon, so
 install the CLI first. It needs macOS 13 or later.
 
-The app isn't signed with an Apple Developer ID, and we hand it to the team ourselves, so macOS refuses it the first
-time. Download it with `curl` and clear the quarantine flag before the first launch:
+The app isn't signed with an Apple Developer ID, and we hand it to the team ourselves. Installed from Terminal it has
+nothing for macOS to ask about: `curl` doesn't mark the download as coming from the internet, so the app opens like one
+you built yourself.
 
 ```bash
 mkdir -p ~/Applications
 curl -L -o /tmp/Workmesh.zip https://github.com/b3-fun/workmesh/releases/latest/download/Workmesh-menubar-macos.zip
 ditto -x -k /tmp/Workmesh.zip ~/Applications
-xattr -dr com.apple.quarantine ~/Applications/Workmesh.app
+xattr -dr com.apple.quarantine ~/Applications/Workmesh.app   # does nothing after curl; clears the flag otherwise
 open ~/Applications/Workmesh.app
 ```
 
-If you downloaded the zip in a browser instead: on macOS 14 or older, right-click the app → Open → Open. On macOS 15
-and later that bypass is gone; open the app once, then System Settings → Privacy & Security → Open Anyway. To start it
-at login, add it under System Settings → General → Login Items.
+If you downloaded the zip in a browser, the app is quarantined and macOS asks once. On macOS 15 (Sequoia), 26
+(Tahoe) and later:
+
+1. Double-click the zip, move `Workmesh.app` to `~/Applications` (or `/Applications`) and open it. macOS says
+   "“Workmesh” Not Opened". Click **Done**, not Move to Trash.
+2. Open System Settings → **Privacy & Security** and scroll to **Security**: "“Workmesh” was blocked to protect your
+   Mac." Click **Open Anyway** (it shows for about an hour after step 1).
+3. macOS asks once more: click **Open Anyway**, then enter your login password (or use Touch ID).
+
+On macOS 13 and 14, right-click the app → **Open** → **Open** instead. If macOS says "“Workmesh” is damaged and can't
+be opened" (the menu bar app from 0.12.1 and older, whose bundle wasn't sealed; there is no Open Anyway for it), click
+**Cancel** and run the `xattr` line above, then open it again.
+
+That's the only time. The app updates itself afterwards and the new version opens without a prompt (see
+[Updating](updating-and-uninstalling.md#the-menu-bar-app)). To start it at login, add it under System Settings →
+General → Login Items.
 
 Keep the app in `~/Applications` or `/Applications`, not in Downloads: it replaces itself when a new release is out,
 and it can't from a quarantined or read-only location.

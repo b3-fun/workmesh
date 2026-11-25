@@ -1,6 +1,14 @@
 import SwiftUI
 
 @main
+enum Entry {
+    static func main() {
+        // `--version` and the headless self-update exit here, before AppKit starts.
+        HeadlessSelfUpdate.runIfAsked()
+        WorkmeshMenuBarApp.main()
+    }
+}
+
 struct WorkmeshMenuBarApp: App {
     @StateObject private var model: AppModel
 

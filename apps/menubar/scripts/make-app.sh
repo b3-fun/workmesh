@@ -43,10 +43,19 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "Built $APP"
+# Seal the bundle with an ad hoc signature (no Apple Developer ID, no account).
+# The linker signs only the binary, which leaves Info.plist unbound: a
+# quarantined copy of that (a browser download) is "damaged and can't be opened",
+# with no Open Anyway. Sealed, it verifies, and Gatekeeper rejects it only as an
+# app that isn't notarized, which is what Open Anyway in Privacy & Security allows.
+/usr/bin/codesign --force --sign - --timestamp=none "$APP"
+/usr/bin/codesign --verify --deep --strict "$APP"
+
+echo "Built $APP (ad hoc signature, sealed)"
 
 # ZIP=1: the release asset the menu bar app updates itself from. Made from this
-# local build with ditto, so it carries no quarantine flag inside it.
+# local build with ditto, which has no quarantine flag to store (ditto keeps the
+# flags of the items inside an app, so never zip a downloaded copy).
 if [ "${ZIP:-}" = "1" ]; then
   ZIPFILE="$OUT/Workmesh-menubar-macos.zip"
   rm -f "$ZIPFILE"
@@ -56,5 +65,5 @@ if [ "${ZIP:-}" = "1" ]; then
 fi
 echo "Run it:  open \"$APP\"    (or double-click)"
 echo
-echo "Unsigned build — first launch: right-click → Open, or"
-echo "  xattr -dr com.apple.quarantine \"$APP\"   to clear Gatekeeper."
+echo "Not signed with a Developer ID. Built here, it carries no quarantine flag and opens as is."
+echo "A copy downloaded in a browser needs Open Anyway once: docs/guide/getting-started.md."

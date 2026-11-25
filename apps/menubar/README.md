@@ -94,12 +94,12 @@ swift build                 # compile
 open dist/Workmesh.app
 ```
 
-The build is unsigned, so on first launch macOS Gatekeeper will complain:
-`xattr -dr com.apple.quarantine dist/Workmesh.app`, or right-click → **Open** on macOS 14
-and older (macOS 15 dropped that bypass: open once, then System Settings → Privacy &
-Security → Open Anyway). We hand the release zip to the team unsigned; no Apple Developer
-signing for now (Sean, 11-25). Install steps for teammates:
+`make-app.sh` seals the bundle with an ad hoc signature (`codesign --sign -`: no Apple
+Developer ID, no account; Sean, 11-25: no Developer ID signing for now). A local build
+carries no quarantine flag, so it opens as is. A copy downloaded in a browser is
+quarantined and needs Open Anyway once on macOS 15 and later; the clicks are in
 [Getting started](../../docs/guide/getting-started.md#the-menu-bar-app-macos).
+`Workmesh --version` prints the version and exits before AppKit starts.
 
 To start it at login, a LaunchAgent with the label `org.npclabs.workmesh.menubar`
 (the bundle id) that runs `Workmesh.app/Contents/MacOS/Workmesh` with `RunAtLoad`
@@ -131,9 +131,15 @@ the app is behind. It:
 2. refuses it unless its SHA-256 equals the release's,
 3. unpacks it with `ditto -x -k` and requires one app whose bundle id is this
    app's and whose version is the release's,
-4. copies the running app to `~/Library/Application Support/Workmesh/menubar-previous/`,
-   then swaps the new one into place (`FileManager.replaceItemAt`),
-5. relaunches: a shell in its own session waits for this process to exit, then
+4. clears `com.apple.quarantine` from every item in the new app (a read-only one gets
+   owner write for that moment), and refuses with the install-by-hand steps if it can't,
+5. copies the running app beside the rollback copy in
+   `~/Library/Application Support/Workmesh/menubar-previous/`, then swaps it for the old
+   one, so there's always exactly one and a stale, partial or read-only one never blocks
+   an update,
+6. swaps the new app into place (`FileManager.replaceItemAt`, keeping the old one under
+   `.Workmesh.app.replaced` and deleting it itself, read-only folders too),
+7. relaunches: a shell in its own session waits for this process to exit, then
    `open`s the app (unless launchd's KeepAlive already started it again).
 
 It refuses, in plain words and before downloading, when the app runs from a
@@ -141,18 +147,37 @@ read-only volume, from App Translocation (a quarantined app opened where it was
 downloaded), or from a folder it can't write. To roll back, quit Workmesh and
 put the app from `menubar-previous` back.
 
-**Gatekeeper.** The build is unsigned (ad hoc). What we observed on macOS 27
-with dev builds: the app's own download carries only `com.apple.provenance`, no
-`com.apple.quarantine` (the app doesn't set `LSFileQuarantineEnabled`), and
-neither does the unpacked or swapped app; the swapped app relaunched through
-`open` without a prompt. So the window says the download is checked against the
-release's SHA-256 and opens without a Gatekeeper prompt. `spctl -a` still
-rejects the bundle, as it does any ad-hoc build: that only matters for a
-quarantined copy, such as the first download from the release page in a
-browser (right-click → Open, as above). Make the release zip with
-`ZIP=1 ./scripts/make-app.sh <version>` (ditto, from a local build; ditto leaves
-a quarantine flag out of the archive even when the app had one). If a release's
-app ever arrives marked as downloaded, the window says macOS will ask once.
+**Gatekeeper.** Gatekeeper only assesses an app carrying `com.apple.quarantine`, so
+the update makes sure the new one carries none. Verified on macOS 27.2.1 (11-25):
+
+- The app's own download (URLSession) carries only `com.apple.provenance`: the app
+  doesn't set `LSFileQuarantineEnabled`. A zip a browser saved spreads its flag to
+  everything `ditto -x` unpacks, and a zip made with ditto from a downloaded copy keeps
+  the flags of the items inside (not the `.app` folder's own, with `--keepParent`);
+  unpacking restores them. So the updater clears whatever it finds.
+- Unsealed (0.12.1 and older: only the linker's signature on the binary, Info.plist not
+  bound), `codesign --verify --strict` and `spctl` say "code has no resources but
+  signature indicates they must be present", and a quarantined copy is "“Workmesh” is
+  damaged and can't be opened", with no Open Anyway. Sealed ad hoc, it verifies ("valid
+  on disk"), and `spctl --assess` says "rejected" like any app that isn't notarized:
+  the case Privacy & Security's Open Anyway is for (checked from the command line; the
+  dialogs weren't put on screen). The seal survives a zip round trip with quarantine
+  flags inside and the update's swap.
+- Make the release zip on a Mac from source with `ZIP=1 ./scripts/make-app.sh <version>`,
+  never from a downloaded copy.
+
+`scripts/test-self-update.sh` checks all of it, headless (no menu bar item, window or
+activation): it builds 0.0.1 to 0.0.4 under a test bundle id and runs the older copy's
+update (`WORKMESH_DEV_SELF_UPDATE_URL`/`_SHA256`/`_VERSION`: the menu's
+`AppSelfUpdate.install` without the window or the relaunch) against a mock-served zip,
+for a clean zip, one whose inner items carry the flag, one whose `.app` folder does, one
+with read-only items (then two more updates from that app), two updates in a row, and a
+stale, partial, read-only or misplaced rollback copy. After each it checks the version,
+`--version`, no quarantine flag, modes as in the zip, the seal, the rollback copy (same
+bytes, modes and seal, the only one) and that nothing is left behind; then a first
+install with `curl`. Evidence of the 11-25 run: before the fix, the second update from
+an app with read-only folders swapped and then failed, and the third (or any update over
+a read-only rollback copy) failed with "an item with the same name already exists".
 
 ## Develop without a daemon: mock + snapshots
 
@@ -198,7 +223,7 @@ WORKMESH_SNAPSHOT=/tmp/wm/team.png WORKMESH_SNAPSHOT_EXPAND=An \
 Workmesh.app. Without `WORKMESH_SNAPSHOT` the same command runs the live menu
 against the mock.
 
-To try a self-update end to end, build two dev versions, serve the newer one's
+To watch a self-update in the UI end to end, build two dev versions, serve the newer one's
 zip, and run the older one from a scratch folder. `WORKMESH_DEV_AUTOUPDATE=app`
 starts the app update once it's offered (`cli` runs `workmesh update`,
 `cli+app` also takes the relaunch offer after it), echoing the window's lines
@@ -238,6 +263,7 @@ Sources/WorkmeshMenuBar/
 scripts/make-app.sh      # bundles the binary into Workmesh.app (ZIP=1: the release zip too)
 scripts/mock-daemon.mjs  # fixture daemon for development and snapshots
 scripts/mock-update.mjs  # stand-in for `workmesh update`, run by the mock's update scenarios
+scripts/test-self-update.sh # the app's self-update against temp copies, headless
 ```
 
 The app stays a thin client. Everything it shows comes from the daemon: the

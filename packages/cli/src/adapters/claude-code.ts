@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { DETAIL_LIMITS } from "@workmesh/core";
-import type { SessionEvent, SessionEventDetail } from "@workmesh/core";
+import type { SessionEvent, SessionEventDetail, SlackRef } from "@workmesh/core";
 import {
   absolutePath,
   clip,
@@ -37,6 +37,9 @@ const PLAIN_EVENTS = [
   "Notification",
   "Stop",
   "SessionEnd",
+  // v0.6: subagents (hub forward only; the parent's Slack status is unchanged).
+  "SubagentStart",
+  "SubagentStop",
 ] as const;
 export const CLAUDE_HOOK_EVENTS: readonly string[] = [
   ...MATCHER_EVENTS,
@@ -54,6 +57,15 @@ const hookInputSchema = z.looseObject({
   prompt: z.string().optional(),
   tool_response: z.unknown().optional(),
   last_assistant_message: z.string().optional(),
+  // v0.6, verified against live Claude Code 2.1.331 hook payloads (keys and
+  // types only): every hook fired inside a subagent carries agent_id and
+  // agent_type; SubagentStart adds nothing else; SubagentStop adds
+  // agent_transcript_path; Stop and SubagentStop carry background_tasks
+  // ({id, type: "shell" | …, status: "running", command, description}).
+  agent_id: z.string().optional(),
+  agent_type: z.string().optional(),
+  agent_transcript_path: z.string().optional(),
+  background_tasks: z.array(z.unknown()).optional(),
 });
 
 /** Tools whose PreToolUse means Claude is now asking the user and blocks on the answer. */
@@ -316,6 +328,105 @@ export function lastTurnEnding(transcriptPath: string): TurnEnding | undefined {
   }
 }
 
+/** Claude Code agent ids: `a` + 16 hex today; anything id-shaped is kept. */
+const AGENT_ID_RE = /^[\w.-]{1,64}$/;
+
+/** The subagent a hook fired in, as local detail fields (agentId, agentType). */
+function agentFields(input: { agent_id?: string; agent_type?: string }): Pick<SessionEventDetail, "agentId" | "agentType"> {
+  const agentId = input.agent_id && AGENT_ID_RE.test(input.agent_id) ? input.agent_id : undefined;
+  return {
+    agentId,
+    agentType: agentId ? oneLine(input.agent_type)?.slice(0, DETAIL_LIMITS.agentType) : undefined,
+  };
+}
+
+/** Counts the running entries of a Stop's `background_tasks` by kind (shells vs agents). */
+export function backgroundCounts(tasks: readonly unknown[] | undefined): { shells?: number; agents?: number } {
+  if (!tasks) return {};
+  let shells = 0;
+  let agents = 0;
+  for (const t of tasks) {
+    if (!t || typeof t !== "object") continue;
+    const r = t as { type?: unknown; status?: unknown };
+    if (r.status !== undefined && r.status !== "running") continue;
+    if (r.type === "shell") shells++;
+    else agents++; // "shell" is verified; every other kind is an agent-like task
+  }
+  return { shells: Math.min(shells, 999), agents: Math.min(agents, 999) };
+}
+
+/**
+ * A prompt Claude Code injected rather than the person typed: a background
+ * task's completion notice or a message from another session or teammate.
+ * Its text is not the person's, so it never travels as a prompt.
+ */
+export function isInjectedPrompt(prompt: string | undefined): boolean {
+  if (!prompt) return false;
+  return /^\s*<(task-notification|cross-session-message|teammate-message|agent-message)\b/.test(prompt);
+}
+
+const SLACK_TOOL_RE = /^mcp__.*slack.*__/i;
+const SLACK_LINK_RE = /https:\/\/[\w-]+\.slack\.com\/archives\/([A-Z0-9]{6,20})\/p(\d{10})(\d{6})(?:\?[^\s"'\\]*)?/;
+const SLACK_CHANNEL_RE = /^[A-Z][A-Z0-9]{5,19}$/;
+const SLACK_TS_RE = /^\d{9,11}\.\d{1,9}$/;
+
+/**
+ * Slack messages an MCP Slack tool call touched (shapes read from real
+ * transcripts of the Slack plugin: inputs carry `channel_id` and `message_ts`
+ * or `thread_ts`; slack_send_message answers `{message_link, message_context:
+ * {channel_id, message_ts}}`). Channel ids, message ts and the permalink only;
+ * never message text.
+ */
+export function slackRefs(
+  toolName: string | undefined,
+  toolInput: Record<string, unknown> | undefined,
+  toolResponse?: unknown,
+): SlackRef[] | undefined {
+  if (!toolName || !SLACK_TOOL_RE.test(toolName)) return undefined;
+  const out: SlackRef[] = [];
+  const add = (ref: SlackRef): void => {
+    if (out.some((r) => r.channel === ref.channel && r.ts === ref.ts)) return;
+    if (out.length < 5) out.push(ref);
+  };
+  let responseText: string | undefined;
+  if (typeof toolResponse === "string") responseText = toolResponse;
+  else if (toolResponse !== undefined) {
+    try {
+      responseText = JSON.stringify(toolResponse);
+    } catch {
+      responseText = undefined;
+    }
+  }
+  const link = responseText ? SLACK_LINK_RE.exec(responseText.slice(0, 200_000)) : null;
+  if (link) {
+    const url = link[0].length <= DETAIL_LIMITS.slackLink ? link[0] : undefined;
+    add({ channel: link[1]!, ts: `${link[2]}.${link[3]}`, link: url });
+  }
+  const channel = typeof toolInput?.channel_id === "string" ? toolInput.channel_id : undefined;
+  if (channel && SLACK_CHANNEL_RE.test(channel)) {
+    const rawTs = toolInput?.message_ts ?? toolInput?.thread_ts;
+    const ts = typeof rawTs === "string" && SLACK_TS_RE.test(rawTs) ? rawTs : undefined;
+    const name = oneLine(toolInput?.channel_name)?.slice(0, DETAIL_LIMITS.slackName);
+    if (!link || link[1] !== channel) add({ channel, ts, name });
+    else if (name) out[0] = { ...out[0]!, name };
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** SendMessage's recipient and text (Claude Code: `to` + `message`, or `recipient` + `content`). */
+export function sendMessageFields(
+  toolInput: Record<string, unknown> | undefined,
+): Pick<SessionEventDetail, "messageTo" | "messageText"> {
+  const to = [toolInput?.to, toolInput?.recipient].find((v): v is string => typeof v === "string" && v.trim() !== "");
+  const text = [toolInput?.message, toolInput?.content, toolInput?.summary].find(
+    (v): v is string => typeof v === "string" && v.trim() !== "",
+  );
+  return {
+    messageTo: to ? oneLine(to)?.slice(0, DETAIL_LIMITS.messagePeer) : undefined,
+    messageText: clipHead(text, DETAIL_LIMITS.messageText),
+  };
+}
+
 export interface MapHookOptions {
   /** Injected for tests; defaults to reading Claude Code's local state. */
   backgroundWork?: (sessionId: string) => boolean;
@@ -393,8 +504,9 @@ export function claudeToolDetail(
   toolInput: Record<string, unknown> | undefined,
   cwd: string | undefined,
   toolResponse?: unknown,
+  agent: Pick<SessionEventDetail, "agentId" | "agentType"> = {},
 ): SessionEventDetail | undefined {
-  if (!toolName) return compactDetail({ hookEvent });
+  if (!toolName) return compactDetail({ hookEvent, ...agent });
   const post = hookEvent === "PostToolUse" || hookEvent === "PostToolUseFailure";
   const isShell = toolName === "Bash";
   let text: string | undefined;
@@ -409,6 +521,10 @@ export function claudeToolDetail(
     toolResponseText: text,
     ok: hookEvent === "PostToolUseFailure" ? false : post ? responseOk(toolResponse) : undefined,
     desc: claudeToolDesc(toolName, toolInput),
+    ...agent,
+    // One agent_message per send: PreToolUse carries it.
+    ...(toolName === "SendMessage" && !post ? sendMessageFields(toolInput) : {}),
+    slack: slackRefs(toolName, toolInput, post ? toolResponse : undefined),
   });
 }
 
@@ -448,6 +564,11 @@ function mapClaudeEvent(input: ClaudeHookInput, base: EventBase, opts: MapHookOp
     case "SessionStart":
       return { ...base, kind: "start" };
     case "UserPromptSubmit":
+      if (isInjectedPrompt(input.prompt)) {
+        // Claude Code is resuming on a task notice or another agent's message:
+        // the turn starts, but no person spoke and the text isn't theirs.
+        return { ...base, kind: "working", activity: "thinking", detail: compactDetail({ hookEvent: "InjectedPrompt" }) };
+      }
       return {
         ...base,
         kind: "working",
@@ -458,7 +579,7 @@ function mapClaudeEvent(input: ClaudeHookInput, base: EventBase, opts: MapHookOp
         }),
       };
     case "PreToolUse": {
-      const detail = claudeToolDetail("PreToolUse", input.tool_name, input.tool_input, input.cwd);
+      const detail = claudeToolDetail("PreToolUse", input.tool_name, input.tool_input, input.cwd, undefined, agentFields(input));
       // AskUserQuestion / ExitPlanMode open a dialog and block on the user.
       if (input.tool_name && ASKS_USER_TOOLS.has(input.tool_name)) {
         return { ...base, kind: "waiting", activity: "needs my input", detail };
@@ -486,6 +607,7 @@ function mapClaudeEvent(input: ClaudeHookInput, base: EventBase, opts: MapHookOp
           input.tool_input,
           input.cwd,
           input.tool_response,
+          agentFields(input),
         ),
       };
     case "Notification": {
@@ -514,16 +636,36 @@ function mapClaudeEvent(input: ClaudeHookInput, base: EventBase, opts: MapHookOp
       }
       return { ...base, kind: "waiting", activity: "needs my input" };
     }
-    case "Stop":
-    case "SubagentStop":
+    case "Stop": {
+      const bg = backgroundCounts(input.background_tasks);
       return {
         ...base,
         kind: "idle",
         detail: compactDetail({
           hookEvent: input.hook_event_name,
           lastAssistantMessage: clipHead(input.last_assistant_message, DETAIL_LIMITS.lastAssistantMessage),
+          backgroundShells: bg.shells,
+          backgroundAgents: bg.agents,
         }),
       };
+    }
+    case "SubagentStart":
+    case "SubagentStop": {
+      // The parent session's state doesn't change (a heartbeat keeps it): a
+      // subagent is the hub forwarder's business. Its last message stays home.
+      const agent = agentFields(input);
+      if (!agent.agentId) return null;
+      const stop = input.hook_event_name === "SubagentStop";
+      return {
+        ...base,
+        kind: "heartbeat",
+        detail: compactDetail({
+          hookEvent: input.hook_event_name,
+          ...agent,
+          agentTranscriptPath: stop ? transcriptPathOf(input.agent_transcript_path) : undefined,
+        }),
+      };
+    }
     case "SessionEnd":
       return { ...base, kind: "end" };
     default:

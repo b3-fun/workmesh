@@ -113,7 +113,13 @@ export function fitEventBody(event: SessionEvent): SessionEvent {
   if (!event.detail || size(event) <= MAX_EVENT_BYTES) return event;
   let detail: SessionEventDetail = { ...event.detail, toolResponseText: undefined };
   if (size({ ...event, detail }) <= MAX_EVENT_BYTES) return { ...event, detail };
-  detail = { ...detail, prompt: undefined, filePaths: undefined, lastAssistantMessage: undefined };
+  detail = {
+    ...detail,
+    prompt: undefined,
+    filePaths: undefined,
+    lastAssistantMessage: undefined,
+    messageText: undefined,
+  };
   if (size({ ...event, detail }) <= MAX_EVENT_BYTES) return { ...event, detail };
   const { detail: _dropped, ...rest } = event;
   return rest;

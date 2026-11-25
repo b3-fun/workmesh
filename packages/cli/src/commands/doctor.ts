@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import {
   areClaudeHooksInstalled,
   claudeSettingsPath,
@@ -9,9 +10,11 @@ import {
   areCodexHooksInstalled,
   codexConfigPath,
   codexHooksPath,
-  isCodexNotifyInstalled,
 } from "../adapters/codex";
-import { claudeJsonPath, isClaudeMcpInstalled, isCodexMcpInstalled } from "../adapters/mcp-install";
+import { askCodexHooks, codexNotifyState, codexTrustFromConfig, codexTrustFromList, describeCodexTrust } from "../adapters/codex-doctor";
+import type { CodexHookTrust } from "../adapters/codex-doctor";
+import { claudeJsonPath, isClaudeMcpInstalled, isCodexMcpInstalled, mcpServerCommand } from "../adapters/mcp-install";
+import { findBin } from "../daemon/handoff-runner";
 import { delegateSettings, hubShareLevel, loadConfig, loadConfigSafe } from "../lib/config";
 import type { Config } from "../lib/config";
 import { getHealth, getHubState, getTeamState, getUpdateStatus, sinkConfigured } from "../lib/daemon-client";
@@ -50,6 +53,50 @@ export interface DoctorOptions {
   json?: boolean;
   /** Claude Code config dir to check (default $CLAUDE_CONFIG_DIR, else ~/.claude). */
   claudeDir?: string;
+  /** The codex binary to ask about hook trust (tests); null: don't ask Codex, read config.toml. */
+  codexBin?: string | null;
+}
+
+/** Whether Codex trusts Workmesh's hooks: Codex's own answer, else what config.toml records. */
+export async function codexHookTrust(bin?: string | null): Promise<CodexHookTrust> {
+  const codex = bin === null ? undefined : (bin ?? findBin("codex"));
+  if (codex) {
+    const list = await askCodexHooks({ bin: codex, env: { ...process.env, CODEX_HOME: codexHome() } });
+    const t = list ? codexTrustFromList(list) : undefined;
+    if (t && t.hooks.length > 0) return t;
+  }
+  const read = (f: string): string => {
+    try {
+      return fs.readFileSync(f, "utf8");
+    } catch {
+      return "";
+    }
+  };
+  return codexTrustFromConfig(codexHooksPath(), read(codexHooksPath()), read(codexConfigPath()));
+}
+
+/** Where Codex's notify (the fallback for builds without hooks) really leads. */
+export function codexNotifyCheck(configText?: string, self = mcpServerCommand().args[0]): CheckResult {
+  let text = configText;
+  if (text === undefined) {
+    try {
+      text = fs.readFileSync(codexConfigPath(), "utf8");
+    } catch {
+      text = "";
+    }
+  }
+  const n = codexNotifyState(text);
+  if (n.kind === "none") return warn("codex notify", "not installed (a fallback for Codex builds without hooks) — run `workmesh setup --hooks-only --codex`");
+  if (n.kind === "other") return ok("codex notify", `${n.via ?? "another tool"} owns notify; left alone (a fallback only: hooks report Codex turns)`);
+  const how = n.kind === "chained" ? `through ${n.via ?? "another tool"}'s notify` : "direct";
+  const target = n.target ?? "";
+  if (path.isAbsolute(target) && !fs.existsSync(target)) {
+    return warn("codex notify", `${how}, to ${target}, which no longer exists (fallback only: hooks report Codex turns)`);
+  }
+  if (path.isAbsolute(target) && self && path.resolve(target) !== path.resolve(self)) {
+    return warn("codex notify", `${how}, to another Workmesh install (${target}); this one is ${self} (fallback only)`);
+  }
+  return ok("codex notify", `${how}, to this install (a fallback for Codex builds without hooks)`);
 }
 
 export async function runDoctor(opts: DoctorOptions): Promise<void> {
@@ -291,11 +338,13 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
   // Codex only where it is installed: someone who doesn't use it has nothing to fix.
   const codexUsed = fs.existsSync(codexHome());
   if (codexUsed) {
-    checks.push(
-      areCodexHooksInstalled()
-        ? ok("codex hooks", `${codexHooksPath()} (trust them in Codex with /hooks)`)
-        : warn("codex hooks", "not installed — run `workmesh setup --hooks-only --codex`"),
-    );
+    if (!areCodexHooksInstalled()) {
+      checks.push(warn("codex hooks", "not installed — run `workmesh setup --hooks-only --codex`"));
+    } else {
+      // Installed isn't running: Codex skips a hook until its person trusts it in /hooks, and again after it changes.
+      const trust = describeCodexTrust(await codexHookTrust(opts.codexBin));
+      checks.push(trust.ok ? ok("codex hooks", `${codexHooksPath()}: ${trust.text}`) : warn("codex hooks", `${codexHooksPath()}: ${trust.text}`));
+    }
   }
   checks.push(
     isClaudeMcpInstalled(claudeJson)
@@ -310,11 +359,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     );
   }
   if (codexUsed) {
-    checks.push(
-      isCodexNotifyInstalled()
-        ? ok("codex notify", codexConfigPath())
-        : warn("codex notify", "not installed — run `workmesh setup --hooks-only --codex`"),
-    );
+    checks.push(codexNotifyCheck());
   } else {
     checks.push(ok("codex", `not installed (${codexHome()}), skipped`));
   }

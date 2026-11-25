@@ -247,6 +247,25 @@ export function installCodexMcp(file = codexConfigPath()): McpInstallReport {
   return { result: "installed", path: file, backupPath };
 }
 
+/**
+ * Codex's own tables under ours (`[mcp_servers.workmesh.tools.whoami]` with `approval_mode`, written when a person
+ * picks "Always allow"): left behind, they make an `mcp_servers.workmesh` with no command, and Codex then won't load
+ * its config at all ("invalid transport in `mcp_servers.workmesh`", codex-cli 0.164).
+ */
+function removeCodexSubtables(text: string): string {
+  const header = /^[ \t]*\[[ \t]*mcp_servers[ \t]*\.[ \t]*"?workmesh"?[ \t]*\.[^\]\n]*\][^\n]*(?:\n|$)/m;
+  let out = text;
+  for (let i = 0; i < 100; i++) {
+    const m = header.exec(out);
+    if (!m) break;
+    const after = m.index + m[0].length;
+    const next = /^[ \t]*\[/m.exec(out.slice(after));
+    const end = next ? after + next.index : out.length;
+    out = `${out.slice(0, m.index)}${out.slice(end)}`;
+  }
+  return out;
+}
+
 /** Takes our `[mcp_servers.workmesh]` table (and the comment install put above it) out of Codex's config.toml. */
 export function removeCodexMcp(file = codexConfigPath()): { removed: boolean; path: string; backupPath?: string } {
   if (!fs.existsSync(file)) return { removed: false, path: file };
@@ -257,7 +276,7 @@ export function removeCodexMcp(file = codexConfigPath()): { removed: boolean; pa
   let head = text.slice(0, table.start).replace(/# workmesh: team coordination tools for Codex[^\n]*\n$/, "");
   const tail = text.slice(table.end);
   if (tail === "" && head.endsWith("\n\n")) head = head.slice(0, -1);
-  const next = `${head}${tail}`;
+  const next = removeCodexSubtables(`${head}${tail}`);
   const backupPath = backupOnce(file);
   writeAtomic(file, next);
   return { removed: true, path: file, backupPath };

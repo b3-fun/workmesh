@@ -355,11 +355,12 @@ describe("links (SPEC §15)", () => {
     expect(h.raw.join("\n")).not.toContain("MESSAGE_TEXT");
   });
 
-  it("reads no Linear id from Workmesh's own lines, injected prompts or examples", async () => {
+  it("reads no Linear id from Workmesh's own lines, injected prompts, examples or a heredoc's body", async () => {
     const h = harness({ share: "conversation" });
     h.claude("g1", beta, { hook_event_name: "UserPromptSubmit", prompt: "Pick up B3-7166 next; claim it like the guidance says (e.g. B3-123)." });
     h.claude("g1", beta, { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "echo 'Workmesh: claim the Linear issue you work on (e.g. B3-123)'" } });
     h.claude("g1", beta, { hook_event_name: "UserPromptSubmit", prompt: "<task-notification>\n<summary>Agent done on B3-4242</summary>\n</task-notification>" });
+    h.claude("g1", beta, { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "python3 - <<'EOF'\nfixture = ['B3-9', 'B3-7044']\nEOF" } });
     await h.send();
     const ids = h.events("claude-code:g1").flatMap((e) => [...(e.issues ?? []), ...(e.links ?? []).filter((l) => l.type === "linear").map((l) => l.id)]);
     expect([...new Set(ids)]).toEqual(["B3-7166"]);

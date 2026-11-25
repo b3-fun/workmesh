@@ -15,6 +15,7 @@ import type { McpInstallReport } from "../adapters/mcp-install";
 import { loadConfigSafe, saveConfig } from "../lib/config";
 import { isDaemonUp } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
+import { runServiceInstall } from "./service";
 import {
   ask,
   askSecret,
@@ -128,6 +129,8 @@ export interface SetupOptions {
   hooksOnly?: boolean;
   /** Register the `workmesh` MCP server with Claude Code and Codex (default true; `--no-mcp` skips it). */
   mcp?: boolean;
+  /** Run the daemon under launchd / systemd (default true; `--no-service` skips it). SPEC §24. */
+  service?: boolean;
 }
 
 function mcpLine(r: McpInstallReport): string {
@@ -205,6 +208,7 @@ export function installHooksOnly(opts: { mcp?: boolean; claudeBin?: string | nul
 export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   if (opts.hooksOnly) {
     installHooksOnly({ mcp: opts.mcp });
+    if (opts.service !== false) await runServiceInstall();
     return;
   }
   console.log(bold("workmesh setup"));
@@ -336,6 +340,13 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   saveConfig(config);
   console.log("");
   console.log(green(`config saved to ${configPath()}`));
+  // The service (re)starts the daemon, so it runs with the config just saved.
+  if (opts.service !== false && (await runServiceInstall())) {
+    console.log("\nnext steps:");
+    console.log(`  ${bold("workmesh status")}           see live agent sessions`);
+    console.log(`  ${bold("workmesh doctor")}           verify everything`);
+    return;
+  }
   if (await isDaemonUp(config.port)) {
     // The daemon captures its config (sink, token, granularity) at startup —
     // without a restart the changes above silently never apply.

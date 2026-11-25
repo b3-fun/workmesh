@@ -28,6 +28,7 @@ import {
 import { runPause, runResume } from "./commands/pause";
 import { runReport } from "./commands/report";
 import { runSetup } from "./commands/setup";
+import { runServiceInstall, runServiceStatus, runServiceUninstall } from "./commands/service";
 import { runRestart, runStart } from "./commands/start";
 import { runStatus } from "./commands/status";
 import { runStop } from "./commands/stop";
@@ -67,7 +68,30 @@ program
   )
   .option("--hooks-only", "only install or refresh Claude Code and Codex hooks and the MCP server (no prompts, config untouched)")
   .option("--no-mcp", "don't register the workmesh MCP server with Claude Code and Codex")
+  .option("--no-service", "don't run the daemon under launchd / systemd")
   .action(wrap(runSetup));
+
+const service = program
+  .command("service")
+  .description("Run the daemon under launchd (macOS) or systemd --user (Linux), so it comes back after a crash, kill or reboot");
+
+service
+  .command("install")
+  .description("Install (or refresh) the daemon service and start it; stops a daemon running outside it first")
+  .action(wrap(async () => {
+    if (!(await runServiceInstall())) process.exitCode = 1;
+  }));
+
+service
+  .command("uninstall")
+  .description("Stop the daemon service and remove it (hooks start a daemon as before)")
+  .action(wrap(runServiceUninstall));
+
+service
+  .command("status")
+  .description("Whether the daemon service is installed, loaded and running")
+  .option("--json", "machine-readable output")
+  .action(wrap(runServiceStatus));
 
 program
   .command("start")

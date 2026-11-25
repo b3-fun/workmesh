@@ -383,7 +383,7 @@ describe("links (SPEC §15)", () => {
       h.claude("l1", beta, { hook_event_name: "PostToolUse", tool_name: sendTool, tool_input: { channel_id: "C0123ABCD", message: "SLACK_TEXT" }, tool_response: again });
       await h.send();
       const links = h.events("claude-code:l1").flatMap((e) => e.links ?? []);
-      const expected = [
+      const expected: Array<Record<string, string>> = [
         { type: "linear", id: "B3-7166" },
         { type: "github_pr", id: "b3-fun/b3os-beta#164", url: "https://github.com/b3-fun/b3os-beta/pull/164" },
         { type: "github_issue", id: "b3-fun/b3os-beta#12", url: "https://github.com/b3-fun/b3os-beta/issues/12" },

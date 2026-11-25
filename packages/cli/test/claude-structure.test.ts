@@ -10,6 +10,7 @@ import {
   isInjectedPrompt,
   mapHookInput,
   sendMessageFields,
+  slackAction,
   slackRefs,
 } from "../src/adapters/claude-code";
 
@@ -127,33 +128,60 @@ describe("SendMessage (v0.6)", () => {
   });
 });
 
-describe("Slack MCP tools (v0.6)", () => {
+describe("Slack MCP tools (v0.6; labels since 0.11)", () => {
   const send = "mcp__plugin_slack_slack__slack_send_message";
-  it("keeps channel id, message ts and the permalink from a send's response", () => {
-    const resp = [{ type: "text", text: JSON.stringify({ message_link: "https://b3-labs.slack.com/archives/C0123ABCD/p1795545603000100", message_context: { channel_id: "C0123ABCD", message_ts: "1795545603.000100" } }) }];
-    expect(slackRefs(send, { channel_id: "C0123ABCD", message: "MESSAGE_TEXT" }, resp)).toEqual([
-      { channel: "C0123ABCD", ts: "1795545603.000100", link: "https://b3-labs.slack.com/archives/C0123ABCD/p1795545603000100" },
+  const sent = (channel: string, ts: string) => [
+    { type: "text", text: JSON.stringify({ message_link: `https://b3-labs.slack.com/archives/${channel}/p${ts.replace(".", "")}`, message_context: { channel_id: channel, message_ts: ts } }) },
+  ];
+  it("keeps channel id, message ts, the permalink and the action from a send's response, never its text", () => {
+    expect(slackRefs(send, { channel_id: "C0123ABCD", message: "MESSAGE_TEXT" }, sent("C0123ABCD", "1795545603.000100"))).toEqual([
+      { channel: "C0123ABCD", ts: "1795545603.000100", link: "https://b3-labs.slack.com/archives/C0123ABCD/p1795545603000100", name: undefined, action: "Sent" },
     ]);
-    const e = mapHookInput({ ...base, hook_event_name: "PostToolUse", tool_name: send, tool_input: { channel_id: "C0123ABCD", message: "MESSAGE_TEXT" }, tool_response: resp });
+    const e = mapHookInput({ ...base, hook_event_name: "PostToolUse", tool_name: send, tool_input: { channel_id: "C0123ABCD", message: "MESSAGE_TEXT" }, tool_response: sent("C0123ABCD", "1795545603.000100") });
     expect(e?.detail?.slack).toHaveLength(1);
     expect(JSON.stringify(e?.detail?.slack)).not.toContain("MESSAGE_TEXT");
+  });
+
+  it("names a DM send once: the permalink's DM, not the user id the call was given; nothing before the response", () => {
+    expect(slackRefs(send, { channel_id: "U07ABCDEF1", message: "x" }, sent("D07ABCDEF1", "1795624663.424829"))).toEqual([
+      expect.objectContaining({ channel: "D07ABCDEF1", action: "Sent" }),
+    ]);
+    expect(slackRefs(send, { channel_id: "U07ABCDEF1", message: "x" })).toBeUndefined();
   });
 
   it("reads the permalink when the server escapes its slashes (the real shape)", () => {
     const text = '{"message_link":"https:\\/\\/b3-labs.slack.com\\/archives\\/C0123ABCD\\/p1795545603000100?thread_ts=1795545000.000200&cid=C0123ABCD","message_context":{"channel_id":"C0123ABCD","message_ts":"1795545603.000100"}}';
     expect(text).toContain("https:\\/\\/");
-    expect(slackRefs(send, { channel_id: "C0123ABCD", message: "x", thread_ts: "1795545000.000200" }, [{ type: "text", text }])?.[0]).toEqual({
+    expect(slackRefs(send, { channel_id: "C0123ABCD", message: "x", thread_ts: "1795545000.000200" }, [{ type: "text", text }])?.[0]).toMatchObject({
       channel: "C0123ABCD",
       ts: "1795545603.000100",
       link: "https://b3-labs.slack.com/archives/C0123ABCD/p1795545603000100?thread_ts=1795545000.000200&cid=C0123ABCD",
     });
   });
 
-  it("reads a thread's channel and ts from the call; other tools have none", () => {
-    expect(slackRefs("mcp__plugin_slack_slack__slack_read_thread", { channel_id: "C0123ABCD", message_ts: "1795545603.000100" })).toEqual([
-      { channel: "C0123ABCD", ts: "1795545603.000100", name: undefined },
+  it("says where from a read's channel line, a draft's channel_info, and how many places a search found", () => {
+    const read = "mcp__plugin_slack_slack__slack_read_channel";
+    const channelRead = [{ type: "text", text: JSON.stringify({ messages: "Channel: #eng (C0ENG00001)\n\n=== Message from Someone ===\nMESSAGE_TEXT", pagination_info: "" }) }];
+    expect(slackRefs(read, { channel_id: "C0ENG00001" }, channelRead)).toEqual([{ channel: "C0ENG00001", ts: undefined, name: "#eng", action: "Read" }]);
+    const dmRead = [{ type: "text", text: "Channel: DM (D07ABCDEF1)\n\nMESSAGE_TEXT" }];
+    expect(slackRefs(read, { channel_id: "D07ABCDEF1" }, dmRead)?.[0]).toMatchObject({ name: "DM", action: "Read" });
+    const draft = [{ type: "text", text: JSON.stringify({ result: "ok", draft_id: "x", channel_link: "https://b3-labs.slack.com/archives/C0ENG00001", channel_info: { channel_id: "C0ENG00001", name: "eng", is_dm: false } }) }];
+    expect(slackRefs("mcp__plugin_slack_slack__slack_send_message_draft", { channel_id: "C0ENG00001", message: "DRAFT_TEXT" }, draft)?.[0]).toMatchObject({ channel: "C0ENG00001", name: "#eng", action: "Drafted" });
+    const search = "mcp__plugin_slack_slack__slack_search_public_and_private";
+    const hits = (lines: string[]) => [{ type: "text", text: JSON.stringify({ results: lines.map((l) => `### Result\nChannel: ${l}\nFrom: Someone\nText: MESSAGE_TEXT`).join("\n\n") }) }];
+    expect(slackRefs(search, { query: "QUERY_TEXT" }, hits(["#eng (ID: C0ENG00001)", "DM (ID: D07ABCDEF1)", "Group DM (ID: G07ABCDEF1)", "#eng (ID: C0ENG00001)"]))).toEqual([
+      { channel: "C0ENG00001", name: "3 channels", action: "Searched" },
     ]);
-    expect(slackRefs("mcp__plugin_slack_slack__slack_read_channel", { channel_id: "not-an-id" })).toBeUndefined();
-    expect(slackRefs("Bash", { channel_id: "C0123ABCD" })).toBeUndefined();
+    expect(slackRefs(search, { query: "QUERY_TEXT" }, hits(["#oncall (ID: C0ONC00001)"]))?.[0]).toMatchObject({ name: "#oncall" });
+    expect(JSON.stringify(slackRefs(search, { query: "QUERY_TEXT" }, hits(["#eng (ID: C0ENG00001)"])))).not.toMatch(/QUERY_TEXT|MESSAGE_TEXT|Someone/);
+  });
+
+  it("names actions from any Slack MCP server's tools; other tools have none", () => {
+    expect(slackAction("mcp__slack__search_messages")).toBe("Searched");
+    expect(slackAction("mcp__plugin_slack_slack__slack_add_reaction")).toBe("Reacted");
+    expect(slackAction("mcp__plugin_slack_slack__slack_schedule_message")).toBe("Scheduled");
+    expect(slackAction("mcp__plugin_slack_slack__slack_list_channel_members")).toBe("Listed");
+    expect(slackRefs("mcp__plugin_slack_slack__slack_read_channel", { channel_id: "not-an-id" }, [{ type: "text", text: "x" }])).toBeUndefined();
+    expect(slackRefs("Bash", { channel_id: "C0123ABCD" }, "x")).toBeUndefined();
   });
 });

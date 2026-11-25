@@ -1,3 +1,4 @@
+import { issueText } from "../src/hub/forwarder";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -177,3 +178,14 @@ describe("git resolution", () => {
     expect(resolver.resolve(path.join(dir, "elsewhere"))).toBeUndefined();
   });
 });
+
+describe("issueText (Linear ids, SPEC §3.3 rule 6)", () => {
+  it("drops Workmesh's own lines, injected prompts and example ids, keeping the rest", () => {
+    expect(extractIssues(issueText("ship B3-7166, e.g. B3-123 is only an example"), ["B3"])).toEqual(["B3-7166"]);
+    expect(extractIssues(issueText("- `claim` the issue (e.g. B3-123); like B3-55 or for example B3-56"), ["B3"])).toEqual([]);
+    expect(extractIssues(issueText("Workmesh: this session is on your team's board. Claim B3-9\nreal work: B3-7"), ["B3"])).toEqual(["B3-7"]);
+    expect(issueText("<task-notification><summary>B3-1</summary></task-notification>")).toBeUndefined();
+    expect(issueText(undefined)).toBeUndefined();
+  });
+});
+

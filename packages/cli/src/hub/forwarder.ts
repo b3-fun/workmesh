@@ -199,6 +199,33 @@ interface Target {
   branch?: string;
 }
 
+/**
+ * A Slack link's label (SPEC §15): what happened and where, `Sent · DM`, `Read · #eng`, `Searched · 3 channels`;
+ * just one of them when the other is unknown. A place name only, never message or query text.
+ */
+export function slackLabel(action: string | undefined, where: string | undefined): string | undefined {
+  const w = where ? (/^[#]|^(DM|group DM|\d+ channels)$/.test(where) ? where : `#${where.replace(/^#/, "")}`) : undefined;
+  const label = action && w ? `${action} · ${w}` : (action ?? w);
+  return label?.slice(0, 120);
+}
+
+/** Workmesh's own words (its guidance, inbox and heads-ups) start their lines with "Workmesh". */
+const WORKMESH_LINE_RE = /^[ \t>*-]*Workmesh\b.*$/gm;
+/** An id written as an example: "e.g. B3-123", "like B3-123", "for example B3-123". */
+const EXAMPLE_ID_RE = /\b(?:e\.g\.|eg\.|i\.e\.|for example|for instance|such as|like)[ \t,:]*\(?[A-Za-z][A-Za-z0-9]{0,9}-\d{1,6}\b/gi;
+
+/**
+ * The text Linear ids are read from (SPEC §3.3 rule 6): none from a prompt the agent tool injected (a task notice,
+ * another agent's message), and never from Workmesh's own lines or ids written as examples, so the board doesn't
+ * show the guidance's "e.g. B3-123" as a ticket.
+ */
+export function issueText(text: string | undefined): string | undefined {
+  if (!text) return text;
+  if (isInjectedPrompt(text)) return undefined;
+  const plain = text.includes("<") ? stripInjected(text).text : text;
+  return plain.replace(WORKMESH_LINE_RE, " ").replace(EXAMPLE_ID_RE, " ");
+}
+
 interface Tracked {
   key: string;
   cwd?: string;
@@ -235,8 +262,10 @@ interface Tracked {
   /** Transcript text blocks already sent (ids), bounded. */
   sentMessages?: Set<string>;
   // v0.6 structure (SPEC §15)
-  /** Links already sent for this session (type|id|url), bounded. */
+  /** Links already sent for this session (type|id|url; Slack: slack|action|channel|thread), bounded. */
   sentLinks?: Set<string>;
+  /** Where Slack channels are, as this session's Slack calls named them (`C0123` → `#eng`), bounded; memory only. */
+  slackPlaces?: Map<string, string>;
   /** Set when this entry is a Claude Code subagent (not a store session). */
   sub?: SubState;
   /** A main session's subagent keys. */
@@ -439,6 +468,8 @@ export class HubForwarder {
   private lastSendAt: number | undefined;
   private lastSendOk: boolean | undefined;
   private lastSuccessAt: number | undefined;
+  /** The last accepted send by this forwarder or, until it has one, by the daemon before it (from the state file). */
+  private lastContactAt: number | undefined;
   private lastError: string | undefined;
   private dropped = 0;
   private rejected = 0;
@@ -737,7 +768,8 @@ export class HubForwarder {
 
     const keys = this.rule.issueKeys;
     const ids = [
-      ...new Set([...extractIssues(d?.prompt, keys), ...extractIssues(d?.command, keys)]),
+      // A command's first line only: a heredoc or a script's body is file text, not the work (a test's fixture ids).
+      ...new Set([...extractIssues(issueText(d?.prompt), keys), ...extractIssues(issueText(d?.command?.split("\n", 1)[0]), keys)]),
     ];
     this.addIssues(t, ids);
 
@@ -934,18 +966,30 @@ export class HubForwarder {
     const gh = extractGithubLink(d.command, d.toolResponseText);
     if (gh && this.repoShared(gh.repo)) add({ type: gh.type, id: `${gh.repo}#${gh.number}`, url: gh.url });
     if (d.slack && this.conversationShared(t)) {
+      const places = (t.slackPlaces ??= new Map());
       for (const ref of d.slack) {
         const host = ref.link ? /^https:\/\/([\w-]+\.slack\.com)\//.exec(ref.link)?.[1] : undefined;
         if (host) this.slackHost = host;
         const url =
           ref.link ??
           (ref.ts && this.slackHost ? `https://${this.slackHost}/archives/${ref.channel}/p${ref.ts.replace(".", "")}` : undefined);
-        add({
-          type: "slack",
-          id: ref.ts ? `${ref.channel}/${ref.ts}` : ref.channel,
-          url,
-          label: ref.name ? `#${ref.name.replace(/^#/, "")}`.slice(0, 120) : undefined,
-        });
+        // Where: what this call's response said, else what an earlier call in this session said about the channel.
+        const counted = ref.name !== undefined && /^\d+ channels$/.test(ref.name);
+        if (ref.name && !counted) {
+          places.set(ref.channel, ref.name);
+          if (places.size > 200) places.delete(places.keys().next().value as string);
+        }
+        const where = ref.name ?? places.get(ref.channel) ?? (/^D/.test(ref.channel) ? "DM" : /^G/.test(ref.channel) ? "group DM" : undefined);
+        const label = slackLabel(ref.action, where);
+        // One link per action and place in a session: a thread's messages, a DM's sends, a channel's reads; a search
+        // per what it found. The first permalink stands for the rest.
+        const thread = ref.link ? /[?&]thread_ts=(\d+\.\d+)/.exec(ref.link)?.[1] : ref.action === "Read" ? ref.ts : undefined;
+        const once = counted ? `slack|${ref.action ?? ""}|${label ?? ""}` : `slack|${ref.action ?? ""}|${ref.channel}|${thread ?? ""}`;
+        if (ref.action) {
+          if (seen.has(once)) continue;
+          seen.add(once);
+        }
+        add({ type: "slack", id: ref.ts ? `${ref.channel}/${ref.ts}` : ref.channel, url, label });
       }
     }
     return out;
@@ -1969,6 +2013,7 @@ export class HubForwarder {
       this.maxEvents = Math.min(HUB_MAX_EVENTS_PER_REQUEST, this.maxEvents * 2);
       this.lastSendOk = true;
       this.lastSuccessAt = now;
+      this.lastContactAt = now;
       this.lastError = undefined;
       return true;
     }
@@ -1980,12 +2025,19 @@ export class HubForwarder {
     );
     if (res.status === 401) {
       this.halted = true;
-      this.lastError = "device token rejected (401)";
+      const superseded = isSuperseded(detail);
+      // A hub retires a machine's older pairing when it pairs again (same person, same machine name).
+      this.lastError = superseded
+        ? "this pairing was replaced: the machine paired with the hub again (401 superseded)"
+        : "device token rejected (401)";
       if (this.timer) clearInterval(this.timer);
       this.timer = undefined;
       this.log(
-        `hub: ${this.url} rejected this device's token (401): forwarding stopped. ` +
-          `Run \`workmesh hub connect ${this.url}\` to pair this machine again.`,
+        superseded
+          ? `hub: ${this.url} retired this device's token: the machine paired again, so this daemon stops forwarding. ` +
+              `If this is a different machine, give it its own name: \`workmesh init ${this.url} --repair --machine <name>\`.`
+          : `hub: ${this.url} rejected this device's token (401): forwarding stopped. ` +
+              `Run \`workmesh init ${this.url}\` to pair this machine again.`,
       );
       return false;
     }
@@ -2088,6 +2140,7 @@ export class HubForwarder {
       v: STATE_VERSION,
       savedAt: this.now(),
       url: this.url,
+      ...(this.lastContactAt ? { lastContactAt: this.lastContactAt } : {}),
       sessions,
       queue: this.queue.slice(-STATE_MAX_EVENTS),
     };
@@ -2106,6 +2159,7 @@ export class HubForwarder {
     const counts = { sessions: 0, events: 0, ended: 0 };
     const seed: AgentSession[] = [];
     const state = asPersisted(raw);
+    if (state?.url === this.url && state.lastContactAt && !this.lastContactAt) this.lastContactAt = state.lastContactAt;
     if (!state || state.url !== this.url || this.now() - state.savedAt > STATE_MAX_AGE_MS) {
       this.restoredCounts = counts;
       return seed;
@@ -2267,6 +2321,8 @@ export interface PersistedForward {
   v: number;
   savedAt: number;
   url: string;
+  /** The last time the hub accepted a send (doctor: "the hub last heard from this machine …" with the daemon down). */
+  lastContactAt?: number;
   sessions: PersistedTracked[];
   queue: HubActivityEvent[];
 }
@@ -2283,7 +2339,18 @@ function asPersisted(raw: unknown): PersistedForward | undefined {
     v: s.v,
     savedAt: s.savedAt,
     url: s.url,
+    ...(typeof s.lastContactAt === "number" ? { lastContactAt: s.lastContactAt } : {}),
     sessions: Array.isArray(s.sessions) ? s.sessions.filter((x): x is PersistedTracked => !!x && typeof x.key === "string") : [],
     queue: Array.isArray(s.queue) ? s.queue : [],
   };
+}
+
+/** A hub's 401 body says the token was superseded by a newer pairing of the same machine (SPEC §3.1). */
+export function isSuperseded(body: string): boolean {
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown; reason?: unknown };
+    return parsed.reason === "superseded" || (typeof parsed.error === "string" && /\bsuperseded\b/i.test(parsed.error));
+  } catch {
+    return /\bsuperseded\b/i.test(body);
+  }
 }

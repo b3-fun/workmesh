@@ -479,6 +479,7 @@ describe("workmesh init (SPEC §31)", () => {
         },
         checkToken: async () => "ok" as const,
         setShare: async () => {},
+        firstContact: async () => ({ kind: "ok" as const, at: Date.now(), sharedSessions: 0 }),
       };
       await runInit("https://hub.test/", { share: "metadata", open: false }, deps);
       expect(connects).toEqual([["https://hub.test", { open: false, share: "metadata" }]]);
@@ -511,7 +512,7 @@ describe("workmesh init (SPEC §31)", () => {
     try {
       await expect(runInit("ftp://nope", {}, { claudeBin: null })).rejects.toThrow(/hub URL must be https/);
       expect(fs.existsSync(path.join(home, ".claude", "settings.json"))).toBe(false);
-      await runInit("https://hub.test", { codex: false }, { claudeBin: null, restartDaemon: async () => true, connect: async () => {} });
+      await runInit("https://hub.test", { codex: false }, { claudeBin: null, restartDaemon: async () => true, connect: async () => {}, firstContact: async () => ({ kind: "no-daemon" as const }) });
       expect(fs.existsSync(path.join(home, ".codex", "hooks.json"))).toBe(false);
       expect(fs.existsSync(path.join(home, ".claude", "settings.json"))).toBe(true);
     } finally {

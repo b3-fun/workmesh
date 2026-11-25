@@ -47,13 +47,16 @@ export const DETAIL_LIMITS = {
 /**
  * A Slack message an MCP Slack tool touched (local only, like all of detail):
  * channel id, message ts, the permalink when the tool's response carried one,
- * the channel name when the call named it.
+ * where it happened as people read it (`#eng`, `DM`, `group DM`, `3 channels`)
+ * when the call or its response names it, and what the tool did (`Sent`,
+ * `Read`, `Searched`, from its name). Never message or query text.
  */
 export const slackRefSchema = z.object({
   channel: z.string().max(DETAIL_LIMITS.slackId).regex(/^[A-Z0-9]+$/),
   ts: z.string().max(DETAIL_LIMITS.slackId).regex(/^\d{9,11}\.\d{1,9}$/).optional(),
   link: z.string().max(DETAIL_LIMITS.slackLink).optional(),
   name: z.string().max(DETAIL_LIMITS.slackName).optional(),
+  action: z.string().max(24).optional(),
 });
 export type SlackRef = z.infer<typeof slackRefSchema>;
 

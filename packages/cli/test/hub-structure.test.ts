@@ -329,6 +329,43 @@ describe("agent messages (SPEC §15)", () => {
 });
 
 describe("links (SPEC §15)", () => {
+  it("labels Slack links with what happened and where, remembers places, and sends each action and place once", async () => {
+    const h = harness({ share: "conversation" });
+    const read = "mcp__plugin_slack_slack__slack_read_channel";
+    const send = "mcp__plugin_slack_slack__slack_send_message";
+    const sent = (ts: string) => [{ type: "text", text: JSON.stringify({ message_link: `https://b3-labs.slack.com/archives/C0ENG00001/p${ts.replace(".", "")}`, message_context: { channel_id: "C0ENG00001", message_ts: ts } }) }];
+    h.claude("s1", beta, { hook_event_name: "UserPromptSubmit", prompt: "post the note" });
+    h.claude("s1", beta, { hook_event_name: "PostToolUse", tool_name: read, tool_input: { channel_id: "C0ENG00001" }, tool_response: [{ type: "text", text: "Channel: #eng (C0ENG00001)\nMESSAGE_TEXT" }] });
+    h.claude("s1", beta, { hook_event_name: "PostToolUse", tool_name: read, tool_input: { channel_id: "C0ENG00001" }, tool_response: [{ type: "text", text: "Channel: #eng (C0ENG00001)\nMESSAGE_TEXT" }] });
+    h.claude("s1", beta, { hook_event_name: "PostToolUse", tool_name: send, tool_input: { channel_id: "C0ENG00001", message: "MESSAGE_TEXT" }, tool_response: sent("1795545603.000100") });
+    h.claude("s1", beta, { hook_event_name: "PostToolUse", tool_name: send, tool_input: { channel_id: "C0ENG00001", message: "MESSAGE_TEXT" }, tool_response: sent("1795545609.000100") });
+    h.claude("s1", beta, {
+      hook_event_name: "PostToolUse",
+      tool_name: send,
+      tool_input: { channel_id: "U07ABCDEF1", message: "MESSAGE_TEXT" },
+      tool_response: [{ type: "text", text: JSON.stringify({ message_link: "https://b3-labs.slack.com/archives/D07ABCDEF1/p1795545700000100", message_context: { channel_id: "D07ABCDEF1", message_ts: "1795545700.000100" } }) }],
+    });
+    await h.send();
+    const slack = h.events("claude-code:s1").flatMap((e) => e.links ?? []).filter((l) => l.type === "slack");
+    expect(slack.map((l) => [l.id, l.label])).toEqual([
+      ["C0ENG00001", "Read · #eng"],
+      ["C0ENG00001/1795545603.000100", "Sent · #eng"],
+      ["D07ABCDEF1/1795545700.000100", "Sent · DM"],
+    ]);
+    expect(h.raw.join("\n")).not.toContain("MESSAGE_TEXT");
+  });
+
+  it("reads no Linear id from Workmesh's own lines, injected prompts, examples or a heredoc's body", async () => {
+    const h = harness({ share: "conversation" });
+    h.claude("g1", beta, { hook_event_name: "UserPromptSubmit", prompt: "Pick up B3-7166 next; claim it like the guidance says (e.g. B3-123)." });
+    h.claude("g1", beta, { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "echo 'Workmesh: claim the Linear issue you work on (e.g. B3-123)'" } });
+    h.claude("g1", beta, { hook_event_name: "UserPromptSubmit", prompt: "<task-notification>\n<summary>Agent done on B3-4242</summary>\n</task-notification>" });
+    h.claude("g1", beta, { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "python3 - <<'EOF'\nfixture = ['B3-9', 'B3-7044']\nEOF" } });
+    await h.send();
+    const ids = h.events("claude-code:g1").flatMap((e) => [...(e.issues ?? []), ...(e.links ?? []).filter((l) => l.type === "linear").map((l) => l.id)]);
+    expect([...new Set(ids)]).toEqual(["B3-7166"]);
+  });
+
   it("Linear ids, PRs and issues on shared repos; Slack messages at conversation level only", async () => {
     const sendTool = "mcp__plugin_slack_slack__slack_send_message";
     const slackResp = [{ type: "text", text: JSON.stringify({ message_link: "https://b3-labs.slack.com/archives/C0123ABCD/p1795545603000100", message_context: { channel_id: "C0123ABCD", message_ts: "1795545603.000100" } }) }];
@@ -339,19 +376,24 @@ describe("links (SPEC §15)", () => {
       h.claude("l1", beta, { hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "gh issue create -t x" }, tool_response: { stdout: "https://github.com/b3-fun/b3os-beta/issues/12", stderr: "" } });
       h.claude("l1", beta, { hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "gh pr view 1" }, tool_response: { stdout: "https://github.com/seangeng/salience/pull/1", stderr: "" } });
       h.claude("l1", beta, { hook_event_name: "PostToolUse", tool_name: sendTool, tool_input: { channel_id: "C0123ABCD", message: "SLACK_TEXT" }, tool_response: slackResp });
-      h.claude("l1", beta, { hook_event_name: "PreToolUse", tool_name: "mcp__plugin_slack_slack__slack_read_thread", tool_input: { channel_id: "C0999ZZZZ", message_ts: "1795545000.000200" } });
+      // Read on PostToolUse only (its response says where); a second send into the same channel adds no link.
+      const thread = { channel_id: "C0999ZZZZ", message_ts: "1795545000.000200" };
+      h.claude("l1", beta, { hook_event_name: "PreToolUse", tool_name: "mcp__plugin_slack_slack__slack_read_thread", tool_input: thread });
+      h.claude("l1", beta, { hook_event_name: "PostToolUse", tool_name: "mcp__plugin_slack_slack__slack_read_thread", tool_input: thread, tool_response: [{ type: "text", text: "=== THREAD PARENT MESSAGE ===\nFrom: Someone" }] });
+      const again = [{ type: "text", text: JSON.stringify({ message_link: "https://b3-labs.slack.com/archives/C0123ABCD/p1795545609000100", message_context: { channel_id: "C0123ABCD", message_ts: "1795545609.000100" } }) }];
+      h.claude("l1", beta, { hook_event_name: "PostToolUse", tool_name: sendTool, tool_input: { channel_id: "C0123ABCD", message: "SLACK_TEXT" }, tool_response: again });
       await h.send();
       const links = h.events("claude-code:l1").flatMap((e) => e.links ?? []);
-      const expected = [
+      const expected: Array<Record<string, string>> = [
         { type: "linear", id: "B3-7166" },
         { type: "github_pr", id: "b3-fun/b3os-beta#164", url: "https://github.com/b3-fun/b3os-beta/pull/164" },
         { type: "github_issue", id: "b3-fun/b3os-beta#12", url: "https://github.com/b3-fun/b3os-beta/issues/12" },
       ];
       if (share === "conversation") {
         expected.push(
-          { type: "slack", id: "C0123ABCD/1795545603.000100", url: "https://b3-labs.slack.com/archives/C0123ABCD/p1795545603000100" },
+          { type: "slack", id: "C0123ABCD/1795545603.000100", url: "https://b3-labs.slack.com/archives/C0123ABCD/p1795545603000100", label: "Sent" },
           // a thread read by id: linked through the workspace host seen in the earlier permalink
-          { type: "slack", id: "C0999ZZZZ/1795545000.000200", url: "https://b3-labs.slack.com/archives/C0999ZZZZ/p1795545000000200" },
+          { type: "slack", id: "C0999ZZZZ/1795545000.000200", url: "https://b3-labs.slack.com/archives/C0999ZZZZ/p1795545000000200", label: "Read" },
         );
       }
       expect(links).toEqual(expected);

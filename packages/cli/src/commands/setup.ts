@@ -137,6 +137,8 @@ export interface SetupOptions {
   mcp?: boolean;
   /** Run the daemon under launchd / systemd (default true; `--no-service` skips it). SPEC §24. */
   service?: boolean;
+  /** Linux: turn lingering on (default true; `--no-linger`), so the daemon survives logout. */
+  linger?: boolean;
   /** Install the asyncRewake Stop hook that wakes idle sessions for messages (default true; `--no-wake`). SPEC §31. */
   wake?: boolean;
 }
@@ -290,7 +292,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     installHooksOnly(opts);
     // The service carries CLAUDE_CONFIG_DIR into the daemon's environment: make it the profile just hooked.
     if (opts.claudeDir) process.env.CLAUDE_CONFIG_DIR = resolveClaudeDir(opts.claudeDir);
-    if (opts.service !== false) await runServiceInstall();
+    if (opts.service !== false) await runServiceInstall({ linger: opts.linger });
     return;
   }
   console.log(bold("workmesh setup"));
@@ -430,7 +432,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   if (warning) console.log(yellow(`note: ${warning}`));
   console.log(sharingSummary(config));
   // The service (re)starts the daemon, so it runs with the config just saved.
-  if (opts.service !== false && (await runServiceInstall())) {
+  if (opts.service !== false && (await runServiceInstall({ linger: opts.linger }))) {
     console.log("\nnext steps:");
     console.log(`  ${bold("workmesh status")}           see live agent sessions`);
     console.log(`  ${bold("workmesh doctor")}           verify everything`);

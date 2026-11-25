@@ -1,0 +1,16 @@
+# A Linux box you SSH into: systemd as PID 1, logind, a user manager per login (pam_systemd), sshd, and polkit (as on
+# Ubuntu Server or Fedora, where a user may turn lingering on for themselves). Logging out stops the user's services
+# unless lingering is on, exactly as on a real server. The smoke test stops polkit for one phase to play a minimal
+# Debian box, where only an admin can turn lingering on.
+ARG NODE=22
+FROM node:${NODE}-bookworm
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends systemd systemd-sysv dbus dbus-user-session libpam-systemd polkitd openssh-server openssh-client \
+ && rm -rf /var/lib/apt/lists/* \
+ && systemctl enable ssh \
+ && systemctl mask getty@tty1.service console-getty.service \
+ && useradd -m -s /bin/bash dev \
+ && install -d -m 700 -o dev -g dev /home/dev/.ssh \
+ && printf 'export NPM_CONFIG_PREFIX=$HOME/.npm-global\nexport PATH=$HOME/.npm-global/bin:$PATH\n' > /etc/profile.d/npm-user.sh
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

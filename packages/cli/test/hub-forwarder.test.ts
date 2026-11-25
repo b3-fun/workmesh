@@ -655,11 +655,21 @@ describe("HubForwarder delivery (mock hub over HTTP)", () => {
     tools(h, 1);
     await h.fwd.tick();
     expect(h.fwd.status()).toMatchObject({ halted: true });
-    expect(h.logs.join("\n")).toContain(`workmesh hub connect ${base}`);
+    expect(h.logs.join("\n")).toContain(`workmesh init ${base}`);
     tools(h, 2);
     h.advance(60_000);
     await h.fwd.tick();
     expect(received).toHaveLength(1);
+  });
+
+  it("a superseded token (the machine paired again) stops forwarding and says so", async () => {
+    const h = harness({ url: base, useRealFetch: true });
+    replies.push({ status: 401, body: { error: "superseded: b3-box paired again with this hub", reason: "superseded" } });
+    tools(h, 1);
+    await h.fwd.tick();
+    expect(h.fwd.status()).toMatchObject({ halted: true });
+    expect(h.fwd.status().lastError).toContain("this pairing was replaced");
+    expect(h.logs.join("\n")).toContain("--machine <name>");
   });
 
   it("does not loop on a 400", async () => {

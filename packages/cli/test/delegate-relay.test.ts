@@ -414,6 +414,7 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     const hub = fakeHub([
       { status: 200, body: { ok: true, gates: { owner: "Sean", actions: ["merge", "deploy"] } } },
       { status: 200, body: { ok: true, approval: { id: "ap_1", sessionKey: `${DEV}:claude-code:s1`, gate: "merge", detail: "gh pr merge 1", status: "approved", ts: T, by: "Sean" } } },
+      { status: 200, body: { ok: true, approval: { id: "ap_2", sessionKey: `${DEV}:claude-code:s1`, gate: "merge", detail: "gh pr merge 2", status: "denied", ts: T, by: "Sean" } } },
     ]);
     sync(hub.coord);
     const agent = { claudeSessionId: "s1" };
@@ -422,11 +423,15 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     expect((await runCoordOp({ op: "gates", args: { set: "merge,launch" }, caller: {} }, deps(hub.coord))).text).toMatch(/Unknown gate: launch/);
     expect(hub.calls).toEqual([]);
     const set = await runCoordOp({ op: "gates", args: { set: "merge, deploy" }, caller: {} }, deps(hub.coord));
-    expect(set.text).toBe("Your agents now ask before they merge, deploy (approve on the board or in the menu bar).");
+    expect(set.text).toBe("Your agents now ask before they merge, deploy (approve on the board, in the menu bar or with workmesh approvals approve <id>).");
     expect(hub.calls[0]).toEqual({ url: "https://hub.test/relay/gates", body: { actions: ["merge", "deploy"] } });
     const ok = await runCoordOp({ op: "approvals", args: { action: "approve", id: "ap_1" }, caller: {} }, deps(hub.coord));
     expect(ok.text).toBe("Approved: gh pr merge 1.");
-    expect(hub.calls[1]!.body).toEqual({ action: "approve", id: "ap_1" });
+    // 0.12.1: the hub hears where the person decided, so the notice can say it (a terminal, or the menu bar).
+    expect(hub.calls[1]!.body).toEqual({ action: "approve", id: "ap_1", via: "cli" });
+    const bar = await runCoordOp({ op: "approvals", args: { action: "deny", id: "ap_2" }, caller: { client: "menubar" } }, deps(hub.coord));
+    expect(bar.text).toBe("Denied: gh pr merge 2.");
+    expect(hub.calls[2]!.body).toEqual({ action: "deny", id: "ap_2", via: "menubar" });
   });
 
   it("handoffs accept starts it here; list reads the sync", async () => {

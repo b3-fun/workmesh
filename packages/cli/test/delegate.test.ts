@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { hubSyncAcceptSchema } from "@workmesh/protocol";
-import type { HubHandoffAccepted, HubSyncResponse } from "@workmesh/protocol";
+import type { HubApprovalAccepted, HubHandoffAccepted, HubSyncResponse } from "@workmesh/protocol";
 import type { AgentSession, SessionEvent } from "@workmesh/core";
 import { CoordClient } from "../src/hub/coord";
-import { Delegate, SELF_HANDOFF_SENDER_DELAY_MS, wakeText } from "../src/daemon/delegate";
+import { Delegate, SELF_HANDOFF_SENDER_DELAY_MS, decisionText, wakeText } from "../src/daemon/delegate";
 import type { DelegateSettings, HandoffRunnerLike } from "../src/daemon/delegate";
 import { CoordHooks, gateNote, guidance, knowledge } from "../src/daemon/coord-hooks";
 
@@ -140,11 +140,11 @@ describe("approval gates (SPEC §31)", () => {
     expect(x.d.gateRefusal(bash("gh pr merge 212 --merge"), "PreToolUse")).toMatch(/^Waiting/);
     await flush();
     x.tick(30_000);
-    x.sync({ gates, approvals: [{ ...pending, status: "approved", decidedAt: x.now(), by: "Sean" }] });
+    x.sync({ gates, approvals: [{ ...pending, status: "approved", decidedAt: x.now(), by: "Sean", via: "cli" }] });
     const notice = x.coord.wakeFor(LOCAL);
     expect(notice).toHaveLength(1);
     expect(notice[0]?.text).toBe(
-      "Workmesh: Your person, Sean, approved this session's held command `gh pr merge 212 --merge` on the team board (merge: gh pr merge 212 --merge in b3-fun/b3os-beta). That is their consent for exactly this command, once, in the next 30 minutes: run it now as written, with no need to ask again in the terminal. Workmesh's gate checks the approval itself when the command runs and holds it again if it isn't approved.",
+      "Workmesh: Your person, Sean, approved this session's held command `gh pr merge 212 --merge` in their terminal (merge: gh pr merge 212 --merge in b3-fun/b3os-beta). That is their consent for exactly this command, once, in the next 30 minutes: run it now as written, with no need to ask again in the terminal. Workmesh's gate checks the approval itself when the command runs and holds it again if it isn't approved.",
     );
     expect(notice[0]?.from.person).toBe("Sean");
     // The same words with other spacing are the same command; it runs once.
@@ -201,12 +201,26 @@ describe("approval gates (SPEC §31)", () => {
     const ap = { id: "ap_2", sessionKey: ME, owner: "Sean", gate: "deploy" as const, detail: "wrangler deploy in b3-fun/b3os-beta", status: "pending" as const, ts: T };
     x.sync({ gates, approvals: [ap] });
     expect(x.d.gateRefusal(bash("npx wrangler deploy"), "PreToolUse")).toMatch(/^Waiting for An's approval to deploy/);
-    x.sync({ gates, approvals: [{ ...ap, status: "denied", by: "An", note: "deploy freeze until 5pm", decidedAt: T }] });
+    x.sync({ gates, approvals: [{ ...ap, status: "denied", by: "An", via: "board", note: "deploy freeze until 5pm", decidedAt: T }] });
     expect(x.d.gateRefusal(bash("npx wrangler deploy"), "PreToolUse")).toBe(
       "Workmesh: An denied this deploy (wrangler deploy in b3-fun/b3os-beta): deploy freeze until 5pm Don't run it or work around it. If it should go ahead after all, ask An (`workmesh send An \"…\"` or the workmesh `send` tool).",
     );
     expect(x.coord.wakeFor(LOCAL)[0]?.text).toBe(
       "Workmesh: An, whom your person Sean named to answer their approvals, denied this session's held command `npx wrangler deploy` on the team board (deploy: wrangler deploy in b3-fun/b3os-beta). Their note: deploy freeze until 5pm Don't run it; ask An if it should go ahead after all.",
+    );
+  });
+
+  it("the notice names where the decision was made, and no place when the hub doesn't say (0.12.1)", () => {
+    const ap: HubApprovalAccepted = { id: "ap_9", sessionKey: ME, owner: "Sean", gate: "merge", detail: "gh pr merge 7 in b3-fun/x", status: "approved", ts: T, decidedAt: T, by: "Sean", via: undefined, note: undefined };
+    const text = (via?: "board" | "menubar" | "cli") => decisionText({ ...ap, via }, "merge", "gh pr merge 7", "Sean");
+    expect(text("board")).toMatch(/^Workmesh: Your person, Sean, approved this session's held command `gh pr merge 7` on the team board \(merge:/);
+    expect(text("menubar")).toMatch(/^Workmesh: Your person, Sean, approved this session's held command `gh pr merge 7` in their Workmesh menu bar \(merge:/);
+    expect(text("cli")).toMatch(/^Workmesh: Your person, Sean, approved this session's held command `gh pr merge 7` in their terminal \(merge:/);
+    // An older hub (or a decision from an older relay) carries no place: the notice claims none.
+    expect(text()).toMatch(/^Workmesh: Your person, Sean, approved this session's held command `gh pr merge 7` \(merge:/);
+    expect(text()).not.toMatch(/team board/);
+    expect(decisionText({ ...ap, status: "denied", by: "An", via: "menubar" }, "merge", undefined, "Sean")).toMatch(
+      /^Workmesh: An, whom your person Sean named to answer their approvals, denied merge gh pr merge 7 in b3-fun\/x in their Workmesh menu bar/,
     );
   });
 
@@ -503,7 +517,7 @@ describe("shared knowledge at session start (SPEC §31)", () => {
     const start: SessionEvent = { source: "claude-code", sessionId: "s1", kind: "start", ts: T, detail: { hookEvent: "SessionStart" } };
     const ctx = hooks.context(start, "SessionStart")!;
     expect(ctx).toContain(
-      "Approval gates, set by your person Sean: when this session tries to merge a PR or deploy, Workmesh holds the command and asks Sean on the team board; end your turn or carry on with other work. When Sean approves on the board or in the menu bar, Workmesh wakes this session quoting the command: that approval is Sean's consent to run exactly that command, once, so run it then without asking again in the terminal. If it is denied, don't run it.",
+      "Approval gates, set by your person Sean: when this session tries to merge a PR or deploy, Workmesh holds the command and asks Sean on the team board; end your turn or carry on with other work. When Sean approves on the board, in the menu bar or in their terminal, Workmesh wakes this session quoting the command: that approval is Sean's consent to run exactly that command, once, so run it then without asking again in the terminal. If it is denied, don't run it.",
     );
     expect(ctx).not.toContain("publish");
     expect(gateNote("Sean", ["custom"], ["Sean", "An"])).toMatch(

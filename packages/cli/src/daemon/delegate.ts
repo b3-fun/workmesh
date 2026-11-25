@@ -704,13 +704,32 @@ export function decisionText(a: HubApprovalAccepted, gate: HubGateAction, comman
   const who = mine ? `Your person, ${by},` : me ? `${by}, whom your person ${me} named to answer their approvals,` : by;
   const what = command ? `this session's held command ${quoteCommand(command)}` : `${gateVerb(gate)} ${a.detail}`;
   const note = a.note ? ` Their note: ${a.note}` : "";
+  const where = decisionPlace(a.via);
   if (a.status === "approved") {
     return (
-      `Workmesh: ${who} approved ${what} on the team board (${gateVerb(gate)}: ${a.detail}).${note} ` +
+      `Workmesh: ${who} approved ${what}${where} (${gateVerb(gate)}: ${a.detail}).${note} ` +
       `That is ${mine ? "their" : `${me ?? by}'s`} consent for exactly this command, once, in the next ${Math.round(APPROVAL_VALID_MS / 60_000)} ` +
       "minutes: run it now as written, with no need to ask again in the terminal. Workmesh's gate checks the " +
       "approval itself when the command runs and holds it again if it isn't approved."
     );
   }
-  return `Workmesh: ${who} denied ${what} on the team board (${gateVerb(gate)}: ${a.detail}).${note} Don't run it; ask ${by} if it should go ahead after all.`;
+  return `Workmesh: ${who} denied ${what}${where} (${gateVerb(gate)}: ${a.detail}).${note} Don't run it; ask ${by} if it should go ahead after all.`;
+}
+
+/**
+ * Where the person decided (SPEC §30, 0.12.1), as the notice says it: " on the team board", " in their Workmesh menu
+ * bar", " in their terminal". Nothing when the hub or the deciding relay predates `via`: a notice never names a place
+ * it doesn't know (0.12.0 said "on the team board" for every decision, a CLI one too).
+ */
+export function decisionPlace(via: HubApprovalAccepted["via"]): string {
+  switch (via) {
+    case "board":
+      return " on the team board";
+    case "menubar":
+      return " in their Workmesh menu bar";
+    case "cli":
+      return " in their terminal";
+    default:
+      return "";
+  }
 }

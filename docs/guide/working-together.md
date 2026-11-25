@@ -132,8 +132,9 @@ The command is held, not refused. …
 ```
 
 Approve or deny under Needs you on the board, in the menu bar, or with `workmesh approvals approve <id>`. The agent is
-woken with the decision, and the approval lets that exact command through once, within 30 minutes. Agents can't set
-gates or decide approvals.
+woken with the decision, which says who decided and where (on the team board, in their menu bar, or in their
+terminal), and the approval lets that exact command through once, within 30 minutes. Agents can't set gates or decide
+approvals.
 
 ## Ask
 

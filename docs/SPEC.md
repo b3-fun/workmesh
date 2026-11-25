@@ -833,7 +833,7 @@ the device token names the person, requests carry ingest keys, answers carry hub
 | `POST /relay/handoffs` | `{ action: "create", from?: sessionKey, to: { person }, task: 1..4000, repo?: owner/name, issue?: id, context?: 1..4000 }` | `{ ok: true, handoff }`; `404` `{ ok: false, error }` for no such person |
 | `POST /relay/handoffs` | `{ action: "accept" \| "decline" \| "start" \| "done" \| "fail", id, sessionKey?, note?: ≤ 500 }` | `{ ok: true, handoff }`; `404` no such handoff; `409` `{ ok: false, error, handoff? }` a move its state doesn't allow |
 | `POST /relay/approvals` | `{ action: "request", sessionKey, gate: GateAction, detail: 1..500, renew?: true }` | `{ ok: true, approval }` |
-| `POST /relay/approvals` | `{ action: "approve" \| "deny", id, note?: ≤ 500 }` | `{ ok: true, approval }`; `403` not yours to decide, `404`, `409` already decided |
+| `POST /relay/approvals` | `{ action: "approve" \| "deny", id, note?: ≤ 500, via?: "menubar" \| "cli" }` | `{ ok: true, approval }`; `403` not yours to decide, `404`, `409` already decided |
 | `POST /relay/gates` | `{ actions: GateAction[] }` (the device's person's own gates; `[]` turns them off) | `{ ok: true, gates: GatePolicy }` |
 | `POST /relay/messages` | (§21) gains `wake?: boolean` | as §21 |
 
@@ -852,7 +852,9 @@ the device token names the person, requests carry ingest keys, answers carry hub
   action in `actions`, from the owner (or one of `approvers` when set). A relay only ever enforces its own person's
   policy; the board may set it too.
 - **Approval** = `{ id, sessionKey, owner?, gate, detail, status: "pending" | "approved" | "denied", ts, decidedAt?,
-  by?, note? }`. `detail` names the action in a few words, as the relay's matcher reads it from the command
+  by?, via?, note? }`. `via` (0.12.1) is where `by` decided it: `board`, `menubar` (their menu bar app) or `cli`
+  (`workmesh approvals approve|deny`). A relay's `approve`/`deny` says which of its two it was; the hub records
+  `board` for a decision on the board, and none for a relay that didn't say. A reader drops a place it doesn't know. `detail` names the action in a few words, as the relay's matcher reads it from the command
   (`gh pr merge 212 --merge in b3-fun/b3os-beta`), redacted; it is the one piece of a command beyond §3.3's
   program + subcommand that leaves a machine, and only when the person gated that action. A second `request` for
   the same session, gate and detail while one is pending answers the pending one (and B3's hub also answers with a
@@ -955,7 +957,8 @@ command run; a waiter that can't reach the daemon ends.
   for the next tool boundary. `workmesh wake off` turns waking off. The texts say where they come from: a wake for a
   teammate's message asks the agent to answer and not to start unrelated work on a teammate's say-so; an approval
   notice names who decided and as whom ("Your person, Sean," or "An, whom your person Sean named to answer their
-  approvals,"), quotes the exact command the session was held on (local only: it never leaves the machine), and says
+  approvals,"), where (0.12.1, from `via`: "on the team board", "in their Workmesh menu bar", "in their terminal";
+  no place when the approval carries none, so a notice never claims the board for a decision made elsewhere), quotes the exact command the session was held on (local only: it never leaves the machine), and says
   that this is the person's consent for exactly that command, once, in the next 30 minutes, and that the gate checks
   the approval itself when the command runs.
 - **Team knowledge.** The SessionStart note (§23) adds the project's notes tagged `rule` or `convention` (newest first,

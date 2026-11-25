@@ -257,13 +257,22 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       if (!toRaw) return fail("`send` needs `to`: a person (name, email or GitHub login), an agent's session name, or a session's hub key.");
       if (!text) return fail("`send` needs `text`.");
       const to = recipient(toRaw, str(a.kind, 20), st);
+      if ("error" in to) return fail(to.error);
+      const thread = str(a.thread, 64);
+      // v2 (SPEC §30): wake an idle recipient. Absent: an agent's reply (in a thread it was sent, or to the session
+      // that wrote to it in the last 30 minutes) wakes; otherwise the hub's default (a person's message wakes).
+      const wake =
+        typeof a.wake === "boolean"
+          ? a.wake
+          : key && coord.isReply(key, to, thread, now)
+            ? true
+            : undefined;
       const r = await coord.message({
         ...(key ? { from: CoordClient.family(key) } : {}),
         to,
         text,
-        ...(str(a.thread, 64) ? { thread: str(a.thread, 64) } : {}),
-        // v2 (SPEC §30): wake an idle recipient (absent: the hub's default, a person's message wakes).
-        ...(typeof a.wake === "boolean" ? { wake: a.wake } : {}),
+        ...(thread ? { thread } : {}),
+        ...(wake !== undefined ? { wake } : {}),
       });
       if (!r.ok) return hubError(r);
       if (!r.body.ok) return fail(`Workmesh: ${r.body.error || "the hub didn't take the message"}`);
@@ -627,21 +636,47 @@ export function personOf(
   return to.includes("@") || /^[\w .'-]{1,120}$/.test(to) ? to : undefined;
 }
 
-/** A `to` string → the wire recipient, using the roster to tell people from agents. */
+/** A `to` string → the wire recipient, using the roster to tell people from agents and sessions. */
 export function recipient(
   to: string,
   kind: string | undefined,
-  st: { roster: ReadonlyArray<{ person: string; github?: string; sessions: ReadonlyArray<{ hubKey: string; name: string }> }> } | undefined,
-): HubMessageTo {
+  st: { roster: ReadonlyArray<{ person: string; github?: string; sessions: ReadonlyArray<{ hubKey: string; name: string; state?: string }> }> } | undefined,
+): HubMessageTo | { error: string } {
   if (kind === "person") return { person: to };
-  if (kind === "agent") return { agent: to };
-  if (kind === "session" || /^dev_[0-9A-Z]{26}:/.test(to)) return { session: to };
+  if (/^dev_[0-9A-Z]{26}:/.test(to)) return { session: to };
   const low = to.toLowerCase();
-  for (const p of st?.roster ?? []) {
-    if (p.person.toLowerCase() === low || p.github?.toLowerCase() === low) return { person: p.person };
+  if (kind !== "session" && kind !== "agent") {
+    for (const p of st?.roster ?? []) {
+      if (p.person.toLowerCase() === low || p.github?.toLowerCase() === low) return { person: p.person };
+    }
   }
-  for (const p of st?.roster ?? []) {
-    for (const s of p.sessions) if (s.name && s.name.toLowerCase() === low) return { agent: s.name };
+  const sessions = (st?.roster ?? []).flatMap((p) => p.sessions.map((x) => ({ ...x, person: p.person })));
+  // A session's short key (`claude-code:<id>`, or the start of its id), as hooks and transcripts name it.
+  const short = /^[\w-]+:([\w-]+)$/.exec(to);
+  let hits = short
+    ? sessions.filter((x) => {
+        const k = x.hubKey.slice(x.hubKey.indexOf(":") + 1).toLowerCase();
+        return k === low || (short[1]!.length >= 6 && k.startsWith(low));
+      })
+    : [];
+  // A session's name, as the board and a lease refusal show it.
+  if (hits.length === 0) hits = sessions.filter((x) => x.name && x.name.toLowerCase() === low);
+  const live = hits.filter((x) => x.state !== "ended");
+  if (live.length > 0) hits = live;
+  if (hits.length === 1) return { session: hits[0]!.hubKey };
+  if (hits.length > 1) {
+    const list = hits
+      .slice(0, 8)
+      .map((x) => `${x.name || "(unnamed)"} (${x.person}${x.state ? `, ${x.state}` : ""}) ${x.hubKey}`)
+      .join("; ");
+    return { error: `"${to}" matches ${hits.length} sessions: ${list}. Send to one of those keys.` };
   }
+  if (kind === "session") {
+    const names = sessions.filter((x) => x.state !== "ended" && x.name).slice(0, 10).map((x) => `${x.name} (${x.person})`);
+    return {
+      error: `No session "${to}" on the team's board${names.length ? `; live sessions: ${names.join(", ")}` : ""}. Give a session's name, its key (claude-code:<id>) or its hub key.`,
+    };
+  }
+  if (kind === "agent") return { agent: to };
   return { person: to };
 }

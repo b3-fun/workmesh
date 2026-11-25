@@ -104,10 +104,30 @@ describe("coordination ops (POST /coord/op)", () => {
     const st = hubSyncAcceptSchema.parse(SYNC);
     expect(recipient("an", undefined, st)).toEqual({ person: "An" });
     expect(recipient("an-b3", undefined, st)).toEqual({ person: "An" });
-    expect(recipient("b3iq-strategy", undefined, st)).toEqual({ agent: "b3iq-strategy" });
+    // A session by the name the board shows, or by its short key: its hub key.
+    expect(recipient("b3iq-strategy", undefined, st)).toEqual({ session: AN });
+    expect(recipient("b3iq-strategy", "session", st)).toEqual({ session: AN });
+    expect(recipient("B3IQ-Strategy", "agent", st)).toEqual({ session: AN });
+    expect(recipient("claude-code:s9", "session", st)).toEqual({ session: AN });
     expect(recipient(AN, undefined, st)).toEqual({ session: AN });
     expect(recipient("Gio", undefined, st)).toEqual({ person: "Gio" });
     expect(recipient("b3iq-strategy", "person", st)).toEqual({ person: "b3iq-strategy" });
+    expect(recipient("nope-99", "session", st)).toEqual({
+      error: 'No session "nope-99" on the team\'s board; live sessions: b3iq-strategy (An). Give a session\'s name, its key (claude-code:<id>) or its hub key.',
+    });
+    expect(recipient("someone-else", "agent", st)).toEqual({ agent: "someone-else" });
+    // Two sessions with one name: an error naming both, never a guess.
+    const two = hubSyncAcceptSchema.parse({
+      ...SYNC,
+      roster: [
+        { person: "An", sessions: [{ hubKey: AN, name: "docs-1", state: "working" }] },
+        { person: "Gio", sessions: [{ hubKey: "dev_01JDGIOGIOGIOGIOGIOGIOGIO00:claude-code:g1", name: "docs-1", state: "idle" }] },
+      ],
+    });
+    const both = recipient("docs-1", "session", two);
+    expect(both).toEqual({
+      error: `"docs-1" matches 2 sessions: docs-1 (An, working) ${AN}; docs-1 (Gio, idle) dev_01JDGIOGIOGIOGIOGIOGIOGIO00:claude-code:g1. Send to one of those keys.`,
+    });
   });
 
   it("lease: acquires for the calling session, reports conflicts by holder", async () => {
@@ -135,7 +155,53 @@ describe("coordination ops (POST /coord/op)", () => {
     expect(body.text).toContain("[redacted]");
     expect(body.text).toContain("~/.env");
     await h.op("send", { to: "b3iq-strategy", text: "hi" }, { cwd: "/nowhere" });
-    expect(h.calls[1]?.body).toEqual({ to: { agent: "b3iq-strategy" }, text: "hi" });
+    expect(h.calls[1]?.body).toEqual({ to: { session: AN }, text: "hi" });
+    expect(await h.op("send", { to: "nope-99", kind: "session", text: "hi" })).toMatchObject({ ok: false, text: expect.stringContaining('No session "nope-99"') });
+    expect(h.calls).toHaveLength(2);
+  });
+
+  it("send: an agent's reply wakes its recipient (in a thread it was sent, or to the session that wrote); chatter doesn't", async () => {
+    const h = harness();
+    const sent = () => h.calls.filter((c) => c.url.endsWith("/relay/messages")).map((c) => c.body);
+    // Unsolicited: no wake on the request (the hub's default: an agent's message doesn't wake).
+    await h.op("send", { to: "b3iq-strategy", text: "fyi, rebased" });
+    expect(sent()[0]).not.toHaveProperty("wake");
+    // b3iq-strategy's question (m1, SYNC's inbox) reaches this session.
+    await h.op("inbox");
+    await h.op("send", { to: "b3iq-strategy", text: "yes, take it" });
+    expect(sent()[1]).toMatchObject({ to: { session: AN }, wake: true });
+    // An agent of An's asked (its message carries its session): a reply to An wakes too. A person's own message doesn't
+    // make the answer to them wake their agent.
+    h.coord.apply(hubSyncAcceptSchema.parse({ ...SYNC, inbox: [{ id: "m2", to: `${DEV}:claude-code:s1`, from: { person: "An", sessionKey: AN }, text: "done?", ts: T }] }), T);
+    await h.op("inbox");
+    await h.op("send", { to: "An", text: "done" });
+    expect(sent()[2]).toMatchObject({ to: { person: "An" }, wake: true });
+    // The sender can always choose.
+    await h.op("send", { to: "b3iq-strategy", text: "no rush", wake: false });
+    expect(sent()[3]).toMatchObject({ wake: false });
+  });
+
+  it("a claim or lease shows in claims and leases at once (before the next sync)", async () => {
+    const h = harness([
+      { status: 200, body: { ok: true } },
+      { status: 200, body: { ok: true, lease: { ...SYNC.leases[0], id: "ls_9", paths: ["README.md"], holder: { person: "Sean", sessionKey: `${DEV}:claude-code:s1` } } } },
+      { status: 200, body: { ok: true } },
+      { status: 200, body: { ok: true, released: 1 } },
+    ]);
+    await h.op("claim", { issue: "B3-7300" });
+    expect((await h.op("claims")).text).toContain("- B3-7300 · Sean");
+    await h.op("lease", { paths: ["README.md"] });
+    expect((await h.op("leases")).text).toContain("README.md · Sean");
+    await h.op("release", { issue: "B3-7300" });
+    expect((await h.op("claims")).text).not.toContain("B3-7300");
+    await h.op("unlease", { paths: ["README.md"] });
+    expect((await h.op("leases")).text).not.toContain("README.md");
+  });
+
+  it("a refused claim is not ok (the CLI exits 1, --json says ok: false)", async () => {
+    const h = harness([{ status: 409, body: { ok: false, holder: { person: "An", sessionKey: AN, sessionName: "b3iq-strategy" }, since: T } }]);
+    const r = await h.op("claim", { issue: "B3-7200" });
+    expect(r).toMatchObject({ ok: false, text: "B3-7200 is already claimed by An (b3iq-strategy). Pick another issue, or ask An with `send`." });
   });
 
   it("inbox: an agent reads (and acks) its own; the person sees the machine's", async () => {

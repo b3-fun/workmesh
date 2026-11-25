@@ -158,6 +158,8 @@ export class CoordClient {
   private readonly onSync: CoordClientOptions["onSync"];
   /** v2 endpoints this hub answered 404 to, and until when that is remembered. */
   private readonly v2Absent = new Map<string, number>();
+  /** Teammates' messages handed to this device's sessions, newest last, for telling a reply from new chatter. */
+  private readonly received: Array<{ to: string; id: string; thread?: string; fromKey?: string; fromName?: string; fromPerson: string; at: number }> = [];
   /** Ask (SPEC §29): questions being answered, by asker (a session's key, or `person`). */
   private readonly asking = new Set<string>();
   /** Ask is off on this hub (404, 503), or rate-limited (429), until then, and why. */
@@ -416,6 +418,20 @@ export class CoordClient {
     for (const id of ids) {
       if (this.delivered.has(id)) continue;
       this.delivered.add(id);
+      const item = this.inbox.get(id)?.item;
+      const to = item ? this.recipientLocalKey(item) : undefined;
+      if (item && to !== undefined) {
+        this.received.push({
+          to: CoordClient.family(to),
+          id,
+          thread: item.thread,
+          fromKey: item.from.sessionKey,
+          fromName: item.from.sessionName,
+          fromPerson: item.from.person,
+          at: this.now(),
+        });
+        if (this.received.length > 500) this.received.splice(0, this.received.length - 500);
+      }
       if (id.startsWith(LOCAL_ID_PREFIX)) this.local.delete(id);
       else this.ackQueue.add(id);
     }
@@ -425,6 +441,32 @@ export class CoordClient {
       this.delivered.delete(first);
     }
     void this.flushAcks();
+  }
+
+  /**
+   * Whether a message this session sends answers one it got (SPEC §23, 0.11.x): in a thread a message to it opened or
+   * carried, or to the session that wrote to it in the last 30 minutes. Such a reply wakes its recipient; an agent's
+   * unsolicited message doesn't.
+   */
+  isReply(localKey: string, to: { session?: string; agent?: string; person?: string }, thread?: string, now = this.now()): boolean {
+    const mine = CoordClient.family(localKey);
+    // The target session's name, for a message whose sender named only its session.
+    const targetName =
+      to.session === undefined
+        ? undefined
+        : this.state?.roster.flatMap((p) => p.sessions).find((x) => CoordClient.family(x.hubKey) === CoordClient.family(to.session!))?.name;
+    for (let i = this.received.length - 1; i >= 0; i--) {
+      const r = this.received[i]!;
+      if (r.to !== mine) continue;
+      if (thread !== undefined && (r.id === thread || r.thread === thread)) return true;
+      if (now - r.at > 30 * 60_000) continue;
+      if (to.session !== undefined && r.fromKey !== undefined && CoordClient.family(r.fromKey) === CoordClient.family(to.session)) return true;
+      if (to.session !== undefined && r.fromKey === undefined && targetName && r.fromName?.toLowerCase() === targetName.toLowerCase()) return true;
+      if (to.agent !== undefined && r.fromName !== undefined && r.fromName.toLowerCase() === to.agent.toLowerCase()) return true;
+      // An agent of that person wrote: the hub hands a person's message to their newest session.
+      if (to.person !== undefined && r.fromKey !== undefined && r.fromPerson.toLowerCase() === to.person.toLowerCase()) return true;
+    }
+    return false;
   }
 
   // --- sync ---------------------------------------------------------------------
@@ -645,12 +687,53 @@ export class CoordClient {
     return { ok: false, status: res.status, error: typeof msg === "string" && msg ? msg.slice(0, 300) : `hub responded ${res.status}` };
   }
 
-  lease(req: HubLeaseRequest): Promise<CoordResult<HubLeaseResponseAccepted>> {
-    return this.post("/relay/leases", hubLeaseRequestSchema, req, hubLeaseResponseAcceptSchema);
+  async lease(req: HubLeaseRequest): Promise<CoordResult<HubLeaseResponseAccepted>> {
+    const r = await this.post("/relay/leases", hubLeaseRequestSchema, req, hubLeaseResponseAcceptSchema);
+    // The next `leases` (and the next hook) sees the write at once, not after the sync that follows it.
+    if (r.ok && r.body.ok && this.state) {
+      const st = this.state;
+      if (req.action === "acquire" && r.body.lease) {
+        const lease = r.body.lease;
+        this.state = { ...st, leases: [...st.leases.filter((l) => l.id !== lease.id), lease] };
+      } else if (req.action === "release") {
+        const holder = this.hubKey(CoordClient.family(req.sessionKey));
+        this.state = {
+          ...st,
+          leases: st.leases.filter(
+            (l) =>
+              !(
+                CoordClient.family(l.holder.sessionKey) === holder &&
+                l.repo === req.repo &&
+                (req.leaseId ? l.id === req.leaseId : req.paths.length === 0 || l.paths.some((p) => req.paths.includes(p)))
+              ),
+          ),
+        };
+      } else if (req.action === "renew" && r.body.lease) {
+        const lease = r.body.lease;
+        this.state = { ...st, leases: st.leases.map((l) => (l.id === lease.id ? lease : l)) };
+      }
+    }
+    return r;
   }
 
-  claim(req: HubClaimRequest): Promise<CoordResult<HubClaimResponseAccepted>> {
-    return this.post("/relay/claims", hubClaimRequestSchema, req, hubClaimResponseAcceptSchema);
+  async claim(req: HubClaimRequest): Promise<CoordResult<HubClaimResponseAccepted>> {
+    const r = await this.post("/relay/claims", hubClaimRequestSchema, req, hubClaimResponseAcceptSchema);
+    if (r.ok && r.body.ok && this.state) {
+      const st = this.state;
+      const others = st.claims.filter((c) => c.issue.toUpperCase() !== req.issue.toUpperCase());
+      if (req.action === "claim") {
+        const claim = r.body.claim ?? {
+          issue: req.issue,
+          holder: { person: this.me() ?? "me", sessionKey: this.hubKey(CoordClient.family(req.sessionKey)), sessionName: undefined },
+          since: this.hubNow(),
+          note: req.note,
+        };
+        this.state = { ...st, claims: [...others, claim] };
+      } else {
+        this.state = { ...st, claims: others };
+      }
+    }
+    return r;
   }
 
   message(req: HubMessageRequest): Promise<CoordResult<z.infer<typeof hubIdResponseAcceptSchema>>> {

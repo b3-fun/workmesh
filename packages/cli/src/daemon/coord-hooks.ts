@@ -5,7 +5,7 @@ import type { HubLeaseAccepted } from "@workmesh/protocol";
 import type { SessionEvent } from "@workmesh/core";
 import { CoordClient } from "../hub/coord";
 import type { HubSyncEdit, HubSyncInboxItem } from "../hub/coord";
-import { shellWriteTargets } from "../hub/shell-writes";
+import { shellCommands, shellWriteTargets } from "../hub/shell-writes";
 
 /**
  * v1 Coordinate in the hook path (docs/SPEC.md §23). The daemon answers a hook from its cached state only: a refusal
@@ -112,12 +112,14 @@ export class CoordHooks {
     if (!coord) return undefined;
     const key = CoordHooks.agentKey(event);
     const hold = coord.holdFor(key);
-    if (hold) {
+    if (hold && !passesHold(event)) {
       const why = hold.reason ? `: ${hold.reason}` : "";
       return (
-        `Held by ${hold.by}${why}. Workmesh refuses every tool call of this session until ${hold.by} lifts the hold ` +
-        `on the team board. Wait, or ask ${hold.by} with \`workmesh send ${quoteArg(hold.by)} "…"\` (or the workmesh ` +
-        "`send` tool); don't retry the call meanwhile."
+        `Held by ${hold.by}${why}. Workmesh refuses this session's tool calls until ${hold.by} lifts the hold on the ` +
+        `team board; don't retry them meanwhile. You can still reach ${hold.by}: the workmesh \`send\` tool, or ` +
+        `\`workmesh send ${quoteArg(hold.by)} "…"\` run on its own in the shell (the hold lets \`workmesh send\`, ` +
+        "`inbox`, `whoami`, `claims`, `leases` and `notes` through, one command at a time), and read the answer with " +
+        "`inbox`."
       );
     }
     const now = this.now();
@@ -208,6 +210,57 @@ export class CoordHooks {
     }
     return lines.length > 0 ? lines.join("\n") : undefined;
   }
+}
+
+/** The workmesh MCP tools a held session may still call: talk to people, read the board, let go of what it holds. */
+const HOLD_MCP_TOOLS = new Set(["whoami", "roster", "send", "inbox", "leases", "notes", "ask", "release", "unlease"]);
+/** The `workmesh` CLI subcommands a held session may run in the shell (SPEC §23, 0.11.x). */
+const HOLD_CLI = new Set(["send", "inbox", "whoami", "claims", "leases", "notes"]);
+
+/**
+ * A call a hold lets through: one of the workmesh MCP tools above, or exactly one `workmesh <send|inbox|whoami|claims|
+ * leases|notes> …` in the shell: no chaining, pipes, redirects, substitutions or background, so nothing else runs.
+ */
+export function passesHold(event: SessionEvent): boolean {
+  const tool = event.detail?.tool;
+  if (!tool) return false;
+  const mcp = /^(?:mcp__workmesh__|workmesh[.:/])([a-z]+)$/.exec(tool);
+  if (mcp) return HOLD_MCP_TOOLS.has(mcp[1]!);
+  if (!SHELL_TOOLS.has(tool)) return false;
+  const command = event.detail?.command?.trim();
+  if (!command || !singleCommand(command)) return false;
+  const cmds = shellCommands(command, event.cwd);
+  if (cmds.length !== 1) return false;
+  const argv = cmds[0]!.argv;
+  const prog = path.basename(argv[0] ?? "");
+  return (prog === "workmesh" || prog === "agentblip") && HOLD_CLI.has(argv[1] ?? "");
+}
+
+/** No shell control outside quotes, and no substitution anywhere it would run. */
+function singleCommand(command: string): boolean {
+  let quote: "'" | '"' | undefined;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]!;
+    if (quote === "'") {
+      if (c === "'") quote = undefined;
+      continue;
+    }
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (c === "`" || (c === "$" && (command[i + 1] === "(" || command[i + 1] === "{"))) return false;
+    if (quote === '"') {
+      if (c === '"') quote = undefined;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (";&|<>\n\r(){}".includes(c)) return false;
+  }
+  return quote === undefined;
 }
 
 /** `An` → `An`; `An Le` → `"An Le"`. */

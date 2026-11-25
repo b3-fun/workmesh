@@ -37,11 +37,11 @@ export const MCP_TOOLS: readonly ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
-        to: s("A person (name, email or GitHub login), an agent's session name, or a session's hub key."),
+        to: s("A person (name, email or GitHub login), a session's name as the board shows it, its key (claude-code:<id>), or its hub key."),
         text: s("The message (up to 4,000 characters)."),
         kind: { type: "string", enum: ["person", "agent", "session"], description: "What `to` names, when it is ambiguous." },
         thread: s("A thread id to reply in."),
-        wake: { type: "boolean", description: "Wake the recipient if it is idle (default: only a person's messages wake)." },
+        wake: { type: "boolean", description: "Wake the recipient if it is idle (default: a person's messages and replies to a session that wrote to you wake)." },
       },
       required: ["to", "text"],
       additionalProperties: false,

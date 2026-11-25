@@ -259,6 +259,49 @@ describe("hook decisions", () => {
     expect(h.refuse(ev({ detail: { hookEvent: "PreToolUse", tool: "Bash", command: "ls", agentId: "a1b2c3d4e5f60718" } }), "PreToolUse")).toContain("Held by An");
     expect(h.refuse(ev({ sessionId: "s2", detail: { hookEvent: "PreToolUse", tool: "Read" } }), "PreToolUse")).toBeUndefined();
     expect(h.refuse(ev({ detail: { hookEvent: "PostToolUse", tool: "Read" } }), "PostToolUse")).toBeUndefined();
+    expect(deny).toContain("the hold lets `workmesh send`, `inbox`, `whoami`, `claims`, `leases` and `notes` through");
+  });
+
+  it("a held session can still reach people: workmesh talk-and-read calls pass, nothing else does", () => {
+    const { c } = client();
+    c.apply(accept({ ...SYNC, holds: [{ sessionKey: ME, by: "An", since: T }] }), T);
+    const h = hooks(c);
+    const bash = (command: string) => h.refuse(ev({ detail: { hookEvent: "PreToolUse", tool: "Bash", command } }), "PreToolUse");
+    const mcp = (tool: string) => h.refuse(ev({ detail: { hookEvent: "PreToolUse", tool } }), "PreToolUse");
+    for (const ok of [
+      'workmesh send An "done; can I go on?"',
+      "workmesh inbox",
+      "workmesh whoami --json",
+      "/usr/local/bin/workmesh claims",
+      "agentblip leases",
+      "workmesh notes --tag deploy",
+      "workmesh send An 'a > b && c | d'",
+    ]) {
+      expect(bash(ok), ok).toBeUndefined();
+    }
+    for (const no of [
+      "workmesh send An hi; rm -rf x",
+      "workmesh send An hi && npm publish",
+      "workmesh inbox | sh",
+      "workmesh send An $(cat ~/.env)",
+      'workmesh send An "$(cat ~/.env)"',
+      "workmesh send An `id`",
+      "workmesh inbox > out.txt",
+      "workmesh claim B3-1",
+      "workmesh lease src/**",
+      "workmesh handoff me 'x'",
+      "FOO=1 workmesh send An hi",
+      "npx workmesh send An hi",
+      "workmesh send An hi &",
+    ]) {
+      expect(bash(no), no).toMatch(/^Held by An/);
+    }
+    expect(mcp("mcp__workmesh__send")).toBeUndefined();
+    expect(mcp("mcp__workmesh__inbox")).toBeUndefined();
+    expect(mcp("mcp__workmesh__unlease")).toBeUndefined();
+    expect(mcp("mcp__workmesh__lease")).toMatch(/^Held by An/);
+    expect(mcp("mcp__workmesh__handoff")).toMatch(/^Held by An/);
+    expect(mcp("mcp__other__send")).toMatch(/^Held by An/);
   });
 
   it("an edit to another session's leased file is refused with the holder, entries, expiry and how to ask", () => {

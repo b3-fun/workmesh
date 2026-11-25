@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Owns the poll loops and exposes the current daemon view to SwiftUI.
@@ -20,6 +21,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var delegateAnswered = [String: String]()
     /// v2: the daemon's text for a call that failed, by id, shown for a few seconds.
     @Published private(set) var delegateFailed = [String: String]()
+    /// GET /update: a newer Workmesh and how to install it here. nil before the
+    /// first read and for a daemon without the endpoint (404).
+    @Published private(set) var update: UpdateInfo?
+    @Published private(set) var updateChecked = false
+    /// Runs `workmesh update` and the menu bar app's own update; the window shows it.
+    let updater = UpdateRunner()
     /// Notify when an agent newly needs you. App-local preference: on unless
     /// the user turned it off.
     @Published var notifyOnNeedsYou: Bool {
@@ -36,7 +43,10 @@ final class AppModel: ObservableObject {
         didSet {
             guard menuOpen != oldValue else { return }
             scheduleTeamPoll()
-            if menuOpen { Task { await refreshTeam() } }
+            if menuOpen {
+                Task { await refreshTeam() }
+                Task { await refreshUpdate() }
+            }
         }
     }
 
@@ -49,6 +59,13 @@ final class AppModel: ObservableObject {
     private var teamInFlight = false
     private let pollInterval: TimeInterval = 2
     private var teamInterval: TimeInterval { menuOpen ? 5 : 15 }
+    private var updateReadAt: Date?
+    private var updateInFlight = false
+    /// The daemon caches what it knows about releases; read it every 10 min, or 30 s while the menu shows.
+    private var updateInterval: TimeInterval { menuOpen ? 30 : 600 }
+    private var updaterChanges: AnyCancellable?
+    /// WORKMESH_DEV_AUTOUPDATE=cli|app|cli+app starts that update once it's offered (development and tests).
+    private var devAutoUpdate = ProcessInfo.processInfo.environment["WORKMESH_DEV_AUTOUPDATE"]
 
     var blip: BlipState { BlipState.from(state: reachable ? state : nil) }
 
@@ -57,7 +74,13 @@ final class AppModel: ObservableObject {
         notifyOnNeedsYou = defaults.object(forKey: Self.notifyKey) == nil ? true : defaults.bool(forKey: Self.notifyKey)
         notifier = snapshot ? nil : Notifier()
         if notifyOnNeedsYou { notifier?.requestPermission() }
-        start() // begin polling at launch so the icon is live before first click
+        updaterChanges = updater.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        updater.onInstallChanged = { [weak self] in
+            Task { await self?.refreshUpdate(force: true) }
+        }
+        if snapshot { devAutoUpdate = nil }
+        // Begin polling at launch so the icon is live before first click.
+        if !SnapshotMode.drawsSheet { start() }
     }
 
     func start() {
@@ -90,6 +113,7 @@ final class AppModel: ObservableObject {
             updateNotifier()
             // Daemon came (back) up: don't wait up to 15 s for the team.
             if !wasReachable || !teamChecked { Task { await refreshTeam() } }
+            Task { await refreshUpdate(force: !wasReachable) }
         } catch {
             reachable = false
         }
@@ -107,6 +131,67 @@ final class AppModel: ObservableObject {
             updateNotifier()
         } catch {
             // Daemon down or a bad answer: keep the last view; /state drives "offline".
+        }
+    }
+
+    /// Cheap loopback read of what the daemon knows about releases.
+    func refreshUpdate(force: Bool = false) async {
+        if !force, let at = updateReadAt, Date().timeIntervalSince(at) < updateInterval { return }
+        guard !updateInFlight else { return }
+        updateInFlight = true
+        defer { updateInFlight = false }
+        do {
+            update = try await client.fetchUpdate()
+            updateChecked = true
+            updateReadAt = Date()
+            devAutoStart()
+        } catch {
+            // Daemon down or a bad answer: keep the last view.
+        }
+    }
+
+    /// What the menu's update item offers, if anything.
+    var updateOffer: UpdateOffer? {
+        if updater.isBusy { return .inProgress }
+        guard reachable, let u = update else { return nil }
+        if u.available {
+            return u.canRun ? .workmesh(u) : .hint(u)
+        }
+        if let m = UpdateRunner.newerApp(u.menubar), let have = AppSelfUpdate.currentVersion {
+            return .app(m, have: have)
+        }
+        return nil
+    }
+
+    /// Runs `workmesh update` in the update window.
+    func startUpdate() {
+        guard let u = update, u.canRun else { return }
+        UpdateWindow.shared.show(runner: updater)
+        updater.runCLI(u)
+    }
+
+    /// Replaces this app with the release's menu bar app, in the update window.
+    func startAppUpdate() {
+        guard let m = UpdateRunner.newerApp(update?.menubar) else { return }
+        UpdateWindow.shared.show(runner: updater)
+        updater.updateApp(m)
+    }
+
+    func showUpdateWindow() {
+        UpdateWindow.shared.show(runner: updater)
+    }
+
+    private func devAutoStart() {
+        guard let mode = devAutoUpdate, let offer = updateOffer else { return }
+        switch (mode, offer) {
+        case ("cli", .workmesh), ("cli+app", .workmesh):
+            devAutoUpdate = nil
+            startUpdate()
+        case ("app", .app):
+            devAutoUpdate = nil
+            startAppUpdate()
+        default:
+            break
         }
     }
 

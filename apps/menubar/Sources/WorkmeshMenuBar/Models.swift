@@ -682,3 +682,183 @@ struct NeedItem: Identifiable {
         return out.sorted { $0.since < $1.since }
     }
 }
+
+// MARK: - Update (GET /update)
+//
+// The daemon knows its own version, the newest release, how this install can
+// be updated and the release's menu bar zip. The app only reads it; the one
+// decision it makes itself is whether that zip is newer than the app it is.
+// Read leniently, like /team; a daemon without the endpoint (404) shows nothing.
+
+struct UpdateInfo: Decodable {
+    let current: String?
+    let latest: String?
+    let available: Bool
+    let checkedAt: Double?
+    let source: String?
+    let install: Install
+    /// argv that runs the update; present when `install.canUpdate`.
+    let run: [String]
+    let auto: Auto?
+    let last: Last?
+    let menubar: MenubarRelease?
+
+    struct Install: Decodable {
+        let method: String?
+        let canUpdate: Bool
+        /// When it can't: one sentence, may hold a `command` in backticks.
+        let hint: String?
+
+        private enum K: String, CodingKey { case method, canUpdate, hint }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: K.self)
+            method = c.text(.method)
+            canUpdate = c.lenient(Bool.self, .canUpdate) ?? false
+            hint = c.text(.hint)
+        }
+
+        init(method: String?, canUpdate: Bool, hint: String?) {
+            self.method = method
+            self.canUpdate = canUpdate
+            self.hint = hint
+        }
+    }
+
+    struct Auto: Decodable {
+        let enabled: Bool
+        let scope: String?
+
+        private enum K: String, CodingKey { case enabled, scope }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: K.self)
+            enabled = c.lenient(Bool.self, .enabled) ?? false
+            scope = c.text(.scope)
+        }
+    }
+
+    struct Last: Decodable {
+        let at: Double?
+        let ok: Bool
+        let from: String?
+        let to: String?
+        let rolledBack: Bool
+        let message: String?
+
+        private enum K: String, CodingKey { case at, ok, from, to, rolledBack, message }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: K.self)
+            at = c.lenient(Double.self, .at)
+            ok = c.lenient(Bool.self, .ok) ?? false
+            from = c.text(.from)
+            to = c.text(.to)
+            rolledBack = c.lenient(Bool.self, .rolledBack) ?? false
+            message = c.text(.message)
+        }
+    }
+
+    /// The release's menu bar zip, as the daemon read it from GitHub.
+    struct MenubarRelease: Decodable, Equatable {
+        let version: String
+        let url: URL
+        /// 64 lowercase hex: the release asset's digest.
+        let sha256: String
+        let size: Int?
+        let releaseUrl: String?
+
+        private enum K: String, CodingKey { case version, url, sha256, size, releaseUrl }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: K.self)
+            guard let version = c.text(.version), let s = c.text(.url), let url = URL(string: s),
+                  let sha = c.text(.sha256)
+            else { throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "incomplete menubar release")) }
+            self.version = version
+            self.url = url
+            sha256 = sha.lowercased()
+            size = c.lenient(Int.self, .size)
+            releaseUrl = c.text(.releaseUrl)
+        }
+
+        init(version: String, url: URL, sha256: String, size: Int?, releaseUrl: String?) {
+            self.version = version
+            self.url = url
+            self.sha256 = sha256
+            self.size = size
+            self.releaseUrl = releaseUrl
+        }
+    }
+
+    private enum K: String, CodingKey { case current, latest, available, checkedAt, source, install, run, auto, last, menubar }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        current = c.text(.current)
+        latest = c.text(.latest)
+        available = c.lenient(Bool.self, .available) ?? false
+        checkedAt = c.lenient(Double.self, .checkedAt)
+        source = c.text(.source)
+        install = c.lenient(Install.self, .install) ?? Install(method: nil, canUpdate: false, hint: nil)
+        run = (c.lenient([String].self, .run) ?? []).filter { !$0.isEmpty }
+        auto = c.lenient(Auto.self, .auto)
+        last = c.lenient(Last.self, .last)
+        menubar = c.lenient(MenubarRelease.self, .menubar)
+    }
+
+    /// `workmesh update` can run here: the daemon says so and gave an absolute program.
+    var canRun: Bool { install.canUpdate && run.first?.hasPrefix("/") == true }
+
+    /// The hint's first `command` in backticks, for a copy button.
+    var hintCommand: String? {
+        guard let hint = install.hint else { return nil }
+        let parts = hint.components(separatedBy: "`")
+        guard parts.count >= 3 else { return nil }
+        let cmd = parts[1].trimmingCharacters(in: .whitespaces)
+        return cmd.isEmpty ? nil : cmd
+    }
+}
+
+/// Release versions as the daemon and the bundle write them: "0.12.1",
+/// "v0.12.1", "0.13.0-beta.2". Numeric parts compare as numbers; a pre-release
+/// sorts below its release. Anything else isn't newer than anything.
+enum ReleaseVersion {
+    static func isNewer(_ a: String, than b: String) -> Bool {
+        guard let x = parse(a), let y = parse(b) else { return false }
+        for i in 0..<max(x.core.count, y.core.count) {
+            let p = i < x.core.count ? x.core[i] : 0
+            let q = i < y.core.count ? y.core[i] : 0
+            if p != q { return p > q }
+        }
+        switch (x.pre, y.pre) {
+        case (nil, nil): return false
+        case (nil, _): return true // 1.0.0 > 1.0.0-beta
+        case (_, nil): return false
+        case (let p?, let q?): return p.compare(q, options: .numeric) == .orderedDescending
+        }
+    }
+
+    private static func parse(_ s: String) -> (core: [Int], pre: String?)? {
+        var v = s.trimmingCharacters(in: .whitespaces)
+        if v.hasPrefix("v") { v.removeFirst() }
+        let main = v.split(separator: "+", maxSplits: 1).first.map(String.init) ?? v
+        let parts = main.split(separator: "-", maxSplits: 1).map(String.init)
+        guard let corePart = parts.first else { return nil }
+        let core = corePart.split(separator: ".").map { Int($0) }
+        guard !core.isEmpty, core.count <= 4, core.allSatisfy({ $0 != nil }) else { return nil }
+        return (core.compactMap { $0 }, parts.count > 1 ? parts[1] : nil)
+    }
+}
+
+/// The menu's update item: what there is to do, read off GET /update and the runner.
+enum UpdateOffer {
+    /// An update is running (the window may be closed): reopen it.
+    case inProgress
+    /// A newer Workmesh that `workmesh update` can install here.
+    case workmesh(UpdateInfo)
+    /// A newer Workmesh this install can't take by itself: the daemon's hint.
+    case hint(UpdateInfo)
+    /// Only this menu bar app is behind the release.
+    case app(UpdateInfo.MenubarRelease, have: String)
+}

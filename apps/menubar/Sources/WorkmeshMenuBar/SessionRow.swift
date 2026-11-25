@@ -213,3 +213,51 @@ private final class ClosureMenuItem: NSMenuItem {
 
     @objc private func fire() { run() }
 }
+
+/// The menu's update row: a quiet arrow, what there is, a small second line.
+/// Hover highlights it like the other clickable rows.
+struct UpdateRow: View {
+    let title: String
+    let detail: String
+    var busy = false
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Group {
+                    if busy {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 16)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium))
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 4)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(hovering ? 0.08 : 0))
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+}

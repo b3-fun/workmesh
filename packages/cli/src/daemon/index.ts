@@ -248,6 +248,10 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     classify: (p) => forwarder?.classify(p),
     isShared: (key) => forwarder?.isShared(key) ?? false,
     projectName: () => liveConfig.hub?.project.name,
+    // v3 (SPEC §36): which memories a session started with, reported in the background (a failure is dropped).
+    memoriesUsed: (key, ids) => {
+      void coord?.memoryUsed(key, ids);
+    },
   });
   // 0.12 (SPEC §41): sessions that started under an older Workmesh are told once, at their next hook with context.
   const sessionVersions = new SessionVersions({ file: sessionVersionsPath(), current: pkg.version, surface: surfaceFingerprint() });

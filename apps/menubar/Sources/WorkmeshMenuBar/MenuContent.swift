@@ -22,6 +22,10 @@ struct MenuContent: View {
             } else {
                 offline
             }
+            if let offer = model.updateOffer {
+                Divider().padding(.horizontal, 14)
+                updateItem(offer)
+            }
             Divider().padding(.horizontal, 14)
             footer
         }
@@ -594,6 +598,90 @@ struct MenuContent: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
         }
         .padding(14)
+    }
+
+    // MARK: - Update available
+
+    /// One calm row above the footer, only when there's something to do.
+    @ViewBuilder
+    private func updateItem(_ offer: UpdateOffer) -> some View {
+        Group {
+            switch offer {
+            case .inProgress:
+                UpdateRow(title: "Updating Workmesh", detail: "Show progress", busy: true) { model.showUpdateWindow() }
+            case .workmesh(let u):
+                UpdateRow(title: "Update available", detail: Self.versions("Workmesh", u.latest, have: u.current)) {
+                    model.startUpdate()
+                }
+            case .app(let m, let have):
+                UpdateRow(title: "Update available", detail: Self.versions("Menu bar app", m.version, have: have)) {
+                    model.startAppUpdate()
+                }
+            case .hint(let u):
+                updateHint(u)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+    }
+
+    /// "Workmesh 0.12.1 · you have 0.12.0"
+    private static func versions(_ what: String, _ latest: String?, have: String?) -> String {
+        let head = latest.map { "\(what) \($0)" } ?? "A newer \(what)"
+        return have.map { "\(head) · you have \($0)" } ?? head
+    }
+
+    /// A newer Workmesh this install can't take by itself: the daemon's hint,
+    /// with a copy button for the command in it.
+    private func updateHint(_ u: UpdateInfo) -> some View {
+        let hint = u.install.hint ?? "Run `workmesh update` in a terminal."
+        let command = u.hintCommand ?? (u.install.hint == nil ? "workmesh update" : nil)
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Update available")
+                    .font(.system(size: 12, weight: .medium))
+                Text(Self.versions("Workmesh", u.latest, have: u.current))
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                Text(Self.withCode(hint))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(.top, 2)
+            }
+            Spacer(minLength: 4)
+            if let command {
+                Button {
+                    model.copy(command)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.borderless)
+                .help("Copy \(command)")
+                .accessibilityLabel("Copy command")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+    }
+
+    /// The hint with its `backticked` parts in monospace (no other markdown).
+    private static func withCode(_ text: String) -> AttributedString {
+        var out = AttributedString()
+        for (i, part) in text.components(separatedBy: "`").enumerated() {
+            // A word joiner after each slash keeps a path like ~/src/workmesh on one line.
+            var piece = AttributedString(i % 2 == 1 ? part : part.replacingOccurrences(of: "/", with: "/\u{2060}"))
+            if i % 2 == 1 { piece.font = .system(size: 10.5, design: .monospaced) }
+            out += piece
+        }
+        return out
     }
 
     // MARK: - Footer: settings, hub status, Open board, quit

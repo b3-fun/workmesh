@@ -349,6 +349,27 @@ describe("team (v0.5, SPEC §15)", () => {
   });
 });
 
+describe("latestClient on the team view (SPEC §40)", () => {
+  const base = { me: { name: "Sean" }, people: [], needsMe: [], sessions: [] };
+
+  it("a hub sends the newest relay; the relay reads it", () => {
+    const built = hubTeamResponseSchema.parse({ ...base, latestClient: "0.12.1" });
+    expect(hubTeamAcceptSchema.parse(built).latestClient).toBe("0.12.1");
+    expect(hubTeamResponseSchema.parse({ ...base, latestClient: "1.0.0-beta.2" }).latestClient).toBe("1.0.0-beta.2");
+  });
+
+  it("a hub can't send anything but a version; a relay drops a bad one and keeps the rest", () => {
+    for (const v of ["latest", "v0.12.1", "0.12", "", "0.12.1 rm -rf", "9".repeat(40)]) {
+      expect(hubTeamResponseSchema.safeParse({ ...base, latestClient: v }).success, v).toBe(false);
+      const got = hubTeamAcceptSchema.parse({ ...base, latestClient: v, people: [{ name: "An", online: true, counts: { working: 1, waiting: 0, idle: 0 } }] });
+      expect(got.latestClient, v).toBeUndefined();
+      expect(got.people).toHaveLength(1);
+    }
+    expect(hubTeamAcceptSchema.parse({ ...base, latestClient: null }).latestClient).toBeUndefined();
+    expect(hubTeamAcceptSchema.parse(base).latestClient).toBeUndefined();
+  });
+});
+
 describe("hub wire v0.7 (SPEC §19)", () => {
   const orch = {
     ...session,

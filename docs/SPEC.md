@@ -445,6 +445,7 @@ person or session on its own instead of failing):
   serves the last answer on its loopback API (`GET /team`); the menu bar reads only that.
 - A `200` here is also how a relay knows the hub reads v0.6 session structure: from then on it sends subagents as
   their own sessions (§15). A `404` turns that off again.
+- `latestClient` (relay 0.12.0, §40): the newest published relay, as the hub last read it from npm.
 
 ---
 
@@ -1077,3 +1078,19 @@ device token names the person, requests carry ingest keys, answers carry hub key
   memories` (the brief); from a terminal outside an agent session these are the person's own words (§35: accepted at
   once).
 - Text (title, body, reason, query) is redacted on the machine (§9) before it is sent.
+
+# Keeping current (relay 0.12.0, Sean 2026-11-25)
+
+Every release from 0.10.0 to 0.11.1 meant a message to each teammate with an npm command, and sessions started before
+an upgrade went on without the new tools until someone restarted them. From 0.12.0 the relay keeps itself current.
+
+## 40. Versions on the wire
+
+- Every ingest carries `client: workmesh/<version>` (since 0.10, §24): the hub keeps each device's version.
+- `GET /relay/team` adds `latestClient` (optional, `0.12.1`): the newest `@b3os/workmesh` on npm, as the hub last read
+  it (it reads the registry every 6 h). Absent until the hub has read it. Relays read it with `hubTeamAcceptSchema`,
+  which drops anything that isn't a release version.
+- The board compares the two: a device whose `client` is older than `latestClient` is behind. It says so quietly
+  (each device's version on Settings → Devices, who's behind in the team view with the command to run, a dot in the
+  header for the viewer's own), never with a banner.
+

@@ -609,4 +609,4 @@ export const hubTeamAcceptSchema = z.object({
 export type HubTeamAccepted = z.infer<typeof hubTeamAcceptSchema>;
 
 // v0.7: system-injected content in agent text (zod-free; also importable alone as `@workmesh/protocol/injected`).
-export * from "./injected";
+export * from "./injected.js";

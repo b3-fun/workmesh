@@ -23,7 +23,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **done** (11-24): relay #5, board in workmesh-cloud #1; polish next |
 | v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **done** (11-24): names, markup, orchestrators, graph fit (relay in the next release, 0.9.1); Linear titles live |
 | Liveness | Presence from the hub, not the browser; a restart never ends sessions; the daemon as a launchd / systemd service; current client versions; quiet and stalled sessions | **done** (11-25): wire #11, relay (in 0.10.0 with v1, not yet on npm), hub in workmesh-cloud #4 |
-| v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub side in workmesh-cloud |
+| v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub and board live (workmesh-cloud #5) |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
@@ -145,8 +145,15 @@ Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interru
   bar. Fails open: nothing is refused when the hub or daemon is unreachable, except a known hold (up to 30 min).
   Verified with a real Claude Code session against a stand-in hub (refusal, guidance, MCP tools, a message delivered
   and acked, fail-open timing); Codex output by its 0.164 hook schemas and fixtures.
-- **Next:** the hub side (workmesh-cloud: lease table, claims, holds from the board and Linear comments, routing
-  messages, notes), then publish 0.10.0 and roll out; Linear agent identities per person (needs An).
+- **Hub and board (live 11-25, workmesh-cloud #5):** the hosted hub serves every v1 endpoint: exclusive leases with
+  expiry and release when a session ends, one claimant per issue, messages routed to an agent, a session or a person's
+  newest live session (inbox and acks), notes, and `/relay/sync` with recent edits. Anyone on the team can hold a
+  session from the board, and a "hold" or "pause" comment on the Linear issue a session claimed holds it ("resume" or
+  "go ahead" releases it; read-only, once a minute). The board shows held sessions in Waiting ("Held by An · reason"),
+  claimed issues on chips with the claimant, a Work tab (claims, leased files and the edits they turned away, notes),
+  Workmesh messages in Messages with a reply box, and turned-away edits in the feed.
+- **Next:** publish 0.10.0 and roll out; Linear agent identities per person (needs An); claims mirrored to Linear (needs
+  a key that can write).
 
 ### v2 Delegate (Linear B3-7168)
 - Messages delivered into running and idle sessions (Claude Code session inbox, Codex app-server).
@@ -158,6 +165,9 @@ Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interru
 - 11-25 Liveness: presence is computed and pushed by the hub, never derived in a client; a heartbeat can no longer end
   a session (missing for 30 min, SessionEnd or a gone process can); the daemon runs as a launchd / systemd service
   that restarts it unless `workmesh stop` asked it to stop; the forwarder's saved state is local only (0600).
+- 11-25 v1 board: a held session waits on a person, so it sits in Waiting (with who held it and why) rather than its
+  lane; any teammate may hold, only the session's owner or the holder releases. Claims, leased files and notes share
+  one Work tab beside Messages.
 - 11-25 v1 relay: hooks are answered from the daemon's cached sync, never a network call, and everything fails open
   (a lease counts only while the last sync is under 90 s old; only a hold the daemon already knew about outlives an
   unreachable hub, for 30 minutes), so Workmesh never stops anyone's work because the hub is down. A lease binds the

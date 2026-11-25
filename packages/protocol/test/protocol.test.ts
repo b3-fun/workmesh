@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   HUB_CLIENT_RE,
   HUB_DEVICE_TOKEN_RE,
+  HUB_MAX_TASKS,
+  HUB_MODE_RE,
+  HUB_PLAN_MAX_STEPS,
+  HUB_PLAN_STEP_ACCEPT_MAX,
+  hubNoticeKindSchema,
   HUB_MAX_LINKS,
   HUB_MAX_REPOS,
   HUB_TITLE_ACCEPT_MAX,
@@ -429,5 +434,91 @@ describe("hub wire v0.10: liveness (SPEC §24)", () => {
     expect(hubTeamAcceptSchema.parse(built).people[0]?.presence).toBe("reconnecting");
     const odd = hubTeamAcceptSchema.parse({ ...team, people: [{ ...team.people[0], presence: "napping" }] });
     expect(odd.people[0]).toMatchObject({ name: "Sean", online: true, presence: undefined });
+  });
+});
+
+describe("hub wire v0.11: session mirror (SPEC §26)", () => {
+  const mirrored = {
+    ...session,
+    title: "B3OS agent infra tools",
+    mode: "auto",
+    tasks: { shells: 3, monitors: 2, agents: 1 },
+  } as const;
+  const base = { key: "claude-code:s1", ts: 1_795_545_603_000 } as const;
+  const notice = {
+    ...base,
+    id: "boot-4",
+    kind: "notice",
+    noticeKind: "agent_waiting",
+    desc: "Web release 1124j (edge, apps, usercontent)",
+    durationMs: 259_000,
+  } as const;
+  const turn = { ...base, id: "boot-5", kind: "turn", durationMs: 11_000, tasks: { shells: 3, monitors: 2 } } as const;
+  const plan = {
+    ...base,
+    id: "boot-6",
+    kind: "notice",
+    noticeKind: "plan",
+    plan: [
+      { step: "Read the transcript shapes", status: "completed" },
+      { step: "Write the parser", status: "in_progress" },
+      { step: "Ship", status: "pending" },
+    ],
+  } as const;
+
+  it("a relay sends title, mode, tasks, notices, turn tasks and plans; the hub takes them unchanged", () => {
+    const sent = hubIngestRequestSchema.parse({ ...body, sessions: [mirrored], events: [notice, turn, plan] });
+    expect(hubIngestAcceptSchema.parse(sent)).toEqual(sent);
+    expect(sent.events.map((e) => e.kind)).toEqual(["notice", "turn", "notice"]);
+    // Optional: older bodies stay valid both ways.
+    expect(hubIngestRequestSchema.safeParse(body).success).toBe(true);
+    expect(hubIngestAcceptSchema.parse(body).sessions[0]?.mode).toBeUndefined();
+  });
+
+  it("a notice can say only its kind (metadata level)", () => {
+    for (const k of hubNoticeKindSchema.options) {
+      expect(hubActivityEventSchema.safeParse({ ...base, id: `n-${k}`, kind: "notice", noticeKind: k }).success, k).toBe(true);
+    }
+  });
+
+  it("strict: mode is a word, task counts are small integers, a plan has 1-30 known steps", () => {
+    for (const m of ["default", "auto", "acceptEdits", "plan", "bypassPermissions", "full-access", "read-only"]) {
+      expect(HUB_MODE_RE.test(m), m).toBe(true);
+    }
+    for (const m of ["", "auto mode on", "-x", "a".repeat(41), "mode;rm"]) {
+      expect(hubSessionUpsertSchema.safeParse({ ...session, mode: m }).success, m).toBe(false);
+    }
+    expect(hubSessionUpsertSchema.safeParse({ ...session, tasks: { shells: -1 } }).success).toBe(false);
+    expect(hubSessionUpsertSchema.safeParse({ ...session, tasks: { shells: 1.5 } }).success).toBe(false);
+    expect(hubSessionUpsertSchema.safeParse({ ...session, tasks: { shells: HUB_MAX_TASKS + 1 } }).success).toBe(false);
+    expect(hubSessionUpsertSchema.safeParse({ ...session, tasks: { dreams: 1 } }).success).toBe(false);
+    expect(hubActivityEventSchema.safeParse({ ...notice, noticeKind: "gossip" }).success).toBe(false);
+    expect(hubActivityEventSchema.safeParse({ ...plan, plan: [] }).success).toBe(false);
+    const long = Array.from({ length: HUB_PLAN_MAX_STEPS + 1 }, (_, i) => ({ step: `s${i}`, status: "pending" }));
+    expect(hubActivityEventSchema.safeParse({ ...plan, plan: long }).success).toBe(false);
+    expect(hubActivityEventSchema.safeParse({ ...plan, plan: [{ step: "x", status: "blocked" }] }).success).toBe(false);
+    expect(hubActivityEventSchema.safeParse({ ...plan, plan: [{ step: "", status: "pending" }] }).success).toBe(false);
+  });
+
+  it("accept: newer or broken mirror fields read as absent, bad steps and counts drop on their own", () => {
+    const got = hubIngestAcceptSchema.parse({
+      ...body,
+      sessions: [{ ...session, mode: "auto mode on", tasks: { shells: 2.4, monitors: "two", dreams: 1, agents: 5000 } }],
+      events: [
+        { ...notice, noticeKind: "gossip" },
+        {
+          ...plan,
+          plan: [{ step: "ok", status: "blocked" }, { step: 3 }, { step: "x".repeat(HUB_PLAN_STEP_ACCEPT_MAX + 1), status: "pending" }],
+        },
+        { ...turn, tasks: "lots" },
+      ],
+    });
+    expect(got.sessions[0]?.mode).toBeUndefined();
+    expect(got.sessions[0]?.tasks).toEqual({ shells: 2, agents: HUB_MAX_TASKS });
+    expect(got.events[0]?.noticeKind).toBeUndefined();
+    expect(got.events[0]?.kind).toBe("notice");
+    expect(got.events[1]?.plan).toEqual([{ step: "ok", status: "pending" }]);
+    expect(got.events[2]?.tasks).toBeUndefined();
+    expect(hubActivityEventAcceptSchema.parse({ ...plan, plan: [{ step: 1 }] }).plan).toBeUndefined();
   });
 });

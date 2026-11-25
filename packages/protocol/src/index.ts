@@ -53,6 +53,13 @@ export const HUB_MAX_LINKS = 10;
 export const HUB_MAX_REPOS = 10;
 /** v0.6: token counts and cost a relay reports for one session (a larger value is a parse error, not a real run). */
 export const HUB_MAX_TOKENS = 1e13;
+/** v0.11 (SPEC §26): background tasks of one kind a relay reports for a session. */
+export const HUB_MAX_TASKS = 999;
+/** v0.11: steps in one plan update. */
+export const HUB_PLAN_MAX_STEPS = 30;
+/** v0.11: one plan step's text (conversation level). Hub accepts up to 5x and cuts. */
+export const HUB_PLAN_STEP_MAX = 200;
+export const HUB_PLAN_STEP_ACCEPT_MAX = 5 * HUB_PLAN_STEP_MAX;
 export const HUB_MAX_COST_USD = 1e7;
 
 // ------------------------------------------------------------------ identifiers
@@ -80,6 +87,13 @@ export const HUB_GITHUB_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9]))
 export const HUB_LINK_ID_RE = /^[\w.:#/-]+$/;
 /** v0.10 (SPEC §24): the relay's name and version on every ingest, `workmesh/0.10.0`. */
 export const HUB_CLIENT_RE = /^[a-z][a-z0-9-]{0,30}\/[0-9A-Za-z][0-9A-Za-z.+-]{0,31}$/;
+
+/**
+ * v0.11 (SPEC §26): a session's permission or approval mode as its agent names it: Claude Code's `permissionMode`
+ * (`default`, `auto`, `acceptEdits`, `plan`, `bypassPermissions`), a Codex approval/sandbox pair reduced to one word
+ * (`full-access`, `read-only`). A word, never text.
+ */
+export const HUB_MODE_RE = /^[A-Za-z][A-Za-z0-9_.-]{0,39}$/;
 
 /** A link URL: https, no credentials in the authority, no whitespace (SPEC §15). */
 export function isSafeLinkUrl(u: string): boolean {
@@ -128,6 +142,8 @@ export const hubEventKindSchema = z.enum([
   "turn", // a turn ended; carries durationMs
   // v0.6 (SPEC §15):
   "agent_message", // one agent wrote to another (from, to, channel; text at conversation level)
+  // v0.11 (SPEC §26):
+  "notice", // a line the agent tool itself writes: a background task's notice, a compaction, a plan update
 ]);
 export type HubEventKind = z.infer<typeof hubEventKindSchema>;
 
@@ -142,6 +158,34 @@ export type HubAgentChannel = z.infer<typeof hubAgentChannelSchema>;
 /** v0.6: what a link points at. */
 export const hubLinkTypeSchema = z.enum(["linear", "slack", "github_pr", "github_issue", "url"]);
 export type HubLinkType = z.infer<typeof hubLinkTypeSchema>;
+
+/**
+ * v0.11 (SPEC §26): what a `notice` says. Background agents (`agent_*`), background shells (`shell_*`), monitors
+ * (`monitor_*`), workflows (`workflow_*`), a context compaction, a plan update (Codex `update_plan`), or another task
+ * notice (`task`). A kind newer than a hub reads as `task`.
+ */
+export const hubNoticeKindSchema = z.enum([
+  "agent_waiting", // a background agent stopped with background work of its own
+  "agent_done",
+  "agent_failed",
+  "agent_stopped",
+  "shell_done",
+  "shell_failed",
+  "shell_stopped",
+  "shell_running", // still running after a long time, with no new output
+  "monitor_event", // a monitor fired (its output is never sent)
+  "monitor_ended",
+  "workflow_done",
+  "workflow_failed",
+  "compact", // the context was compacted
+  "plan", // the agent updated its plan
+  "task", // any other task notice
+]);
+export type HubNoticeKind = z.infer<typeof hubNoticeKindSchema>;
+
+/** v0.11: a plan step's state (Codex `update_plan`). */
+export const hubPlanStatusSchema = z.enum(["pending", "in_progress", "completed"]);
+export type HubPlanStatus = z.infer<typeof hubPlanStatusSchema>;
 
 /**
  * v0.10 (SPEC §24): a device's presence as the hub computes it from its ingests. `online`: heard within 90 s;
@@ -169,10 +213,32 @@ const clientName = z.string().max(64).regex(HUB_CLIENT_RE, "client must be name/
 const linkId = z.string().min(1).max(200).regex(HUB_LINK_ID_RE, "link id must be an id, not text");
 const linkUrl = z.string().max(500).refine(isSafeLinkUrl, "link url must be https without credentials");
 const linkLabel = z.string().min(1).max(120);
+const modeName = z.string().max(40).regex(HUB_MODE_RE, "mode must be a mode name");
+const taskCount = z.number().int().nonnegative().max(HUB_MAX_TASKS);
 
 // ------------------------------------------------------------------ ingest, as a relay sends it (strict)
 
 const epochMs = z.number().int().nonnegative().max(HUB_MAX_EPOCH_MS);
+
+/**
+ * v0.11 (SPEC §26): background tasks running, by kind, as the agent counts them (Claude Code's `background_tasks`:
+ * shells, monitors, subagents, workflows; anything else is `other`). Counts only.
+ */
+export const hubTasksSchema = z.strictObject({
+  shells: taskCount.optional(),
+  monitors: taskCount.optional(),
+  agents: taskCount.optional(),
+  workflows: taskCount.optional(),
+  other: taskCount.optional(),
+});
+export type HubTasks = z.infer<typeof hubTasksSchema>;
+
+/** v0.11: one step of a plan update (conversation level; redacted on the machine). */
+export const hubPlanStepSchema = z.strictObject({
+  step: z.string().min(1).max(HUB_PLAN_STEP_MAX),
+  status: hubPlanStatusSchema,
+});
+export type HubPlanStep = z.infer<typeof hubPlanStepSchema>;
 
 export const hubSessionUpsertSchema = z.strictObject({
   key: sessionKey,
@@ -196,7 +262,10 @@ export const hubSessionUpsertSchema = z.strictObject({
   role: hubSessionRoleSchema.optional(),
   /** The agent's type, e.g. Claude Code's `general-purpose`, `Explore`. */
   agentType: agentName.optional(),
-  /** A subagent's task description. Conversation level only; redacted on the machine. */
+  /**
+   * A subagent's task description; since v0.11 (SPEC §26) also a main session's title (Claude Code's own title for
+   * the conversation). Conversation level only; redacted on the machine.
+   */
   title: z.string().max(HUB_TITLE_MAX).optional(),
   model: modelName.optional(),
   tokensIn: tokenCount.optional(),
@@ -220,6 +289,11 @@ export const hubSessionUpsertSchema = z.strictObject({
   alive: z.boolean().optional(),
   /** Working, alive, and no events since this time (epoch ms): a long tool call or a stuck agent. */
   quietSince: epochMs.optional(),
+  // v0.11 (SPEC §26): what the person's terminal shows around the conversation.
+  /** The agent's permission or approval mode (`auto`, `bypassPermissions`, `plan`, `full-access`). Metadata. */
+  mode: modeName.optional(),
+  /** Background tasks running now, by kind. Metadata. */
+  tasks: hubTasksSchema.optional(),
 });
 export type HubSessionUpsert = z.infer<typeof hubSessionUpsertSchema>;
 
@@ -264,6 +338,13 @@ export const hubActivityEventSchema = z.strictObject({
   channel: hubAgentChannelSchema.optional(),
   /** Linear issues, Slack messages, PRs and issues this event touched. */
   links: z.array(hubLinkSchema).max(HUB_MAX_LINKS).optional(),
+  // v0.11 (SPEC §26).
+  /** `notice`: what it says. Its subject's title goes in `desc` (conversation level), its length in `durationMs`. */
+  noticeKind: hubNoticeKindSchema.optional(),
+  /** `turn`: background tasks still running when it ended. `notice`: running after it. Counts only. */
+  tasks: hubTasksSchema.optional(),
+  /** `notice` of kind `plan`: the steps (conversation level only). */
+  plan: z.array(hubPlanStepSchema).min(1).max(HUB_PLAN_MAX_STEPS).optional(),
 });
 export type HubActivityEvent = z.infer<typeof hubActivityEventSchema>;
 
@@ -336,6 +417,41 @@ const reposAccept = z
     return out.length ? out : undefined;
   });
 
+/** v0.11 tasks, read tolerantly: each count rounded and capped, a bad count absent, unknown kinds dropped. */
+const taskCountAccept = z
+  .number()
+  .min(0)
+  .transform((n) => Math.min(HUB_MAX_TASKS, Math.round(n)))
+  .nullish()
+  .catch(undefined)
+  .transform((v) => v ?? undefined);
+const tasksAccept = z.object({
+  shells: taskCountAccept,
+  monitors: taskCountAccept,
+  agents: taskCountAccept,
+  workflows: taskCountAccept,
+  other: taskCountAccept,
+});
+export type HubTasksAccepted = z.infer<typeof tasksAccept>;
+
+/** v0.11 plan steps, read tolerantly: a bad step is dropped on its own, an unknown status reads as pending. */
+const planStepAccept = z.object({
+  step: z.string().min(1).max(HUB_PLAN_STEP_ACCEPT_MAX),
+  status: hubPlanStatusSchema.catch("pending"),
+});
+export type HubPlanStepAccepted = z.infer<typeof planStepAccept>;
+const planAccept = z
+  .array(z.unknown())
+  .max(10 * HUB_PLAN_MAX_STEPS)
+  .transform((items) => {
+    const out: HubPlanStepAccepted[] = [];
+    for (const item of items) {
+      const r = planStepAccept.safeParse(item);
+      if (r.success && out.length < HUB_PLAN_MAX_STEPS) out.push(r.data);
+    }
+    return out.length ? out : undefined;
+  });
+
 export const hubSessionUpsertAcceptSchema = z.object({
   key: sessionKey,
   source: z.string().min(1).max(64),
@@ -367,6 +483,9 @@ export const hubSessionUpsertAcceptSchema = z.object({
   /** v0.10: a malformed value reads as absent (unknown), never a 400. */
   alive: opt(z.boolean()).catch(undefined),
   quietSince: opt(epochMsAccept).catch(undefined),
+  /** v0.11: a malformed mode or tasks object reads as absent, never a 400. */
+  mode: opt(modeName).catch(undefined),
+  tasks: opt(tasksAccept).catch(undefined),
 });
 export type HubSessionUpsertAccepted = z.infer<typeof hubSessionUpsertAcceptSchema>;
 
@@ -393,6 +512,10 @@ export const hubActivityEventAcceptSchema = z.object({
   /** A channel newer than this hub reads as absent. */
   channel: opt(hubAgentChannelSchema).catch(undefined),
   links: opt(linksAccept),
+  /** v0.11: a notice kind newer than this hub reads as absent (the hub shows it as a plain task notice). */
+  noticeKind: opt(hubNoticeKindSchema).catch(undefined),
+  tasks: opt(tasksAccept).catch(undefined),
+  plan: opt(planAccept).catch(undefined),
 });
 export type HubActivityEventAccepted = z.infer<typeof hubActivityEventAcceptSchema>;
 

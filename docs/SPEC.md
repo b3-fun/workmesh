@@ -12,7 +12,7 @@ https://workmesh.b3os.org; the hosted hub's code and internals are private (§14
 | Hub | hosted by B3 (private) | Pairs machines, keeps what they share, writes summaries, serves the board. |
 
 If this file and the code disagree, fix one of them in the same change. Section numbers are stable because code cites
-them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22, §25) covered the hub's internals, which moved to the
+them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22, §25, §27) covered the hub's internals, which moved to the
 hosted hub's own docs. Sections 1–13 were written while the hub was Bullpen and the relay was agentblip; where they say
 agentblip, read the Workmesh CLI.
 
@@ -628,3 +628,71 @@ takes the state it reports.
   it back within seconds and a reboot or wake starts it; `workmesh restart` asks launchd (`launchctl kickstart -k`)
   when the job is installed, and `workmesh doctor` reports it. Hooks still start a daemon when none answers. On Linux
   `workmesh setup --service` writes a systemd `--user` unit.
+
+---
+
+# v0.11: the session mirror (Sean, 2026-11-25)
+
+"We want better representation of what the users see on their actual codex/claude sessions, ideally synced to this."
+The board's session page reads like the person's terminal: the title, harness and model at the top; prompts, the
+agent's messages and folded tool runs in order; the agent tool's own lines (a background agent waiting on its work, a
+shell that finished, a compaction, a plan update); each turn's end with what is still running; and a footer with the
+mode, the background tasks and the agents. Still `v: 1`; every field below is optional, and an older hub drops them
+(an older hub 400s the `notice` kind, so a relay holds notices back for 10 minutes after such a 400, as for `message`).
+
+## 26. Mirror fields
+
+**Wire** (`packages/protocol`):
+
+| Where | Field | Level | What |
+|---|---|---|---|
+| `SessionUpsert` | `title` (≤ 200) | conversation | since v0.11 also a main session's title: Claude Code's `custom-title` (a `/rename`), else its `ai-title`; redacted (§9) |
+| `SessionUpsert` | `mode` (`HUB_MODE_RE`, ≤ 40) | metadata | Claude Code's `permissionMode` (`default`, `auto`, `acceptEdits`, `plan`, `bypassPermissions`); Codex's approval and sandbox reduced to one word (`full-access`, `auto`, `read-only`, `untrusted`) |
+| `SessionUpsert` | `tasks` | metadata | background tasks running now: `{ shells?, monitors?, agents?, workflows?, other? }`, each 0–999 |
+| `SessionUpsert` | `model` | metadata | (v0.6) now also sent for a main Claude Code session, from its transcript |
+| `ActivityEvent` | kind `notice` + `noticeKind` | metadata | a line the agent tool writes itself (below) |
+| `ActivityEvent` | `desc` on a notice | conversation | the title the notice names: a background agent's task, a background command's description, a workflow's name |
+| `ActivityEvent` | `durationMs` on a notice | metadata | how long the task ran (agent notices), or the compaction took |
+| `ActivityEvent` | `ok` on a notice | metadata | the task completed (`true`) or failed (`false`) |
+| `ActivityEvent` | `tasks` on a `turn` | metadata | background tasks still running when the turn ended ("3 shells, 2 monitors still running", "waiting for 1 background agent") |
+| `ActivityEvent` | `plan` on a `plan` notice | conversation | 1–30 `{ step ≤ 200, status: pending \| in_progress \| completed }`, redacted |
+
+`noticeKind`: `agent_waiting` (a background agent stopped with background work of its own), `agent_done`,
+`agent_failed`, `agent_stopped`, `shell_done`, `shell_failed`, `shell_stopped`, `shell_running` (still running after a
+long time with no new output), `monitor_event`, `monitor_ended`, `workflow_done`, `workflow_failed`, `compact`, `plan`,
+`task` (any other task notice). A hub reads an unknown kind as absent and shows the event as a plain task notice; it
+reads a malformed `mode`, `tasks` or `plan` as absent, a bad plan step or task count on its own.
+
+What still never leaves a machine (§3.3 holds): a monitor's output (a `monitor_event` notice carries its kind only),
+a background command's command line, the text of a task's result, the agent's thinking, anything from a subagent's
+transcript beyond counts. A notice's `desc` and a plan are conversation text: a metadata device sends the notice's kind,
+duration and outcome only, and no `plan` notice at all. A metadata device's `title` stays a subagent's type (§19).
+
+**How the relay reads them** (`packages/cli`, verified on Claude Code 2.1.332 and Codex 0.164 rollouts, shapes only):
+- **Claude Code main transcript** (the tail of §9, from the moment the session is shared): `ai-title` (`aiTitle`) and
+  `custom-title` (`customTitle`) lines give the title, the custom one winning; `permission-mode` (`permissionMode`)
+  the mode (metadata, so the relay also reads the latest one from the file's last 64 KB when the tail starts);
+  `assistant` lines' `message.model` the model; `system` `compact_boundary` a `compact` notice (its
+  `compactMetadata.durationMs`); `system` `turn_duration`'s `pendingBackgroundAgentCount` and `pendingWorkflowCount`
+  the turn's waiting agents and workflows; `user` lines whose `origin.kind` is `task-notification` a notice, read from
+  Claude Code's own `<summary>` templates (`Agent "<title>" is waiting on its own background work`, `Agent "<title>"
+  finished`, `Background command "<description>" completed (exit code 0)`, `Monitor "<description>" stream ended`,
+  `Dynamic workflow "<name>" completed`, …) with `<task-id>`, `<status>` and `<duration_ms>`. A template the relay
+  doesn't know sends `task` with no `desc`.
+- **Background tasks:** the Stop and SubagentStop hooks' `background_tasks` (`id`, `type`: `shell`, `monitor`,
+  `subagent`, `workflow`, or another kind; `status`) are the session's running tasks, by id and kind only. A notice
+  whose `<task-id>` names one ends it; a background `Bash` (`toolUseResult.backgroundTaskId`), a `Monitor`
+  (`toolUseResult.taskId`) or a workflow launched in the tail adds one. A subagent's own tasks come from its
+  `agent-<id>.jsonl` the same way (launches minus completion notices), so the relay can say "waiting on 1 shell,
+  1 monitor" per agent. A subagent that stopped with tasks of its own (its SubagentStop with tasks running, or the
+  `agent_waiting` notice naming its id) stays open, `idle`, with that status line, until its `agent_done` /
+  `agent_failed` / `agent_stopped` notice or its parent ends.
+- **Codex rollouts:** `turn_context` gives `model` and `mode` (`approval_policy` `never` + `sandbox_policy`
+  `danger-full-access` → `full-access`; `on-request` + `workspace-write` → `auto`; `read-only` sandbox → `read-only`;
+  `untrusted` → `untrusted`); `compacted` lines and `item_completed` items of type `ContextCompaction` a `compact`
+  notice; `function_call` `update_plan` (`plan: [{step, status}]`) a `plan` notice. Exec cells are the tool events the
+  Codex hooks already send (§6), token use the v0.6 `tokensIn`/`tokensOut`.
+- **Freshness:** besides reading on every hook event, the relay checks each open shared session's transcript once a
+  second (a stat, then only new complete lines), so a notice or title Claude Code writes between hooks reaches the hub
+  within about two seconds.
+

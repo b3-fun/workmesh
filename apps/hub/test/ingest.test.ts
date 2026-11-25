@@ -21,14 +21,14 @@ describe("ingest auth", () => {
   });
 
   it("401 once the device is revoked; only its owner can revoke", async () => {
-    const { token, deviceId } = await pairDevice("an@npclabs.org", "an-laptop");
+    const { token, deviceId } = await pairDevice("an@example.com", "an-laptop");
     expect((await ingest(token, batch())).status).toBe(200);
 
-    const notMine = await post(`/api/devices/${deviceId}/revoke`, {}, { "x-dev-user-email": "sean@npclabs.org" });
+    const notMine = await post(`/api/devices/${deviceId}/revoke`, {}, { "x-dev-user-email": "sean@example.com" });
     expect(notMine.status).toBe(404);
     expect((await ingest(token, batch())).status).toBe(200);
 
-    const mine = await post(`/api/devices/${deviceId}/revoke`, {}, { "x-dev-user-email": "an@npclabs.org" });
+    const mine = await post(`/api/devices/${deviceId}/revoke`, {}, { "x-dev-user-email": "an@example.com" });
     expect(mine.status).toBe(200);
     expect((await ingest(token, batch())).status).toBe(401);
 
@@ -113,8 +113,8 @@ describe("ingest validation", () => {
 
 describe("ingest storage", () => {
   it("dedupes events on (deviceId, id)", async () => {
-    const a = await pairDevice("sean@npclabs.org", "mac-a");
-    const b = await pairDevice("an@npclabs.org", "mac-b");
+    const a = await pairDevice("sean@example.com", "mac-a");
+    const b = await pairDevice("an@example.com", "mac-b");
     const ev = event({ id: "same-id" });
     expect(await (await ingest(a.token, batch({ events: [ev, ev] }))).json()).toEqual({ ok: true, accepted: 1 });
     expect(await (await ingest(a.token, batch({ events: [ev] }))).json()).toEqual({ ok: true, accepted: 0 });
@@ -126,17 +126,17 @@ describe("ingest storage", () => {
   });
 
   it("takes the owner from the token; payload fields cannot spoof it or smuggle content", async () => {
-    const { token, deviceId } = await pairDevice("gio@npclabs.org", "gio-mac");
+    const { token, deviceId } = await pairDevice("gio@example.com", "gio-mac");
     const res = await ingest(
       token,
       batch({
-        email: "sean@npclabs.org",
-        owner: "sean@npclabs.org",
+        email: "sean@example.com",
+        owner: "sean@example.com",
         deviceId: "dev_00000000000000000000000000",
-        sessions: [session({ email: "sean@npclabs.org", owner: "sean", deviceId: "other", prompt: "SECRET PROMPT" })],
+        sessions: [session({ email: "sean@example.com", owner: "sean", deviceId: "other", prompt: "SECRET PROMPT" })],
         events: [
           event({
-            email: "sean@npclabs.org",
+            email: "sean@example.com",
             hubKey: "dev_X:claude-code:s1",
             deviceId: "other",
             prompt: "SECRET PROMPT",
@@ -150,10 +150,10 @@ describe("ingest storage", () => {
     const s = await state();
     const mine = s.sessions.filter((x) => x.deviceId === deviceId);
     expect(mine).toHaveLength(1);
-    expect(mine[0]!.email).toBe("gio@npclabs.org");
+    expect(mine[0]!.email).toBe("gio@example.com");
     expect(mine[0]!.hubKey).toBe(`${deviceId}:claude-code:s1`);
     const ev = s.events.find((e) => e.deviceId === deviceId)!;
-    expect(ev.email).toBe("gio@npclabs.org");
+    expect(ev.email).toBe("gio@example.com");
     expect(ev.hubKey).toBe(`${deviceId}:claude-code:s1`);
 
     await runInDurableObject(projectStub(), (_i, st) => {
@@ -166,7 +166,7 @@ describe("ingest storage", () => {
         .exec("SELECT DISTINCT email FROM sessions WHERE device_id = ?", deviceId)
         .toArray()
         .map((r) => r.email);
-      expect(owners).toEqual(["gio@npclabs.org"]);
+      expect(owners).toEqual(["gio@example.com"]);
     });
   });
 

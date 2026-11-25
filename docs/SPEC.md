@@ -42,7 +42,7 @@ Bullpen and the relay was agentblip, in separate repos; where they say agentblip
 
 ## 2. Identity
 
-- A **person** is an Access email (`an@npclabs.org`). Display name = the local part capitalized (`An`), overridable in
+- A **person** is an Access email (`an@example.com`). Display name = the local part capitalized (`An`), overridable in
   the hub's `people` table later.
 - A **device** is one machine paired by one person. Tokens: `bp_` + 64 lowercase hex, shown once; the hub stores only
   SHA-256. A device belongs to one project.

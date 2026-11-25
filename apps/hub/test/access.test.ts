@@ -39,7 +39,7 @@ async function token(
   opts: { aud?: string; iss?: string; exp?: number | string; email?: string | null; signWith?: CryptoKey } = {},
 ) {
   const claims: Record<string, unknown> = { type: "app", identity_nonce: "n" };
-  if (opts.email !== null) claims.email = opts.email ?? "an@npclabs.org";
+  if (opts.email !== null) claims.email = opts.email ?? "an@example.com";
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "RS256", kid: "test-kid" })
     .setIssuer(opts.iss ?? ISS)
@@ -55,9 +55,9 @@ const me = (jwt?: string, extra: Record<string, string> = {}) =>
 
 describe("Access JWT on /api/*", () => {
   it("accepts a valid token and takes the email from it", async () => {
-    const res = await me(await token({ email: "An@NPCLabs.org" }));
+    const res = await me(await token({ email: "An@Example.com" }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ email: "an@npclabs.org", name: "An" });
+    expect(await res.json()).toEqual({ email: "an@example.com", name: "An" });
     expect(certsFetches).toBeGreaterThan(0);
   });
 
@@ -66,7 +66,7 @@ describe("Access JWT on /api/*", () => {
   });
 
   it("401 when only the unsigned email header is present", async () => {
-    expect((await me(undefined, { "cf-access-authenticated-user-email": "sean@npclabs.org" })).status).toBe(401);
+    expect((await me(undefined, { "cf-access-authenticated-user-email": "sean@example.com" })).status).toBe(401);
   });
 
   it("401 for the wrong audience", async () => {
@@ -108,7 +108,7 @@ describe("Access JWT on /api/*", () => {
 
 describe("DEV_USER_EMAIL", () => {
   it("refuses every /api call when set in production", async () => {
-    const bad = { ...prodEnv, DEV_USER_EMAIL: "sean@npclabs.org" } as Env;
+    const bad = { ...prodEnv, DEV_USER_EMAIL: "sean@example.com" } as Env;
     const jwt = await token();
     for (const path of ["/api/me", "/api/state", "/api/devices"]) {
       const res = await call(path, { headers: { "cf-access-jwt-assertion": jwt } }, bad);
@@ -117,9 +117,9 @@ describe("DEV_USER_EMAIL", () => {
   });
 
   it("skips Access outside production", async () => {
-    const dev = { ...prodEnv, ENVIRONMENT: "development", DEV_USER_EMAIL: "sean@npclabs.org" } as Env;
+    const dev = { ...prodEnv, ENVIRONMENT: "development", DEV_USER_EMAIL: "sean@example.com" } as Env;
     const res = await call("/api/me", {}, dev);
-    expect(await res.json()).toEqual({ email: "sean@npclabs.org", name: "Sean" });
+    expect(await res.json()).toEqual({ email: "sean@example.com", name: "Sean" });
   });
 });
 

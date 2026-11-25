@@ -343,7 +343,7 @@ function sim(
 
 const PEOPLE: Person[] = [
   {
-    email: "sean@npclabs.org",
+    email: "sean@example.com",
     machine: "fake-sean-studio",
     share: "conversation",
     sims: [
@@ -354,7 +354,7 @@ const PEOPLE: Person[] = [
     ],
   },
   {
-    email: "an@npclabs.org",
+    email: "an@example.com",
     machine: "fake-an-laptop",
     share: "conversation",
     sims: [
@@ -364,7 +364,7 @@ const PEOPLE: Person[] = [
     ],
   },
   {
-    email: "gio@npclabs.org",
+    email: "gio@example.com",
     machine: "fake-gio-mbp",
     share: "conversation",
     sims: [
@@ -374,13 +374,13 @@ const PEOPLE: Person[] = [
     ],
   },
   {
-    email: "mitch@npclabs.org",
+    email: "mitch@example.com",
     machine: "fake-mitch-mbp",
     share: "metadata",
     sims: [sim("claude-code:51c0ffee", "payout-export", "b3-fun/b3iq", "feat/payout-export", ["B3-7133"], "working", { startedMin: 18 })],
   },
   {
-    email: "sean@npclabs.org",
+    email: "sean@example.com",
     machine: "fake-sean-laptop",
     share: "conversation",
     oneShot: true,

@@ -90,7 +90,7 @@ describe("pairWithHub (SPEC §3.1)", () => {
       machine: "seans-mac-studio",
       client: "workmesh/0.6.0",
       fetchImpl: fakeFetch(
-        [{ status: "pending" }, { status: "complete", deviceToken: TOKEN, person: { email: "sean@npclabs.org", name: "Sean" }, project: PROJECT }],
+        [{ status: "pending" }, { status: "complete", deviceToken: TOKEN, person: { email: "sean@example.com", name: "Sean" }, project: PROJECT }],
         calls,
       ),
       onCode: (p) => codes.push(p.code),
@@ -99,7 +99,7 @@ describe("pairWithHub (SPEC §3.1)", () => {
     expect(codes).toEqual(["ABCD-1234"]);
     expect(calls[0]).toEqual({ url: "https://hub/relay/pair/start", body: { machine: "seans-mac-studio", client: "workmesh/0.6.0" } });
     expect(calls[1]?.body).toEqual({ deviceId: start.deviceId, pollSecret: start.pollSecret });
-    expect(result).toEqual({ deviceId: start.deviceId, deviceToken: TOKEN, person: { email: "sean@npclabs.org", name: "Sean" }, project: PROJECT });
+    expect(result).toEqual({ deviceId: start.deviceId, deviceToken: TOKEN, person: { email: "sean@example.com", name: "Sean" }, project: PROJECT });
   });
 
   it("names the sharing level at pair/start when it is known", async () => {
@@ -183,7 +183,7 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
         return;
       }
       polls += 1;
-      res.end(JSON.stringify(polls < 2 ? { status: "pending" } : { status: "complete", deviceToken: TOKEN, person: { email: "sean@npclabs.org", name: "Sean" }, project: PROJECT }));
+      res.end(JSON.stringify(polls < 2 ? { status: "pending" } : { status: "complete", deviceToken: TOKEN, person: { email: "sean@example.com", name: "Sean" }, project: PROJECT }));
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

@@ -4,7 +4,7 @@ import worker from "../src/worker/index";
 export const HOST = "https://workmesh.b3os.org";
 
 /** Local-dev env: Access skipped, the dev user (or X-Dev-User-Email) is the viewer. */
-export const devEnv = { ...env, ENVIRONMENT: "development", DEV_USER_EMAIL: "sean@npclabs.org" } as Env;
+export const devEnv = { ...env, ENVIRONMENT: "development", DEV_USER_EMAIL: "sean@example.com" } as Env;
 
 /** Production-shaped env: Access JWT required. */
 export const prodEnv = { ...env, ENVIRONMENT: "production", DEV_USER_EMAIL: undefined } as Env;
@@ -49,11 +49,11 @@ export async function startPairing(machine = "test-mac"): Promise<PairStart> {
 export const poll = (p: Pick<PairStart, "deviceId" | "pollSecret">) =>
   post("/relay/pair/poll", { deviceId: p.deviceId, pollSecret: p.pollSecret });
 
-export const approve = (code: string, email = "sean@npclabs.org") =>
+export const approve = (code: string, email = "sean@example.com") =>
   post("/api/pair/approve", { code }, { "x-dev-user-email": email });
 
 /** Pairs a device for `email` and returns its token and id. */
-export async function pairDevice(email = "sean@npclabs.org", machine = "test-mac") {
+export async function pairDevice(email = "sean@example.com", machine = "test-mac") {
   const p = await startPairing(machine);
   const a = await approve(p.code, email);
   if (a.status !== 200) throw new Error(`approve ${a.status}`);

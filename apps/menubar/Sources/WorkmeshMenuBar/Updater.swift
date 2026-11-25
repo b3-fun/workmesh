@@ -293,10 +293,18 @@ enum AppSelfUpdate {
     static var bundleId: String? { Bundle.main.bundleIdentifier }
     static var currentVersion: String? { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String }
 
+    /// The release's bundle id; a build with any other (BUNDLE_ID) is a development build.
+    static let releaseBundleId = "org.npclabs.workmesh.menubar"
+
+    /// Where the replaced app is kept. A development build keeps its own, so a
+    /// dev self-update never overwrites the installed app's rollback copy.
     static var previousDir: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("Workmesh/menubar-previous", isDirectory: true)
+        guard let id = bundleId, id != releaseBundleId else {
+            return base.appendingPathComponent("Workmesh/menubar-previous", isDirectory: true)
+        }
+        return base.appendingPathComponent("\(id)/menubar-previous", isDirectory: true)
     }
 
     /// Why this app can't replace itself where it runs, in plain words; nil when it can.
@@ -340,8 +348,9 @@ enum AppSelfUpdate {
         let fm = FileManager.default
         let app = bundleURL
         let staging = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: app, create: true)
-        defer { try? fm.removeItem(at: staging) }
-        let dev = ProcessInfo.processInfo.environment["WORKMESH_DEV_AUTOUPDATE"] != nil
+        defer { removeTree(staging) }
+        let env = ProcessInfo.processInfo.environment
+        let dev = env["WORKMESH_DEV_AUTOUPDATE"] != nil || env[HeadlessSelfUpdate.urlKey] != nil
 
         log("Downloading \(r.url.absoluteString)")
         let zip = staging.appendingPathComponent("menubar.zip")
@@ -375,30 +384,182 @@ enum AppSelfUpdate {
               fm.isExecutableFile(atPath: fresh.appendingPathComponent("Contents/MacOS/\(exe)").path)
         else { throw Failure("The downloaded app has no program in it. Workmesh.app is unchanged.") }
         log("Unpacked \(fresh.lastPathComponent) \(r.version) (\(ownId))")
-        if dev { log("  xattrs on the unpacked app: \(xattrNames(fresh.path))") }
-        // This download isn't quarantined, but a zip made from a downloaded app carries the flag inside it.
-        if getxattr(fresh.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0 {
-            log("The release's app is marked as downloaded from the internet: macOS asks once before opening it.")
+        if dev { log("  xattrs on the unpacked app: \(xattrNames(fresh.path)); quarantined items: \(quarantined(in: fresh).count)") }
+        // This download isn't quarantined, but a zip made from a downloaded app
+        // carries the flag inside it (ditto keeps it), and then macOS blocks the
+        // new app until someone clicks Open Anyway in System Settings. The zip
+        // matched the release's SHA-256, so clear the flag before the swap.
+        let flagged = quarantined(in: fresh).count
+        if flagged > 0 {
+            let failed = clearQuarantine(in: fresh)
+            if let first = failed.first {
+                throw Failure("""
+                The new app is marked as downloaded from the internet, and Workmesh couldn't clear that \
+                (\(first)), so it kept this app. macOS would block the new one until you allow it. \
+                Install it by hand: \(manualInstall)
+                """)
+            }
+            log("Cleared the quarantine flag the release's app carried (\(flagged) item\(flagged == 1 ? "" : "s")), so it opens without a Gatekeeper prompt")
         }
 
         // Keep the app that runs now, then swap the new one into its place.
         let previous = previousDir
-        try? fm.removeItem(at: previous)
         do {
-            try fm.createDirectory(at: previous, withIntermediateDirectories: true)
-            try fm.copyItem(at: app, to: previous.appendingPathComponent(app.lastPathComponent))
+            try keepPrevious(app, in: previous)
         } catch {
             throw Failure("Couldn't keep a copy of the current app in \(tilde(previous.path)) (\(error.localizedDescription)), so it wasn't replaced.")
         }
         log("Kept the current app (\(currentVersion ?? "?")) in \(tilde(previous.path))")
+        // replaceItemAt would delete the old app itself and throw, after the swap,
+        // on a read-only folder in it; it leaves it under this name and we delete it.
+        let replaced = app.deletingLastPathComponent().appendingPathComponent(".\(app.lastPathComponent).replaced")
+        removeTree(replaced)
         do {
-            _ = try fm.replaceItemAt(app, withItemAt: fresh)
+            _ = try fm.replaceItemAt(app, withItemAt: fresh, backupItemName: replaced.lastPathComponent,
+                                     options: .withoutDeletingBackupItem)
         } catch {
             throw Failure("Couldn't replace \(tilde(app.path)): \(error.localizedDescription). The previous app is in \(tilde(previous.path)).")
         }
+        if !removeTree(replaced) { log("Couldn't delete the replaced app at \(tilde(replaced.path)); it can go") }
         log("Replaced \(tilde(app.path)) with \(r.version)")
-        if dev { log("  xattrs on the installed app: \(xattrNames(app.path))") }
+        if dev { log("  xattrs on the installed app: \(xattrNames(app.path)); quarantined items: \(quarantined(in: app).count)") }
         return app
+    }
+
+    // MARK: Quarantine
+
+    static let quarantineName = "com.apple.quarantine"
+
+    /// What to do when the flag can't be cleared: the release zip with curl,
+    /// which sets no flag, or Gatekeeper's own clicks (macOS 15 and later).
+    static let manualInstall = """
+    quit Workmesh, then in Terminal: curl -L -o /tmp/Workmesh.zip \
+    https://github.com/b3-fun/workmesh/releases/latest/download/Workmesh-menubar-macos.zip && \
+    ditto -x -k /tmp/Workmesh.zip ~/Applications && xattr -dr com.apple.quarantine ~/Applications/Workmesh.app && \
+    open ~/Applications/Workmesh.app. From a browser download instead: open the app and click Done, then in \
+    System Settings → Privacy & Security, under Security, click Open Anyway next to “Workmesh” was blocked, \
+    click Open Anyway again and enter your login password.
+    """
+
+    /// The app and everything in it, without following symbolic links.
+    private static func items(in root: URL) -> [String] {
+        var paths = [root.path]
+        if let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) {
+            for case let url as URL in e { paths.append(url.path) }
+        }
+        return paths
+    }
+
+    private static func hasQuarantine(_ path: String) -> Bool {
+        getxattr(path, quarantineName, nil, 0, 0, XATTR_NOFOLLOW) >= 0
+    }
+
+    /// The items in the app that carry the quarantine flag.
+    static func quarantined(in root: URL) -> [String] {
+        items(in: root).filter(hasQuarantine)
+    }
+
+    /// Removes the quarantine flag from the app and everything in it; returns
+    /// what it couldn't clear, with why. The app was unpacked by this process,
+    /// so its files are this user's. A read-only one refuses removexattr even
+    /// to its owner, so it gets owner write for the moment it takes.
+    static func clearQuarantine(in root: URL) -> [String] {
+        var failed: [String] = []
+        for path in quarantined(in: root) {
+            if removexattr(path, quarantineName, XATTR_NOFOLLOW) == 0 { continue }
+            var err = errno
+            var st = stat()
+            if err == EACCES, lstat(path, &st) == 0, st.st_mode & S_IFMT != S_IFLNK,
+               chmod(path, st.st_mode | S_IWUSR) == 0 {
+                err = removexattr(path, quarantineName, XATTR_NOFOLLOW) == 0 ? 0 : errno
+                chmod(path, st.st_mode & 0o7777)
+            }
+            if err == 0 || err == ENOATTR { continue }
+            let rel = path == root.path ? root.lastPathComponent : String(path.dropFirst(root.path.count + 1))
+            failed.append("\(rel): \(String(cString: strerror(err)))")
+        }
+        // Anything still flagged counts, whatever removexattr said.
+        if failed.isEmpty, let left = quarantined(in: root).first {
+            failed.append("\(left == root.path ? root.lastPathComponent : String(left.dropFirst(root.path.count + 1))): still marked")
+        }
+        return failed
+    }
+
+    // MARK: The rollback copy
+
+    /// Makes `previous` hold a copy of `app` and nothing else: the copy goes in
+    /// beside the old one first and then takes its place, so a failed copy
+    /// leaves the old one, and an old one that is stale, partial, read-only or
+    /// not a folder never stops an update. One previous version is kept.
+    static func keepPrevious(_ app: URL, in previous: URL) throws {
+        let fm = FileManager.default
+        let parent = previous.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        // What a run that stopped halfway left beside it.
+        let prefix = previous.lastPathComponent + "."
+        for name in (try? fm.contentsOfDirectory(atPath: parent.path)) ?? [] where name.hasPrefix(prefix) {
+            removeTree(parent.appendingPathComponent(name))
+        }
+        let tag = UUID().uuidString.prefix(8)
+        let incoming = parent.appendingPathComponent("\(prefix)incoming-\(tag)", isDirectory: true)
+        try fm.createDirectory(at: incoming, withIntermediateDirectories: false)
+        do {
+            try fm.copyItem(at: app, to: incoming.appendingPathComponent(app.lastPathComponent))
+        } catch {
+            removeTree(incoming)
+            throw error
+        }
+        var st = stat()
+        guard lstat(previous.path, &st) == 0 else {
+            try fm.moveItem(at: incoming, to: previous)
+            return
+        }
+        // Renaming works where deleting doesn't (a read-only folder), so move the old one out first.
+        let outgoing = parent.appendingPathComponent("\(prefix)old-\(tag)")
+        do {
+            try fm.moveItem(at: previous, to: outgoing)
+        } catch {
+            removeTree(incoming)
+            throw error
+        }
+        do {
+            try fm.moveItem(at: incoming, to: previous)
+        } catch {
+            try? fm.moveItem(at: outgoing, to: previous)
+            removeTree(incoming)
+            throw error
+        }
+        removeTree(outgoing)
+    }
+
+    /// Deletes a file or folder tree, giving its owner write on each folder
+    /// first: a read-only folder can't be emptied, even by its owner. Returns
+    /// whether it's gone.
+    @discardableResult
+    static func removeTree(_ url: URL) -> Bool {
+        let fm = FileManager.default
+        var st = stat()
+        guard lstat(url.path, &st) == 0 else { return true }
+        if st.st_mode & S_IFMT == S_IFDIR {
+            let writable = { (path: String, mode: mode_t) in
+                if mode & S_IRWXU != S_IRWXU { chmod(path, (mode & 0o7777) | S_IRWXU) }
+            }
+            writable(url.path, st.st_mode)
+            // The enumerator opens a folder after handing it out, so it's writable by then.
+            if let e = fm.enumerator(atPath: url.path) {
+                for case let rel as String in e {
+                    let path = url.path + "/" + rel
+                    var s = stat()
+                    if lstat(path, &s) == 0, s.st_mode & S_IFMT == S_IFDIR { writable(path, s.st_mode) }
+                }
+            }
+        }
+        do {
+            try fm.removeItem(at: url)
+            return true
+        } catch {
+            return lstat(url.path, &st) != 0
+        }
     }
 
     private static func download(_ url: URL, to dest: URL) async throws {
@@ -516,5 +677,46 @@ enum AppSelfUpdate {
     static func tilde(_ path: String) -> String {
         let home = NSHomeDirectory()
         return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+}
+
+// MARK: - Without the menu (tests)
+
+/// Command-line modes that exit before the menu bar item, a window or a
+/// notification prompt exists. `--version` prints the app's version (a check
+/// that the program in the bundle starts). WORKMESH_DEV_SELF_UPDATE_URL, with
+/// _SHA256 and _VERSION, runs the app update the menu runs (download, SHA-256
+/// check, unpack, quarantine, rollback copy, swap) on this app and exits 0, or
+/// 1 with the reason; it doesn't relaunch. scripts/test-self-update.sh drives both.
+enum HeadlessSelfUpdate {
+    static let urlKey = "WORKMESH_DEV_SELF_UPDATE_URL"
+
+    static func runIfAsked() {
+        if CommandLine.arguments.dropFirst().contains("--version") {
+            print(AppSelfUpdate.currentVersion ?? "unknown")
+            exit(0)
+        }
+        let env = ProcessInfo.processInfo.environment
+        guard let raw = env[urlKey] else { return }
+        guard let url = URL(string: raw), let sha = env["WORKMESH_DEV_SELF_UPDATE_SHA256"],
+              let version = env["WORKMESH_DEV_SELF_UPDATE_VERSION"]
+        else {
+            FileHandle.standardError.write(Data("\(urlKey) needs WORKMESH_DEV_SELF_UPDATE_SHA256 and _VERSION\n".utf8))
+            exit(2)
+        }
+        let release = UpdateInfo.MenubarRelease(version: version, url: url, sha256: sha, size: nil, releaseUrl: nil)
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            do {
+                let app = try await AppSelfUpdate.install(release, log: { print($0) })
+                print("Updated \(app.path) (not relaunched)")
+                exit(0)
+            } catch {
+                let message = (error as? AppSelfUpdate.Failure)?.message ?? error.localizedDescription
+                print(message)
+                exit(1)
+            }
+        }
+        done.wait()
     }
 }

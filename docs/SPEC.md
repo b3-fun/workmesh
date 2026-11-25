@@ -1203,7 +1203,8 @@ an upgrade went on without the new tools until someone restarted them. From 0.12
   a new session, and a Codex thread to start a new thread.
 - **Menu bar.** Workmesh.app reads `GET /update`: one "Update available" item that runs `run` in a window with its
   output, and, when the release's menu bar app is newer than itself, downloads the zip, checks its SHA-256 against
-  `menubar.sha256`, swaps itself in place and relaunches (apps/menubar/README.md).
+  `menubar.sha256`, clears the quarantine flag, keeps one rollback copy, swaps itself in place and relaunches
+  (apps/menubar/README.md).
 
 ---
 

@@ -343,7 +343,8 @@ an upgrade went on without the new tools until someone restarted them (An's test
 - **Stale sessions:** a session that started under an older Workmesh is told once, at its next hook, and what reloads
   the tools.
 - **Menu bar:** one "Update available" item runs the update with its output in a window; the app updates itself from
-  the release zip after checking its SHA-256.
+  the release zip after checking its SHA-256, clears the quarantine flag (no Open Anyway after the first install) and
+  keeps exactly one rollback copy (#46; `apps/menubar/scripts/test-self-update.sh`, headless, verified on macOS 27).
 - **Board:** each device's version on Settings → Devices, who's behind (with the command to run) in the team view, a
   quiet dot in the header for your own; no banners.
 - **Proof:** a temp-HOME smoke test (`scripts/smoke-update/run.sh`) with four packed releases on a local registry:
@@ -389,7 +390,8 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
   the docs serve B3 teammates installing it now, and B3's hub stays closed to other teams.
 - 11-25 No daily digest (Sean). The board's summaries stay; nothing posts a digest.
 - 11-25 No Apple Developer signing for now (Sean): the menu bar app ships unsigned on each GitHub release and is handed
-  to the team directly; the guide says how to clear Gatekeeper's quarantine.
+  to the team directly; the guide says how to clear Gatekeeper's quarantine. The bundle is sealed with an ad hoc
+  signature (no account; Sean's OK, 11-25): unsealed, a browser download is "damaged" with no Open Anyway.
 
 - 11-25 Codex parity: Workmesh's MCP tools declare themselves read-only or non-destructive and closed-world, so Codex
   runs them without a prompt (Claude Code ignores the hints). A Codex handoff runs under `--approve-for-me` (Codex's

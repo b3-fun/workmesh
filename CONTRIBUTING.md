@@ -112,8 +112,10 @@ account, which needs a maintainer's security key twice: once to log in, once to 
    npm publish -w @b3os/workmesh --access public --auth-type=web  # tap again
    npm logout
    ```
-4. Build the menu bar zip on a Mac: `cd apps/menubar && ZIP=1 ./scripts/make-app.sh 0.12.1`. It writes
-   `dist/Workmesh-menubar-macos.zip` and prints its SHA-256.
+4. Build the menu bar zip on a Mac, from source: `cd apps/menubar && ZIP=1 ./scripts/make-app.sh 0.12.1`. It seals
+   the app with an ad hoc signature (no Developer ID), writes `dist/Workmesh-menubar-macos.zip` and prints its SHA-256.
+   Never zip a downloaded copy: ditto keeps its quarantine flags. A change to the updater runs
+   `scripts/test-self-update.sh` first (headless, temp copies only).
 5. Create the GitHub release with the zip attached under exactly that name, since installed menu bar apps update
    themselves from it and check its digest:
    ```bash

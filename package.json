@@ -3,8 +3,7 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*",
-    "apps/hub"
+    "packages/*"
   ],
   "scripts": {
     "dev": "react-router dev",

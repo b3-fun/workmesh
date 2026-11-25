@@ -6,13 +6,13 @@
 
 ## Project Overview
 
-- **Product**: Workmesh (formerly agentblip) — your team's coding agents, live on one board and in your Slack status. Each session is a blip on your team's radar: "claude agent working", "3 agents working", "claude: finalizing CI/CD". One repo: the relay on each machine (CLI, daemon, hooks, menu bar app), the team hub and its board (`apps/hub`, formerly Bullpen), the wire protocol between them (`packages/protocol`), and agentblip.com (site + Slack-status relay).
+- **Product**: Workmesh (formerly agentblip) — your team's coding agents, live on one board and in your Slack status. Each session is a blip on your team's radar: "claude agent working", "3 agents working", "claude: finalizing CI/CD". This repo is the client and the protocol: the relay on each machine (CLI, daemon, hooks, menu bar app), the wire protocol between relay and hub (`packages/protocol`, contract in `docs/SPEC.md`), and agentblip.com (site + Slack-status relay). **The hosted platform is private:** the team hub and its board (formerly Bullpen) live in `b3-fun/workmesh-cloud`, which pins this repo as a submodule (split 2026-11-24, Sean: the platform stays hosted by B3; what's installed on a user's machine is open source).
 - **Domain**: agentblip.com (kept; the Worker script, routes and KV keep their agentblip names so the live site and device records survive)
-- **Hub**: https://workmesh.b3os.org (B3's, Cloudflare Access, NPC Labs account), also served at bullpen.b3os.org so relays paired there keep working; Worker script `bullpen` (kept: its Durable Object holds every pairing)
+- **Hub**: https://workmesh.b3os.org (B3's hosted hub, Cloudflare Access), also served at bullpen.b3os.org so relays paired there keep working. Code, deploys and internals: private repo `b3-fun/workmesh-cloud`
 - **Repo**: github.com/b3-fun/workmesh (open source, MIT; renamed from b3-fun/agentblip, old URLs redirect)
 - **npm**: `@b3os/workmesh` (bins `workmesh` and the `agentblip` alias), published from the npclabs npm account
 - **Status**: building
-- **Last updated**: 2026-11-24 (one repo: hub, protocol and relay together, v0.4)
+- **Last updated**: 2026-11-24 (split: client + protocol here, hosted hub in the private workmesh-cloud)
 
 ---
 
@@ -27,9 +27,8 @@
 | Styling | Tailwind CSS v4 | `@tailwindcss/vite` |
 | Validation | Zod v4 | Slack-relay contracts in `packages/core/src/events.ts`; relay ↔ hub in `packages/protocol` |
 | Storage | Cloudflare KV only (Slack relay) | Pairing codes (TTL) + device records. No D1, no ORM |
-| Hub | Worker + Durable Object (SQLite) | `apps/hub`: Hono, Access JWT (jose), board on Vite 8 + React 19 + vendored B3OS console components, TypeScript 7, Vitest 4 in workerd (`@cloudflare/vitest-plugin`) |
 | CLI | Commander.js + tsup | ESM single-file bundle, published as `@b3os/workmesh` |
-| Tests | Vitest | Pure-logic units in core, protocol, CLI + worker lib; the hub's run in workerd |
+| Tests | Vitest | Pure-logic units in core, protocol, CLI + worker lib |
 
 ---
 
@@ -76,16 +75,10 @@ Any tool (curl) ───┼─────────────────�
 │           ├── hub/           # hub forward: git (.git reader), rules (SPEC §3.3 reductions), redact (SPEC §9), transcript (tailer), forwarder (batching/retry)
 │           └── sinks/         # relay, slack-direct, console
 ├── apps/
-│   ├── hub/                   # @workmesh/hub — team hub Worker (script `bullpen`) + Project Durable Object + board
-│   │   ├── src/worker/        # index (Hono: /relay/*, /api/*, assets), project (DO), ingest, access, crypto, summaries/
-│   │   ├── src/board/         # React board (pages, shell, components, lib); b3os/ = vendored B3OS console files
-│   │   ├── src/shared/        # types the Worker and board share
-│   │   ├── test/              # Vitest in workerd
-│   │   └── scripts/fake-relay.ts
 │   └── menubar/               # native SwiftUI macOS menu bar app (thin daemon client)
 │       ├── Sources/WorkmeshMenuBar/   # App, AppModel(poll loop), DaemonClient, Models, StatusIcon, MenuContent, SessionRow, Notifier
 │       └── scripts/make-app.sh        # SwiftPM build → Workmesh.app (LSUIElement)
-└── docs/                      # SPEC.md (hub contract), SELF_HOSTING.md, INTEGRATIONS.md, slack-app-manifest
+└── docs/                      # SPEC.md (relay ↔ hub protocol + privacy rules), SELF_HOSTING.md, INTEGRATIONS.md, slack-app-manifest
 ```
 
 ## API Routes (Worker)
@@ -148,39 +141,32 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - Batching is by size (< 256 KB, ≤ 4 requests per tick while a backlog drains, 16 MB buffer). A hub that 400s the
   new kinds gets message/turn events held back 10 min while everything else still flows.
 
-## Team hub (apps/hub)
+## The hosted hub (private)
 
-- Worker (Hono): `/relay/*` with device tokens (`bp_` + 64 hex, SHA-256 stored; Access bypass), `/api/*` behind
-  Cloudflare Access (the Worker verifies the JWT itself; `DEV_USER_EMAIL` skips it in local dev and 500s in
-  production), everything else the board's static assets (SPA fallback). Routes: `POST /relay/pair/start|poll`,
-  `POST /relay/ingest`; `GET /api/me|state|stream|devices|summaries|pair/:code|sessions/:hubKey/events`,
-  `POST /api/pair/approve|devices/:id/revoke`.
-- Durable Object `Project` (SQLite), one per project id (`b3`): devices, pairings, sessions, events (7 days),
-  summaries (OpenRouter, else Workers AI) off the ingest path on the alarm, the board's WebSockets.
-- Ingest reads bodies with `@workmesh/protocol`'s accept schemas; `src/worker/ingest.ts` is the hub-side handling
-  (second-guard secret scrub, cutting text to 4,000 / desc to 200, issue paths without values).
-- Hosts: workmesh.b3os.org and bullpen.b3os.org (alias, kept for paired relays), one Access audience. Script name
-  `bullpen` stays: renaming the script would start an empty Durable Object.
-- Deploy by hand: `npx wrangler whoami` (NPC Labs `4300a93c2dcb252fa91df03f18e8e44c`), then
-  `npm run deploy -w @workmesh/hub`. Never two wrangler commands at once.
+- **The hosted platform is private; this repo is the client and protocol.** The team hub (Cloudflare Worker
+  `bullpen` and its Durable Object, NPC Labs), its board, summaries and the vendored B3OS UI kit live in
+  `b3-fun/workmesh-cloud` (private, proprietary) with their own CLAUDE.md: deploys, secrets, internals
+  (`docs/HUB.md`). Never copy hub or board code, the B3OS kit or hub internals into this repo.
+- workmesh-cloud pins this repo as a git submodule (`vendor/workmesh`) and reads `@workmesh/protocol` from it. A wire
+  change lands here first (`packages/protocol` + `docs/SPEC.md`, with the relay's side and tests); the hub follows by
+  moving its pin. Keep the hub's reading tolerant: relays update on their own schedule.
+- From v0.4 until the split the hub lived here in `apps/hub`; that code stays in this repo's history (public history
+  is not rewritten), but nothing is developed here any more.
 
-## Working rules (hub and board)
+## Working rules
 
-- **Contract:** `docs/SPEC.md` is the hub's build contract. Change it in the same commit as any code that departs
-  from it.
+- **Contract:** `docs/SPEC.md` is the relay ↔ hub contract (wire format, what may leave a machine, sharing levels,
+  redaction, privacy rules). Change it in the same commit as any code that departs from it.
 - **Linear:** parent B3-7165, v0 B3-7166 (project "B3OS Beta", team NPC Labs). Sean's agents prefix every Linear
   comment with "(Claude, for Sean)", comment at each merge and deploy, and re-read the issue's comments before each
   merge or deploy. A person's comment is an instruction; "hold" pauses the work.
-- **Deploy:** Cloudflare account NPC Labs `4300a93c2dcb252fa91df03f18e8e44c` only, pinned in
-  `apps/hub/wrangler.jsonc`. Run `npx wrangler whoami` and compare the account id first.
+- **Deploy:** agentblip.com deploys from CI on every push to `main` (`.github/workflows/deploy.yml`). The hub
+  deploys from workmesh-cloud.
 - **Privacy:** the hub stores metadata (SPEC §3.3) and, from devices that chose `conversation` (SPEC §8, Sean's word
   on 2026-11-24), prompt and agent message text and one-line tool descriptions. Anything beyond that (tool input or
   output, file contents, full commands) is out of scope without Sean's word.
 - **Commits:** small, pushed after each one. Never force-push, never skip hooks. Commit messages end with the
   Co-Authored-By line for the model that wrote them.
-- **UI:** Radix primitives for dialogs, menus and form controls; no native `alert()`/`confirm()`. The board follows
-  the B3OS console's components and design rules (`apps/hub/src/board/b3os/README.md`); vendored files are copied,
-  not edited.
 - **Never edit a live checkout:** Sean's hooks run `~/Documents/workmesh/packages/cli/dist/index.js`; work in a
   worktree.
 
@@ -225,6 +211,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 | 2026-11-24 | One public monorepo (v0.4, Sean): the hub comes in from b3-fun/bullpen under `apps/hub` with its history (rewritten under the prefix, `docs/research.html` filtered out, `Imported-From` trailers); npm workspaces with one lockfile; `docs/SPEC.md` is the one contract | One system, one place to change it. The research document quotes teammates' Slack messages, so it stays in Linear and never entered this repo's history |
 | 2026-11-24 | `@workmesh/protocol`: one wire package with two readings per body (strict to send, accept to read), tested so every strict-valid body parses unchanged on the hub | The relay and hub each had a copy of the schemas, kept in step by hand. The hub must stay tolerant (old and new relays, Postel), the relay strict (privacy: an extra field can't be sent), so both readings live together from shared field rules |
 | 2026-11-24 | Hub serves workmesh.b3os.org and bullpen.b3os.org; Worker script stays `bullpen` | Paired relays keep working without re-pairing; a renamed script would orphan the Durable Object |
+| 2026-11-24 | Split (Sean): the hub, board, summaries and B3OS kit move to the private `b3-fun/workmesh-cloud` (with `apps/hub`'s history, same path); this repo keeps the CLI, core, protocol, menu bar app, site, SPEC (protocol + privacy) and the one ROADMAP. workmesh-cloud pins this repo as a submodule for `@workmesh/protocol` | "The platform always remains hosted / by us, while the piece that gets installed on users machine is open source". Public history is not rewritten: the hub's code up to the split stays in it |
 | 2026-11-23 | Menu bar 0.2: grouped live list, SF Symbol template icon (orange only for needs-you), row actions, snooze; all new data via `/state` fields and daemon endpoints | Keeps the thin-client rule; roadmap in apps/menubar/README.md |
 
 ## Cloudflare Resources
@@ -232,7 +219,6 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 | Resource | Binding | Notes |
 |---|---|---|
 | Worker | — | script name `agentblip` (kept through the Workmesh rename; routes agentblip.com + www) |
-| Hub Worker | — | script `bullpen` on NPC Labs (`apps/hub/wrangler.jsonc`): custom domains workmesh.b3os.org + bullpen.b3os.org, DO `PROJECT` (class `Project`, SQLite), `AI` binding, assets; secret `OPENROUTER_API_KEY` |
 | KV | STORE | id in wrangler.jsonc (create per-deploy) |
 | Var | BASE_URL | https://agentblip.com |
 | Var | SLACK_CLIENT_ID | public by design |
@@ -242,11 +228,10 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 ## Development
 
 - `npm run dev` — RR7 + Worker dev server
-- `npm test` — every workspace (CLI, core, protocol, hub) + the site/relay worker units (vitest)
+- `npm test` — every workspace (CLI, core, protocol) + the site/relay worker units (vitest)
 - `npm run typecheck` — RR typegen + tsc -b + workspaces
 - `npm run deploy` — build + wrangler deploy
 - CLI dev: `npm run dev -w packages/cli` (tsup watch), `node packages/cli/dist/index.js`
-- Hub: `npm run dev -w @workmesh/hub` (board build + wrangler dev :8787, needs `apps/hub/.dev.vars`), `npm run fake-relay -w @workmesh/hub`, `npm run build -w @workmesh/hub`, `npm run deploy -w @workmesh/hub`
 
 ## Current State
 
@@ -258,6 +243,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - [x] 0.7.0 (branch `hub-conversation`, not merged/published): sharing levels, redaction, prompt/message/desc/turn capture, transcript tailing — CLI 451 tests, core 59, worker 62
 - [x] Rename to Workmesh (branch `workmesh-rename`): dirs + one-time migration, `WORKMESH_*`, `stop` waits / `restart`, Workmesh.app, site + docs — CLI 478 tests, core 59, worker 62
 - [x] One repo (branch `monorepo`, 0.8.0, not published): hub + board under `apps/hub` with history, `@workmesh/protocol`, one SPEC/CONTRIBUTING, hub on workmesh.b3os.org + bullpen.b3os.org — CLI 478 tests, core 55, protocol 14, hub 105, worker 62
+- [x] Split (branch `split-hosted`): hub, board and B3OS kit moved to the private `b3-fun/workmesh-cloud` with their history; SPEC is the public protocol + privacy rules — CLI 478 tests, core 55, protocol 14, worker 62
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain
 - [x] GitHub github.com/b3-fun/workmesh public, CI + push-to-deploy green (secrets set)
 - [x] E2E smoke: daemon lifecycle + live relay pairing/auth verified
@@ -286,6 +272,11 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - `packages/protocol` replaces `packages/core/src/hub.ts` and the hub's `schema.ts`; docs/SPEC.md, one CONTRIBUTING, AGENTS rules here
 - Hub deployed with workmesh.b3os.org beside bullpen.b3os.org; CI runs hub tests + board build; hub deploys stay manual
 
+### 2026-11-24 — Split: open client, hosted platform
+- Sean: "separate the UI from the agent/daemon, so that the platform always remains hosted / by us, while the piece that gets installed on users machine is open source"
+- `apps/hub` (Worker, DO, board, summaries, vendored B3OS kit, fake relay) moved to the private `b3-fun/workmesh-cloud` with its history at the same path; it pins this repo as a submodule for `@workmesh/protocol`
+- Here: `apps/hub` removed from `main` (still in history), workspaces/lockfile/CI without it, SPEC split (protocol + privacy public, hub internals in workmesh-cloud `docs/HUB.md`)
+
 ## Roadmap
 
-`ROADMAP.md` is the project roadmap (Workmesh: the relay, formerly agentblip, and the hub, formerly Bullpen, as one system). Update it in the same PR as any work that changes an item's status, and log product decisions there.
+`ROADMAP.md` is the project roadmap, kept public (Workmesh: the relay, formerly agentblip, and the hosted hub, formerly Bullpen, as one system; hub work in workmesh-cloud updates it here too, without hub internals). Update it in the same PR as any work that changes an item's status, and log product decisions there.

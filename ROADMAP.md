@@ -30,7 +30,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | Onboarding hardening | First run solid on macOS and Linux: lingering so an SSH box stays online after logout, no half-installed systemd unit, `init` checks the hub heard from the machine, `doctor` names why a machine shows offline, one pairing per machine (the same hub under two addresses, a re-pair retires the old device), "online, no agents running" and "paired, never connected" on the board; a Docker smoke test (Node 20/22/24, with and without systemd, over SSH) | **in review** (11-25): relay 0.11.1 (not published), hub workmesh-cloud |
 | PR details | PR title, state (open, draft, merged, closed), author, review and checks on the board, from a read-only GitHub App on b3-fun, instead of a bare `repo#n` | **done** (11-25): hub and board workmesh-cloud #24 |
 | v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **in progress** (11-25): wire #32 (SPEC §35–36); relay built (0.12.0, not published) |
-| Keeping current | `workmesh update` (install the newest release the way it was installed, refresh hooks, MCP and the daemon, roll back on failed checks), update notices from the hub, opt-in auto-update, a once-per-session note to sessions on older tools, "Update available" in the menu bar, versions on the board | **in progress** (11-25): wire #33 (SPEC §40) merged; relay (SPEC §41), menu bar and board in review |
+| Keeping current | `workmesh update` (install the newest release the way it was installed, refresh hooks, MCP and the daemon, roll back on failed checks), update notices from the hub, opt-in auto-update, a once-per-session note to sessions on older tools, "Update available" in the menu bar, versions on the board | **done** (11-25): wire #33 (SPEC §40), relay #37 (SPEC §41) and menu bar #36 in 0.12.0 (not published), hub and board workmesh-cloud #25–#27 (live) |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -311,7 +311,7 @@ base people trust. Contract: SPEC §35 (wire) and §36 (relay).
 - **Next:** the hub and board (Memory tab, Needs-you cards, Settings, Ask, proposals from finished sessions, notes
   migrated).
 
-### Keeping current (Linear B3-7168 follow-up, in progress 11-25)
+### Keeping current (Linear B3-7168 follow-up, done 11-25)
 
 Every release from 0.10.0 to 0.11.1 meant a Slack DM to each teammate with an npm command, and sessions started before
 an upgrade went on without the new tools until someone restarted them (An's test session, 11-25). Contract: SPEC §40

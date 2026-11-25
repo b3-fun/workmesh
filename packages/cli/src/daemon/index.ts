@@ -2,7 +2,7 @@ import fs from "node:fs";
 import pkg from "../../package.json";
 import { SessionStore, formatStatus } from "@workmesh/core";
 import type { SessionEvent } from "@workmesh/core";
-import { CODEX_NOTIFY_HOOK_EVENT, codexNotifyApplies, codexSessionsDir, createCodexWatcher } from "../adapters/codex";
+import { CODEX_NOTIFY_HOOK_EVENT, codexDaemonEvent, codexSessionsDir, createCodexWatcher } from "../adapters/codex";
 import type { CodexWatcher } from "../adapters/codex";
 import { claudeProjectsDir, createWorkflowWatcher } from "../adapters/workflow";
 import type { WorkflowWatcher } from "../adapters/workflow";
@@ -229,16 +229,18 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   // Codex: threads whose hooks run (their notify is redundant), and SessionEnds that may be a daemon restart.
   const codexHooked = new Set<string>();
   const codexEnds = new CodexEndGuard({ apply: (e) => applyNow(e), log });
-  const applyEvent = (event: SessionEvent): void => {
+  const applyEvent = (input: SessionEvent): void => {
+    let event = input;
     if (event.source === "codex") {
       const key = `codex:${event.sessionId}`;
       const hookEvent = event.detail?.hookEvent;
-      if (hookEvent === CODEX_NOTIFY_HOOK_EVENT) {
-        if (!codexNotifyApplies(store.get(key) !== undefined, codexHooked.has(key))) return;
-      } else if (hookEvent) {
+      if (hookEvent && hookEvent !== CODEX_NOTIFY_HOOK_EVENT) {
         if (codexHooked.size > 2000) codexHooked.clear();
         codexHooked.add(key);
       }
+      const kept = codexDaemonEvent(event, { known: store.get(key) !== undefined, hooked: codexHooked.has(key) });
+      if (!kept) return;
+      event = kept;
       const home = codexHomeOfRollout(event.detail?.transcriptPath);
       if (home && codexHomes.get(key) !== home) {
         if (codexHomes.size > 2000) codexHomes.clear();

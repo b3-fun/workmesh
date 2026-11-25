@@ -14,7 +14,7 @@ import { codexExecArgs, handoffPrompt } from "../src/daemon/handoff-runner";
 import { MCP_TOOLS } from "../src/mcp/server";
 import { hookOutput } from "../src/commands/hook";
 import { codexNotifyCheck } from "../src/commands/doctor";
-import { CODEX_NOTIFY_HOOK_EVENT, codexNotifyApplies, mapCodexHookInput, mapNotifyArg } from "../src/adapters/codex";
+import { CODEX_NOTIFY_HOOK_EVENT, codexDaemonEvent, codexNotifyApplies, mapCodexHookInput, mapNotifyArg } from "../src/adapters/codex";
 import {
   codexEventKey,
   codexNotifyState,
@@ -184,6 +184,22 @@ describe("Codex notify: no ghost sessions", () => {
     expect(codexNotifyApplies(false, false)).toBe(false); // the title helper thread: never seen
     expect(codexNotifyApplies(true, true)).toBe(false); // hooks already said the turn ended
     expect(codexNotifyApplies(true, false)).toBe(true); // an older Codex: the watcher made the session
+  });
+});
+
+describe("the rollout watcher doesn't overrule a thread's hooks", () => {
+  const watcher: SessionEvent = { source: "codex", sessionId: THREAD, kind: "working", ts: T, detail: { transcriptPath: "/h/.codex/sessions/2026/11/25/r.jsonl" } };
+  it("for a thread with hooks it is a heartbeat (Codex writes after its Stop hook), and nothing once the thread ended", () => {
+    expect(codexDaemonEvent(watcher, { known: true, hooked: true })).toMatchObject({ kind: "heartbeat", detail: { transcriptPath: watcher.detail?.transcriptPath } });
+    expect(codexDaemonEvent(watcher, { known: false, hooked: true })).toBeUndefined();
+  });
+  it("without hooks it says working as before; hook events and notifies follow their own rules", () => {
+    expect(codexDaemonEvent(watcher, { known: false, hooked: false })).toBe(watcher);
+    const stop = mapCodexHookInput({ hook_event_name: "Stop", session_id: THREAD, cwd: "/w", last_assistant_message: "done" }, T)!;
+    expect(codexDaemonEvent(stop, { known: true, hooked: true })).toBe(stop);
+    const n = mapNotifyArg(JSON.stringify({ type: "agent-turn-complete", "thread-id": THREAD }), T)!;
+    expect(codexDaemonEvent(n, { known: true, hooked: true })).toBeUndefined();
+    expect(codexDaemonEvent(n, { known: true, hooked: false })).toBe(n);
   });
 });
 

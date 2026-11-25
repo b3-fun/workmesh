@@ -93,6 +93,21 @@ export function codexNotifyApplies(known: boolean, hooked: boolean): boolean {
   return known && !hooked;
 }
 
+/**
+ * What the daemon applies of a Codex event, given whether it knows the thread and whether the thread's hooks run:
+ * a notify per codexNotifyApplies; a rollout-watcher "working" for a thread with hooks only as a heartbeat (Codex
+ * writes its turn's last records after the Stop hook, which flipped an idle thread back to working for minutes, so
+ * no wake reached it), and nothing for a thread that ended; anything else as is. Undefined: drop it.
+ */
+export function codexDaemonEvent(event: SessionEvent, s: { known: boolean; hooked: boolean }): SessionEvent | undefined {
+  const hookEvent = event.detail?.hookEvent;
+  if (hookEvent === CODEX_NOTIFY_HOOK_EVENT) return codexNotifyApplies(s.known, s.hooked) ? event : undefined;
+  if (!hookEvent && event.kind === "working" && s.hooked) {
+    return s.known ? { ...event, kind: "heartbeat", activity: undefined } : undefined;
+  }
+  return event;
+}
+
 export type CodexInstallResult = "installed" | "already-installed" | "manual";
 
 /**

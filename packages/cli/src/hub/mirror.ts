@@ -360,6 +360,11 @@ export class TaskSet {
     }
   }
 
+  /** The running tasks, oldest first (for the forwarder's saved state). */
+  entries(): Array<{ id: string; kind: TaskKind }> {
+    return [...this.byId].map(([id, kind]) => ({ id, kind }));
+  }
+
   counts(): HubTasks | undefined {
     if (this.byId.size === 0) return undefined;
     const c: Record<TaskKind, number> = { shells: 0, monitors: 0, agents: 0, workflows: 0, other: 0 };

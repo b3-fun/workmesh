@@ -13,7 +13,8 @@ import { claudeJsonPath, isClaudeMcpInstalled, isCodexMcpInstalled } from "../ad
 import { hubShareLevel, loadConfig, loadConfigSafe } from "../lib/config";
 import type { Config } from "../lib/config";
 import { getHealth, getHubState, getTeamState, sinkConfigured } from "../lib/daemon-client";
-import { configPath } from "../lib/paths";
+import { configPath, hubForwardStatePath } from "../lib/paths";
+import { serviceKind, serviceStatus } from "../lib/service";
 import { createSink } from "../sinks";
 import {
   dim,
@@ -202,6 +203,24 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     }
   }
 
+  // v0.10 (SPEC §24): the daemon under launchd / systemd comes back after a crash, kill or reboot.
+  if (serviceKind()) {
+    const svc = serviceStatus();
+    checks.push(
+      !svc.installed
+        ? warn("daemon service", "not installed: a killed or crashed daemon stays down until the next hook — run `workmesh service install`")
+        : svc.loaded && svc.pid
+          ? ok("daemon service", `${svc.kind}, running (pid ${svc.pid})${svc.program?.[1] ? `, ${svc.program[1]}` : ""}`)
+          : warn("daemon service", `${svc.kind}, installed but ${svc.loaded ? "not running" : "not loaded"} — run \`workmesh service install\``),
+    );
+  }
+  if (cfg.hub) {
+    checks.push(
+      fs.existsSync(hubForwardStatePath())
+        ? ok("hub state", `${hubForwardStatePath()} (shared sessions survive a restart)`)
+        : warn("hub state", "not saved yet (written by a v0.10+ daemon once it forwards)"),
+    );
+  }
   checks.push(
     areClaudeHooksInstalled()
       ? ok("claude code hooks", claudeSettingsPath())

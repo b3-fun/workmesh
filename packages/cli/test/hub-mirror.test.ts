@@ -196,11 +196,11 @@ describe("background tasks", () => {
   });
 });
 
-function harness(over: { share?: HubShareLevel } = {}) {
+function harness(over: { share?: HubShareLevel; statePath?: string; clock?: { now: number } } = {}) {
   const store = new SessionStore();
   const raw: string[] = [];
   const bodies: HubIngestRequest[] = [];
-  let now = NOW;
+  const clock = over.clock ?? { now: NOW };
   const fwd = new HubForwarder({
     url: "https://hub.test",
     token: TOKEN,
@@ -214,20 +214,22 @@ function harness(over: { share?: HubShareLevel } = {}) {
       bodies.push(body);
       return new Response(JSON.stringify({ ok: true, accepted: body.events.length }), { status: 200 });
     }) as typeof fetch,
-    now: () => now,
+    now: () => clock.now,
     homeDir: home,
     share: over.share ?? "conversation",
     turnRecordWaitMs: 0,
     structured: true,
+    statePath: over.statePath,
+    seedSessions: (list) => store.restore(list, clock.now),
   });
   const claude = (sessionId: string, input: Record<string, unknown>): void => {
     const e: SessionEvent | null = mapHookInput(
       { session_id: sessionId, cwd: beta, transcript_path: path.join(projects, `${sessionId}.jsonl`), ...input },
-      now,
+      clock.now,
       { backgroundWork: () => false, turnEnding: () => "done" },
     );
     if (!e) throw new Error("mapper returned null");
-    store.apply(e, now);
+    store.apply(e, clock.now);
     fwd.observe(e);
   };
   const send = async (): Promise<void> => {
@@ -242,7 +244,7 @@ function harness(over: { share?: HubShareLevel } = {}) {
     claude,
     send,
     advance: (ms: number) => {
-      now += ms;
+      clock.now += ms;
     },
     events: (key?: string): HubActivityEvent[] => bodies.flatMap((b) => b.events).filter((e) => !key || e.key === key),
     last: (key: string): HubSessionUpsert | undefined => upserts(key).at(-1),
@@ -381,5 +383,34 @@ describe("subagents waiting on their own background work", () => {
     await h.send();
     expect(h.last(subKey)?.state).toBe("ended");
     expect(h.events(`claude-code:${parent}`).filter((e) => e.kind === "notice").map((e) => e.noticeKind)).toEqual(["agent_done"]);
+  });
+});
+
+describe("a restarted daemon keeps the mirror (SPEC §24, §26)", () => {
+  it("title, mode and running tasks survive a restart; nothing is re-read from before it", async () => {
+    const statePath = path.join(home, "state", "hub-forward.json");
+    const clock = { now: NOW };
+    const a = harness({ statePath, clock });
+    a.fwd.restoreState();
+    const t = transcript("mir-restart");
+    a.claude("mir-restart", { hook_event_name: "UserPromptSubmit", prompt: "go" });
+    append(t, ml.aiTitle("Release train"), ml.permissionMode("auto"));
+    a.claude("mir-restart", { hook_event_name: "Stop", background_tasks: [{ id: "bshell009", type: "shell", status: "running" }] });
+    clock.now += 2000;
+    await a.send();
+    expect(a.last("claude-code:mir-restart")).toMatchObject({ title: "Release train", mode: "auto", tasks: { shells: 1 } });
+    await a.fwd.stop();
+
+    clock.now += 3000;
+    const b = harness({ statePath, clock });
+    b.fwd.restoreState();
+    await b.send();
+    expect(b.last("claude-code:mir-restart")).toMatchObject({ title: "Release train", mode: "auto", tasks: { shells: 1 } });
+    // Its shell finishes while the new daemon runs: the restored task ends by id.
+    append(t, ml.notice({ summary: 'Background command "Build" completed (exit code 0)', taskId: "bshell009", status: "completed" }, clock.now));
+    clock.now += 1000;
+    await b.send();
+    expect(b.last("claude-code:mir-restart")?.tasks).toBeUndefined();
+    expect(b.events("claude-code:mir-restart").map((e) => e.noticeKind)).toEqual(["shell_done"]);
   });
 });

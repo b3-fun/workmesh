@@ -90,7 +90,10 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   let githubRead = false;
   // v0.10 (SPEC §24): Claude Code's live processes, from the liveness check below; the forwarder reports `alive`.
   const claudeOn = config.adapters.claudeCode.enabled;
-  let liveClaude: Map<string, ClaudeProcess> | undefined = claudeOn ? readLiveClaudeSessions() : undefined;
+  // One Claude Code config dir for liveness, the MCP caller lookup and workflows: the config's
+  // (`setup --claude-dir`), else $CLAUDE_CONFIG_DIR, else ~/.claude.
+  const claudeDir = config.adapters.claudeCode.configDir ?? claudeConfigDir();
+  let liveClaude: Map<string, ClaudeProcess> | undefined = claudeOn ? readLiveClaudeSessions(claudeDir) : undefined;
   const startForwarder = (hub: HubConfig | undefined): void => {
     const previous = forwarder;
     forwarder = undefined;
@@ -299,7 +302,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         listSessions: () => store.list(),
         classify: (p) => forwarder?.classify(p),
         isShared: (key) => forwarder?.isShared(key) ?? false,
-        claudeSessions: () => readLiveClaudeSessions(),
+        claudeSessions: () => readLiveClaudeSessions(claudeDir),
       }),
     reloadHub: () => {
       const hub = readHubConfig();
@@ -350,9 +353,6 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     }
 
     let wfWatcher: WorkflowWatcher | undefined;
-    // One Claude Code config dir for workflows and liveness: the config's
-    // (`setup --claude-dir`), else $CLAUDE_CONFIG_DIR, else ~/.claude.
-    const claudeDir = config.adapters.claudeCode.configDir ?? claudeConfigDir();
     const projectsDir = config.adapters.workflow.projectsDir ?? claudeProjectsDir(claudeDir);
     if (config.adapters.workflow.enabled && fs.existsSync(projectsDir)) {
       wfWatcher = createWorkflowWatcher(projectsDir, applyEvent, log);

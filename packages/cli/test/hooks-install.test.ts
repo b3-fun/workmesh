@@ -4,9 +4,12 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CLAUDE_HOOK_EVENTS,
+  WAKE_WINDOW_SEC,
   areClaudeHooksInstalled,
   claudeHookCommand,
+  claudeWakeCommand,
   installClaudeHooks,
+  isClaudeWakeInstalled,
 } from "../src/adapters/claude-code";
 
 let dir: string;
@@ -38,14 +41,36 @@ describe("installClaudeHooks", () => {
     const settings = readSettings();
     for (const event of CLAUDE_HOOK_EVENTS) {
       const entries = settings.hooks[event];
-      expect(entries).toHaveLength(1);
+      // v2: Stop also carries the asyncRewake wake hook, as its own entry.
+      expect(entries).toHaveLength(event === "Stop" ? 2 : 1);
       expect(entries?.[0]?.hooks[0]?.command).toBe(claudeHookCommand());
     }
+    expect(settings.hooks.Stop?.[1]?.hooks[0]).toEqual({ type: "command", command: claudeWakeCommand(), asyncRewake: true, timeout: WAKE_WINDOW_SEC });
+    expect(isClaudeWakeInstalled(settingsPath)).toBe(true);
     // only tool events take a matcher
     expect(settings.hooks.PreToolUse?.[0]?.matcher).toBe("*");
     expect(settings.hooks.PostToolUse?.[0]?.matcher).toBe("*");
     expect(settings.hooks.SessionStart?.[0]?.matcher).toBeUndefined();
     expect(settings.hooks.Stop?.[0]?.matcher).toBeUndefined();
+    expect(areClaudeHooksInstalled(settingsPath)).toBe(true);
+  });
+
+  it("v2 wake: one asyncRewake Stop hook, refreshed in place, removable with wake: false", () => {
+    installClaudeHooks(settingsPath);
+    expect(installClaudeHooks(settingsPath).changed).toBe(false);
+    // An older install of the wake hook (other path, no asyncRewake) is repointed, not duplicated.
+    const s = readSettings() as unknown as { hooks: { Stop: Array<{ hooks: Array<Record<string, unknown>> }> } };
+    s.hooks.Stop[1]!.hooks[0] = { type: "command", command: '"/old/node" "/old/workmesh/packages/cli/dist/index.js" wake-wait claude-code' };
+    fs.writeFileSync(settingsPath, JSON.stringify(s));
+    expect(installClaudeHooks(settingsPath).changed).toBe(true);
+    const after = readSettings();
+    expect(after.hooks.Stop).toHaveLength(2);
+    expect(after.hooks.Stop?.[1]?.hooks[0]).toEqual({ type: "command", command: claudeWakeCommand(), asyncRewake: true, timeout: WAKE_WINDOW_SEC });
+    // The main hook's refresh never touches the wake hook (different subcommand).
+    expect(after.hooks.Stop?.[0]?.hooks[0]?.command).toBe(claudeHookCommand());
+    expect(installClaudeHooks(settingsPath, { wake: false }).changed).toBe(true);
+    expect(readSettings().hooks.Stop).toHaveLength(1);
+    expect(isClaudeWakeInstalled(settingsPath)).toBe(false);
     expect(areClaudeHooksInstalled(settingsPath)).toBe(true);
   });
 
@@ -93,7 +118,7 @@ describe("installClaudeHooks", () => {
     expect(result.changed).toBe(true);
     const after = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
     for (const event of CLAUDE_HOOK_EVENTS) {
-      expect(after.hooks[event]).toHaveLength(1);
+      expect(after.hooks[event]).toHaveLength(event === "Stop" ? 2 : 1);
       expect(after.hooks[event]![0]!.hooks[0]!.command).toBe(claudeHookCommand());
     }
     expect(areClaudeHooksInstalled(settingsPath)).toBe(true);
@@ -122,7 +147,7 @@ describe("installClaudeHooks", () => {
     expect(result.backupPath).toMatch(/settings\.json\.workmesh-backup-\d{8}T\d{9}Z$/);
     const after = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
     for (const event of CLAUDE_HOOK_EVENTS) {
-      expect(after.hooks[event]).toHaveLength(1);
+      expect(after.hooks[event]).toHaveLength(event === "Stop" ? 2 : 1);
       expect(after.hooks[event]![0]!.hooks.map((h) => h.command)).toEqual([claudeHookCommand(), "other-tool"]);
     }
     expect(installClaudeHooks(settingsPath).changed).toBe(false);

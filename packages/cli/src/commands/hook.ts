@@ -10,7 +10,7 @@ import type { HookAnswer } from "../daemon/coord-hooks";
 
 const STDIN_TIMEOUT_MS = 1000;
 
-function readStdin(timeoutMs: number): Promise<string> {
+export function readStdin(timeoutMs: number): Promise<string> {
   return new Promise((resolve) => {
     if (process.stdin.isTTY) {
       resolve("");

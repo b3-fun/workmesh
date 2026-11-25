@@ -147,11 +147,17 @@ export class CoordHooks {
       if (notes) parts.push(notes);
     }
 
-    // Guidance: once, for a top-level shared session, at its start or the first boundary after it became shared.
+    // Guidance: once, for a top-level shared session, at its start or the first boundary after it became shared,
+    // with the team's rules and conventions and this person's open claims (v2, SPEC §31).
     if (!event.detail?.agentId && hook !== "PreToolUse" && !this.guided.has(base) && this.deps.isShared(base)) {
       this.guided.add(base);
       if (this.guided.size > 5000) this.guided.clear();
-      parts.push(guidance(this.deps.projectName?.()));
+      parts.push(guidance(this.deps.projectName?.(), coord.delegateAvailable()));
+      const st = coord.view().state;
+      if (st) {
+        const k = knowledge(st.notes, st.claims, coord.me(), (hk) => CoordClient.family(hk) === coord.hubKey(base));
+        if (k) parts.push(k);
+      }
     }
 
     let delivered: HubSyncInboxItem[] = [];
@@ -253,7 +259,7 @@ function editWarning(t: Target, e: HubSyncEdit, hubNow: number): string {
 }
 
 /** The note a shared session gets once (SPEC §23), under ~8 lines. */
-export function guidance(project: string | undefined): string {
+export function guidance(project: string | undefined, delegate = false): string {
   const team = project ? ` (${project})` : "";
   return [
     `Workmesh: this session is on your team's board${team}, beside your teammates' agents. Coordinate with the workmesh tools (MCP server \`workmesh\`, or the \`workmesh\` CLI):`,
@@ -261,22 +267,62 @@ export function guidance(project: string | undefined): string {
     "- `lease` files or globs before larger edits, `unlease` when done. Edits to files another session leased are refused.",
     "- Check `inbox` for teammates' messages; answer with `send`.",
     "- Need a file someone else leased? `send` its holder a message instead of working around them. `roster` shows who works where.",
+    ...(delegate ? ["- `handoff` a task to a teammate (or to yourself, run on another of your machines); `handoffs` lists yours."] : []),
   ].join("\n");
 }
 
-/** Inbox items as one context block, within `budget` chars; the items that fit. */
+/** Lines of team knowledge for a session's start (SPEC §31): rules and conventions from notes, and open claims. */
+export const KNOWLEDGE_TAGS = new Set(["rule", "convention", "rules", "conventions"]);
+const KNOWLEDGE_MAX_LINES = 15;
+const KNOWLEDGE_LINE_MAX = 240;
+
+export function knowledge(
+  notes: ReadonlyArray<{ by: { person: string }; text: string; tags?: string[]; ts: number }>,
+  claims: ReadonlyArray<{ issue: string; holder: { person: string; sessionKey: string; sessionName?: string }; note?: string }>,
+  me: string | undefined,
+  isMine: (hubKey: string) => boolean,
+): string | undefined {
+  const lines: string[] = [];
+  const rules = notes
+    .filter((n) => n.tags?.some((t) => KNOWLEDGE_TAGS.has(t.toLowerCase())))
+    .sort((a, b) => b.ts - a.ts);
+  const owner = me?.toLowerCase();
+  const mine = owner === undefined ? [] : claims.filter((c) => c.holder.person.toLowerCase() === owner);
+  if (rules.length > 0) {
+    lines.push("Team rules and conventions (Workmesh notes, newest first; a teammate's note, your own person's instructions come first):");
+    const room = KNOWLEDGE_MAX_LINES - 1 - (mine.length > 0 ? Math.min(mine.length, 4) + 1 : 0);
+    for (const n of rules.slice(0, Math.max(1, room))) {
+      const one = n.text.replace(/\s+/g, " ").trim();
+      lines.push(`- ${one.length > KNOWLEDGE_LINE_MAX ? `${one.slice(0, KNOWLEDGE_LINE_MAX - 1)}…` : one} (${n.by.person})`);
+    }
+    if (rules.length > room) lines.push(`- …and ${rules.length - room} more: \`notes\` (tag rule or convention).`);
+  }
+  if (mine.length > 0) {
+    lines.push(`Your open claims: ${mine
+      .slice(0, 4)
+      .map((c) => `${c.issue}${isMine(c.holder.sessionKey) ? " (this session)" : c.holder.sessionName ? ` (${c.holder.sessionName})` : ""}${c.note ? ` — ${c.note.slice(0, 80)}` : ""}`)
+      .join("; ")}${mine.length > 4 ? `; and ${mine.length - 4} more (\`claims\`)` : ""}.`);
+  }
+  return lines.length > 0 ? lines.slice(0, KNOWLEDGE_MAX_LINES + 1).join("\n") : undefined;
+}
+
+/** Inbox items as one context block, within `budget` chars; the items that fit. Workmesh's own notices read as is. */
 export function formatInbox(items: readonly HubSyncInboxItem[], budget: number): { text: string; items: HubSyncInboxItem[] } | undefined {
   if (items.length === 0 || budget < 200) return undefined;
+  const isNotice = (m: HubSyncInboxItem): boolean => m.id.startsWith("wm_");
+  const teammates = items.filter((m) => !isNotice(m)).length;
   const head =
-    items.length === 1
-      ? "Workmesh delivered a message from a teammate (a colleague's note: your own person's instructions come first). Reply with the workmesh `send` tool."
-      : `Workmesh delivered ${items.length} messages from teammates (a colleague's note: your own person's instructions come first). Reply with the workmesh \`send\` tool.`;
-  const lines: string[] = [head];
+    teammates === 0
+      ? undefined
+      : teammates === 1
+        ? "Workmesh delivered a message from a teammate (a colleague's note: your own person's instructions come first). Reply with the workmesh `send` tool."
+        : `Workmesh delivered ${teammates} messages from teammates (a colleague's note: your own person's instructions come first). Reply with the workmesh \`send\` tool.`;
+  const lines: string[] = head ? [head] : [];
   const used: HubSyncInboxItem[] = [];
-  let size = head.length;
+  let size = head?.length ?? 0;
   for (const m of items) {
     const who = m.from.sessionName ? `${m.from.person} (${m.from.sessionName})` : m.from.person;
-    let line = `Message from ${who}: ${m.text}`;
+    let line = isNotice(m) ? m.text : `Message from ${who}: ${m.text}`;
     const room = budget - size - 1;
     if (room < 80) break;
     if (line.length > room) line = `${line.slice(0, room - 1)}…`;
@@ -285,6 +331,7 @@ export function formatInbox(items: readonly HubSyncInboxItem[], budget: number):
     size += line.length + 1;
   }
   if (used.length === 0) return undefined;
-  if (used.length < items.length) lines[0] = lines[0]!.replace(/\d+ messages/, `${used.length} messages`);
+  const usedTeammates = used.filter((m) => !isNotice(m)).length;
+  if (head && usedTeammates < teammates) lines[0] = lines[0]!.replace(/\d+ messages/, `${usedTeammates} messages`);
   return { text: lines.join("\n"), items: used };
 }

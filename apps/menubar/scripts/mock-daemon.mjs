@@ -9,7 +9,9 @@
 // another machine), empty (paired, nobody else online), unpaired (no hub),
 // halted (the hub rejected the device token), noteam (a hub without the team
 // view), legacy (a daemon from before GET /team: 404), coord (team plus v1: a hold on
-// one of this Mac's agents and a message waiting for another).
+// one of this Mac's agents and a message waiting for another), delegate (team plus
+// v2: handoffs offered to me or running here, and approvals; POST /coord/op answers
+// them, so Accept, Decline, Approve and Deny work against the mock).
 //
 // It writes <XDG_STATE_HOME>/workmesh/daemon.secret and
 // <XDG_CONFIG_HOME>/workmesh/config.json ({"port": ...}) so the app finds it.
@@ -29,7 +31,7 @@ const arg = (name, fallback) => {
 };
 const port = Number(arg("port", "45190"));
 const scenario = arg("scenario", "team");
-const SCENARIOS = ["team", "coord", "empty", "unpaired", "halted", "noteam", "legacy"];
+const SCENARIOS = ["team", "coord", "delegate", "empty", "unpaired", "halted", "noteam", "legacy"];
 
 function die(msg) {
   console.error(`mock-daemon: ${msg}`);
@@ -220,6 +222,42 @@ function teamBody() {
   };
 }
 
+// v2 (scenario delegate): changed by POST /coord/op, like the real daemon after its hub call.
+const delegate = {
+  available: true,
+  handoffs: [
+    { id: "h_1", from: "An", fromSession: "b3iq-strategy", task: "Port the KEK rotation to the vault service: rotate behind the new key-id header, keep the old key readable for a week, and open a PR against main.", repo: "b3-fun/b3os-beta", issue: "B3-7168", status: "offered", createdAt: ago(6), runningHere: false },
+    { id: "h_2", from: "Gio", task: "Move the stake API to the new farm cutoff and redeploy staging", repo: "b3-fun/stake", status: "started", createdAt: ago(25), runningHere: true },
+  ],
+  approvals: [
+    { id: "ap_1", session: localWaiting.key, name: localWaiting.name, gate: "merge", detail: "gh pr merge 212 --merge in b3-fun/b3os-beta", status: "pending", ts: ago(3), mine: true, canDecide: true },
+    { id: "ap_2", gate: "deploy", detail: "wrangler deploy in b3-fun/stake", status: "pending", ts: ago(8), mine: false, canDecide: true },
+    { id: "ap_3", session: localWorking.key, name: localWorking.name, gate: "publish", detail: "npm publish in b3-fun/workmesh", status: "pending", ts: ago(1), mine: true, canDecide: false },
+  ],
+};
+
+function coordOp(body) {
+  const { op, args = {} } = body ?? {};
+  const { action, id } = args;
+  if (op === "handoffs" && (action === "accept" || action === "decline")) {
+    const i = delegate.handoffs.findIndex((h) => h.id === id && h.status === "offered");
+    if (i < 0) return { ok: false, text: `Workmesh: handoff ${id} isn't offered to you` };
+    if (action === "decline") {
+      delegate.handoffs.splice(i, 1);
+      return { ok: true, text: `Declined ${id}.` };
+    }
+    Object.assign(delegate.handoffs[i], { status: "accepted", runningHere: true });
+    return { ok: true, text: `Accepted ${id}: this machine starts an agent for it.` };
+  }
+  if (op === "approvals" && (action === "approve" || action === "deny")) {
+    const i = delegate.approvals.findIndex((a) => a.id === id && a.canDecide);
+    if (i < 0) return { ok: false, text: `Workmesh: no pending approval ${id} for you` };
+    const [a] = delegate.approvals.splice(i, 1);
+    return { ok: true, text: `${action === "approve" ? "Approved" : "Denied"}: ${a.detail}.` };
+  }
+  return { ok: false, text: `mock-daemon: ${op} ${action ?? ""} isn't mocked` };
+}
+
 function team(open) {
   if (scenario === "unpaired") return { enabled: false };
   const base = {
@@ -246,6 +284,7 @@ function team(open) {
       ],
     };
   }
+  if (scenario === "delegate") out.delegate = delegate;
   return out;
 }
 
@@ -273,6 +312,26 @@ const server = http.createServer((req, res) => {
     return send(res, 200, team(open));
   }
   if (method === "POST" && url.pathname === "/config") return send(res, 200, config);
+  if (method === "POST" && url.pathname === "/coord/op") {
+    if (scenario !== "delegate") {
+      req.resume();
+      return send(res, 404, { ok: false, error: "not found" });
+    }
+    let raw = "";
+    req.on("data", (chunk) => (raw += chunk));
+    req.on("end", () => {
+      let body;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        return send(res, 400, { ok: false, error: "bad json" });
+      }
+      const answer = coordOp(body);
+      if (process.env.MOCK_DAEMON_VERBOSE) console.log(`POST /coord/op ${body.op} ${JSON.stringify(body.args)} -> ${answer.ok ? "ok" : answer.text}`);
+      send(res, 200, answer);
+    });
+    return;
+  }
   if (method === "POST" && ["/pause", "/resume", "/sessions/dismiss", "/hub/reload"].includes(url.pathname)) {
     req.resume();
     return send(res, 200, { ok: true });

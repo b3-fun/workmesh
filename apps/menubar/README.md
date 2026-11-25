@@ -7,7 +7,7 @@ API and renders the blip.
 
 ```
 menu bar app ──GET /state, /config, /team──▶ workmesh daemon (127.0.0.1:4519) ──▶ Slack
-            ◀──POST /pause /resume /config /sessions/dismiss──          └──▶ team hub (/relay/team)
+            ◀──POST /pause /resume /config /sessions/dismiss /coord/op── └──▶ team hub (/relay/team)
 ```
 
 All the real work — session aggregation, status formatting, the ownership guard,
@@ -29,6 +29,15 @@ app is presentation + control only, so there's zero logic to keep in sync.
   this Mac and, when you're paired with a hub, on your other machines (marked
   with a small computer). A wait the hub also lists shows once, with the hub's
   reason as its line.
+- **Handoffs for you** (v2): tasks a teammate handed you, with who, repo and
+  issue, and **Accept** / **Decline** (Accept starts an agent for it on this
+  Mac); ones already running here say so. Up to four, the header counts all.
+- **Approvals** (v2): merges, deploys, publishes, force-pushes and spends an
+  agent may not do without a yes. Ones you may decide get **Approve** /
+  **Deny** (orange header); your own agents' asks that someone else decides say
+  "Waiting for approval". Both sections answer through the daemon's
+  `POST /coord/op` and come from `GET /team`'s `delegate`; an older daemon
+  sends none and they stay hidden.
 - **Sessions on this Mac**: **Working**, **Background** (teal: only waiting on
   its own shells or subagents), **Idle** (collapsed). Each row leads with the
   project, then the activity and the agent's session name, the agent's mark
@@ -102,7 +111,7 @@ ImageRenderer placeholders); it adds no menu bar item and posts nothing.
 
 ```bash
 export XDG_CONFIG_HOME=/tmp/wm/config XDG_STATE_HOME=/tmp/wm/state
-node scripts/mock-daemon.mjs --port 45190 --scenario team &   # or empty, unpaired, halted, noteam, legacy
+node scripts/mock-daemon.mjs --port 45190 --scenario team &   # or coord, delegate, empty, unpaired, halted, noteam, legacy
 OUT=/tmp/wm/dist BUNDLE_ID=org.npclabs.workmesh.menubar.dev ./scripts/make-app.sh 0.5.0
 WORKMESH_SNAPSHOT=/tmp/wm/team.png WORKMESH_SNAPSHOT_EXPAND=An \
   /tmp/wm/dist/Workmesh.app/Contents/MacOS/Workmesh
@@ -136,7 +145,8 @@ The app stays a thin client. Everything it shows comes from the daemon: the
 state per session, `background`, `stateSince`, the session `name` and `cwd`,
 `subagents`/`foldedInto` for fan-out, `pausedUntil`, and the team view
 (`people`, `needsMe`, `sessions`, connection and sharing level). Its actions are
-daemon calls (`POST /pause {for}`, `/resume`, `/sessions/dismiss`, `/config`) or
+daemon calls (`POST /pause {for}`, `/resume`, `/sessions/dismiss`, `/config`,
+`/coord/op` for handoffs and approvals) or
 local ones (copy, reveal in Finder, open the board). Grouping is a direct read
 of `state` and `background`; showing a wait once when both `/state` and
 `needsMe` list it (the hub key ends with `:` + the local key), ordering and time

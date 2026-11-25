@@ -150,9 +150,13 @@ struct MenuContent: View {
 
         let holds = model.team?.coord?.holds ?? []
         let unread = Array((model.team?.coord?.unread ?? []).prefix(Self.maxMessages))
-        var rowCount = needs.count + holds.count + unread.count + groups.reduce(0) { n, g in
-            n + (g.0 == .idle && !idleExpanded ? 0 : g.1.count)
-        }
+        let allHandoffs = model.team?.delegate?.shownHandoffs ?? []
+        let allApprovals = model.team?.delegate?.shownApprovals ?? []
+        let handoffs = Array(allHandoffs.prefix(Self.maxMessages))
+        let approvals = Array(allApprovals.prefix(Self.maxMessages))
+        // Handoff and approval rows carry a line of buttons: about two rows tall.
+        var rowCount = needs.count + holds.count + unread.count + 2 * (handoffs.count + approvals.count)
+            + groups.reduce(0) { n, g in n + (g.0 == .idle && !idleExpanded ? 0 : g.1.count) }
         switch area {
         case .none: break
         case .connectHint, .reconnect, .note: rowCount += 1
@@ -180,6 +184,14 @@ struct MenuContent: View {
             if !unread.isEmpty {
                 sectionHeader("Messages for your agents", count: "\(model.team?.coord?.unread.count ?? unread.count)")
                 ForEach(unread) { messageRow($0, hubNow: hubNow) }
+            }
+            if !handoffs.isEmpty {
+                sectionHeader("Handoffs for you", count: "\(allHandoffs.count)")
+                ForEach(handoffs) { handoffRow($0, hubNow: hubNow) }
+            }
+            if !approvals.isEmpty {
+                sectionHeader("Approvals", count: "\(allApprovals.count)", urgent: allApprovals.contains(where: \.canDecide))
+                ForEach(approvals) { approvalRow($0, hubNow: hubNow) }
             }
             ForEach(groups, id: \.0) { group, rows in
                 section(group, rows, now)
@@ -252,7 +264,7 @@ struct MenuContent: View {
 
     /// A wait on me: the local row when it's on this Mac (with the hub's reason
     /// when the hub has one), else the hub's item from another machine.
-    /// Messages shown at most; the header counts them all.
+    /// Messages, handoffs or approvals shown at most; each header counts them all.
     private static let maxMessages = 4
 
     /// v1: a teammate held one of this Mac's agents (every tool call is refused until they lift it).
@@ -303,6 +315,111 @@ struct MenuContent: View {
         .padding(.vertical, 4)
         .help("\(from)\(to): \(m.text)\nDelivered at the agent's next tool call.")
         .accessibilityElement(children: .combine)
+    }
+
+    /// v2: a task a teammate handed me (Accept starts an agent for it on this
+    /// Mac), or one already running here.
+    private func handoffRow(_ h: DelegateHandoff, hubNow: Date) -> some View {
+        let from = h.fromSession.map { "\(h.from) (\($0))" } ?? h.from
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: h.runningHere ? "play.circle" : "tray.and.arrow.down")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(Self.oneLine(h.task))
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(h.origin).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                if h.runningHere {
+                    delegateNote("Running here")
+                } else {
+                    delegateActions(h.id, yes: "Accept", no: "Decline") { model.answerHandoff(h.id, accept: $0) }
+                }
+            }
+            Spacer(minLength: 4)
+            if let at = h.createdAt {
+                Text(AgentRow.elapsed(since: at, now: hubNow))
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .help([from + " handed you: " + h.task,
+               [h.repo, h.issue].compactMap { $0 }.joined(separator: " · "),
+               h.runningHere ? "Running on this Mac." : "Accept starts an agent for it on this Mac."]
+              .filter { !$0.isEmpty }.joined(separator: "\n"))
+        .accessibilityElement(children: .contain)
+    }
+
+    /// v2: an action an agent must not take without a person's yes: one of
+    /// this Mac's agents asking, or a teammate's agent I may decide for.
+    private func approvalRow(_ a: DelegateApproval, hubNow: Date) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "hand.raised")
+                .font(.system(size: 12))
+                .foregroundStyle(a.canDecide ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(Self.oneLine(a.detail))
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(a.ask).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                if a.canDecide {
+                    delegateActions(a.id, yes: "Approve", no: "Deny") { model.decideApproval(a.id, approve: $0) }
+                } else {
+                    delegateNote("Waiting for approval")
+                }
+            }
+            Spacer(minLength: 4)
+            if let ts = a.ts {
+                Text(AgentRow.elapsed(since: ts, now: hubNow))
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .help("\(a.detail)\n\(a.ask)" + (a.canDecide ? "" : "\nYour approver decides on the board or in their menu bar."))
+        .accessibilityElement(children: .contain)
+    }
+
+    /// The two answers, or what was answered, plus the daemon's text for a call that failed.
+    @ViewBuilder
+    private func delegateActions(_ id: String, yes: String, no: String, answer: @escaping (Bool) -> Void) -> some View {
+        if let done = model.delegateAnswered[id] {
+            delegateNote(done)
+        } else {
+            HStack(spacing: 6) {
+                Button(yes) { answer(true) }
+                Button(no) { answer(false) }
+            }
+            .controlSize(.small)
+            .disabled(model.delegateBusy.contains(id))
+            .padding(.top, 3)
+        }
+        if let failure = model.delegateFailed[id] {
+            Text(failure)
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+        }
+    }
+
+    /// A quiet status where the buttons would be ("Running here", "Waiting for approval", "Accepted").
+    private func delegateNote(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .padding(.top, 1)
+    }
+
+    /// Runs of whitespace (newlines included) as one space, for a row's clamped text.
+    private static func oneLine(_ s: String) -> String {
+        s.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     @ViewBuilder

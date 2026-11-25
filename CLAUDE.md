@@ -12,7 +12,7 @@
 - **Repo**: github.com/b3-fun/workmesh (open source, MIT; renamed from b3-fun/agentblip, old URLs redirect)
 - **npm**: `@b3os/workmesh` (bins `workmesh` and the `agentblip` alias), published from the npclabs npm account
 - **Status**: building
-- **Last updated**: 2026-11-25 (v1 Coordinate relay side merged; v0.10 liveness: forwarder state across restarts, daemon service, presence from the hub)
+- **Last updated**: 2026-11-25 (v2 Delegate: wire merged #22; relay side 0.11.0: `workmesh init`, wake, handoffs, approval gates, team knowledge at session start)
 
 ---
 
@@ -69,7 +69,7 @@ Any tool (curl) ───┼─────────────────�
 │   ├── protocol/              # @workmesh/protocol — relay ↔ hub wire schemas (strict to send, accept to read), limits
 │   └── cli/                   # @b3os/workmesh npm CLI (daemon + adapters + sinks)
 │       └── src/
-│           ├── commands/      # setup, start/restart, stop, status, emit, hook, pause, unlink, doctor, hub
+│           ├── commands/      # init, setup, start/restart, stop, status, emit, hook, wake, pause, unlink, doctor, hub, coord, roots
 │           ├── lib/           # config, paths + names (workmesh dirs, legacy agentblip names), migrate (one-time copy), daemon-control (stop/start pidfile logic)
 │           ├── adapters/      # claude-code (hooks), codex (hooks.json + notify + watcher), workflow (ultracode journal watcher), detail (local-only hook facts)
 │           ├── hub/           # hub forward: git (.git reader), rules (SPEC §3.3 reductions), redact (SPEC §9), transcript (tailer), forwarder (batching/retry), coord (v1 sync client), shell-writes (paths a command writes)
@@ -192,6 +192,17 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   the daemon exits 0 for a stop and 75 for any other SIGTERM under the service; a service daemon waits for a running
   one to exit. `WORKMESH_NO_SERVICE=1` turns service use off (the CLI tests set it).
 
+- v2 Delegate (SPEC §30, §31, 0.11.0): `CoordClient` reads the optional v2 sync lists (absent = no v2) and makes the
+  v2 calls (a `404` there turns off only v2, for 10 min); the daemon writes its own notices into the inbox (`wm_` ids,
+  never acked). `daemon/delegate.ts`: approval gates in `PreToolUse` (matcher `daemon/gates.ts`, table-tested; asks in
+  the background; approved within the hour runs, denied refuses, a failed ask lets it run), handoff policy
+  (`handoffs.accept`, default `auto-self`), sender notices, and wake waiters (`POST /wake/wait`, long-poll ≤ 55 s).
+  `daemon/handoff-runner.ts`: checkout index (`checkouts.json` + `handoffs.roots`), worktree, detached `claude -p
+  --session-id` / `codex exec` wrapped in `sh` (exit code file), done/fail, `handoffs/running.json`. Claude Code wake is
+  the `wake-wait claude-code` asyncRewake Stop hook (exit 2 + stderr), Codex is `codex queue` (`daemon/codex-wake.ts`).
+  `commands/init.ts` is the one-step onboarding. Agents can't set gates or decide approvals (no MCP tools; the ops
+  refuse an agent caller).
+
 ## The hosted hub (private)
 
 - **The hosted platform is private; this repo is the client and protocol.** The team hub (Cloudflare Worker
@@ -208,7 +219,8 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 
 - **Contract:** `docs/SPEC.md` is the relay ↔ hub contract (wire format, what may leave a machine, sharing levels,
   redaction, privacy rules). Change it in the same commit as any code that departs from it.
-- **Linear:** parent B3-7165, v0 B3-7166 (project "B3OS Beta", team NPC Labs). Sean's agents prefix every Linear
+- **Linear:** parent B3-7165, v0 B3-7166, v1 B3-7167, v2 B3-7168 (project "Workmesh", team NPC Labs; "B3OS Beta" until
+  11-25, ids unchanged; new Workmesh issues go to `--project "Workmesh"`). Sean's agents prefix every Linear
   comment with "(Claude, for Sean)", comment at each merge and deploy, and re-read the issue's comments before each
   merge or deploy. A person's comment is an instruction; "hold" pauses the work.
 - **Deploy:** agentblip.com deploys from CI on every push to `main` (`.github/workflows/deploy.yml`). The hub
@@ -264,6 +276,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 | 2026-11-24 | Hub serves workmesh.b3os.org and bullpen.b3os.org; Worker script stays `bullpen` | Paired relays keep working without re-pairing; a renamed script would orphan the Durable Object |
 | 2026-11-24 | Split (Sean): the hub, board, summaries and B3OS kit move to the private `b3-fun/workmesh-cloud` (with `apps/hub`'s history, same path); this repo keeps the CLI, core, protocol, menu bar app, site, SPEC (protocol + privacy) and the one ROADMAP. workmesh-cloud pins this repo as a submodule for `@workmesh/protocol` | "The platform always remains hosted / by us, while the piece that gets installed on users machine is open source". Public history is not rewritten: the hub's code up to the split stays in it |
 | 2026-11-25 | v1 relay: hooks answered from the daemon's cached `/relay/sync` on the existing loopback request (a header, not a new endpoint, so new hooks and old daemons mix); fail-open everywhere except a known hold (30 min); the MCP server holds no token | More teammates are installing it; Sean: it must never get in the way of anyone's work. Hook latency measured unchanged (130-138 ms p50) |
+| 2026-11-25 | v2 relay: gates and handoffs opt-in per person, wake via Claude Code's `asyncRewake` Stop hook (2.1.330+ by the transcript's version) and `codex queue`; handoffs in a new worktree; texts say the gate re-checks so an agent needn't trust a wake | The whole team onboards at once: nothing may stop anyone's work. Live, a woken model won't treat hook feedback as consent, which is right; the gate's own re-check is what makes the retry safe |
 | 2026-11-23 | Menu bar 0.2: grouped live list, SF Symbol template icon (orange only for needs-you), row actions, snooze; all new data via `/state` fields and daemon endpoints | Keeps the thin-client rule; roadmap in apps/menubar/README.md |
 | 2026-11-24 | v0.7 (SPEC §19): one zod-free `stripInjected` in the protocol package for relay, hub and board; subagent `name` = task at conversation, type at metadata; orchestrators send `repos` | Injected markup reached the board as prompts and agent messages (and a tmp path in a task notice); one tested reading keeps relay, hub backstop and board in step. Subagents showed as raw keys. An orchestrator's repo flipped with each file it touched and said nothing about the others |
 | 2026-11-24 | v0.5/v0.6 relay: daemon polls the hub's `/relay/team` and serves `GET /team` for the menu bar; subagents are hub sessions with `parent`/`role`, sent only once the hub answers `/relay/team`; tokens as Claude Code counts an agent | One capability signal keeps an older hub's board from filling with subagents; Claude Code's own `totalTokens` matched the context + output reading exactly on 5 of 6 real subagents, while a billing sum ran 1.1–6× larger |
@@ -300,7 +313,9 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - [x] Split (branch `split-hosted`): hub, board and B3OS kit moved to the private `b3-fun/workmesh-cloud` with their history; SPEC is the public protocol + privacy rules — CLI 478 tests, core 55, protocol 14, worker 62
 - [x] v0.6 wire (#3, merged): protocol 22 tests
 - [x] v1 Coordinate wire (#10, merged): protocol 60 tests
-- [ ] v1 Coordinate relay (branch `coord-v1`, 0.10.0 not published): sync, hook enforcement, inbox, MCP, setup, menu bar
+- [x] v1 Coordinate relay (0.10.0): sync, hook enforcement, inbox, MCP, setup, menu bar
+- [x] v2 Delegate wire (#22, merged): protocol 79 tests
+- [ ] v2 Delegate relay (branch `delegate-v2`, 0.11.0 not published): init, wake, handoffs, gates, knowledge, menu bar — CLI 769 tests
 - [ ] v0.5/v0.6 relay (branch `relay-v06`): subagents, agent messages, links, avatars, `/team`, multiplayer menu bar — CLI 525 tests
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain
 - [x] GitHub github.com/b3-fun/workmesh public, CI + push-to-deploy green (secrets set)

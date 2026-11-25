@@ -12,6 +12,7 @@ import type { HubShareLevel, HubTeamAccepted } from "@workmesh/protocol";
 import type { HookAnswer } from "./coord-hooks";
 import { coordOpRequestSchema } from "./coord-ops";
 import type { CoordOpRequest, CoordOpResult } from "./coord-ops";
+import type { DelegateSummary, WaitAnswer } from "./delegate";
 
 /** GET /hub: the forwarder's status, or `enabled: false` when not paired. */
 export type HubState = ({ enabled: true } & HubForwarderStatus) | { enabled: false };
@@ -49,6 +50,8 @@ export type TeamState =
       team?: HubTeamAccepted;
       /** v1 (SPEC §23): holds on this machine's agents and messages waiting for them. */
       coord?: CoordSummary;
+      /** v2 (SPEC §31): handoffs offered to this person or running here, and pending approvals. */
+      delegate?: DelegateSummary;
     };
 
 /** v1: what the menu bar shows about coordination (this machine's agents only). */
@@ -65,6 +68,7 @@ export const HOOK_HEADER = "x-workmesh-hook";
 const MAX_BODY_BYTES = 64 * 1024;
 
 const dismissRequestSchema = z.object({ key: z.string().min(1).max(200) }).strict();
+const wakeWaitRequestSchema = z.object({ session: z.string().min(1).max(200), timeoutMs: z.number().int().min(0).max(120_000).default(55_000) });
 
 export interface DaemonServerDeps {
   /** Per-daemon bearer secret required on every endpoint except /health. */
@@ -103,6 +107,8 @@ export interface DaemonServerDeps {
   applyHookEvent?(event: SessionEvent, hook: string): HookAnswer | undefined;
   /** v1: an MCP or CLI coordination call (POST /coord/op). */
   coordOp?(req: CoordOpRequest): Promise<CoordOpResult>;
+  /** v2 (SPEC §31): an idle session's waiter long-polls for its next waking message (POST /wake/wait). */
+  wakeWait?(session: string, timeoutMs: number, signal?: AbortSignal): Promise<WaitAnswer>;
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
@@ -238,6 +244,28 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
           return;
         }
         json(res, 200, await deps.coordOp(parsed.data));
+        return;
+      }
+      if (method === "POST" && url === "/wake/wait") {
+        if (!deps.wakeWait) {
+          json(res, 404, { ok: false, error: "not found" });
+          return;
+        }
+        const parsed = await parseBody(req, wakeWaitRequestSchema);
+        if (!parsed.ok) {
+          json(res, 400, { ok: false, error: parsed.error });
+          return;
+        }
+        // A waiter that goes away (its session ended, Claude Code killed it) gives up its slot, so no message is
+        // marked delivered to a waiter that can't hear it.
+        const gone = new AbortController();
+        let done = false;
+        res.on("close", () => {
+          if (!done) gone.abort();
+        });
+        const answer = await deps.wakeWait(parsed.data.session, parsed.data.timeoutMs, gone.signal);
+        done = true;
+        if (!res.destroyed) json(res, 200, { ok: true, ...answer });
         return;
       }
       if (method === "GET" && url === "/state") {

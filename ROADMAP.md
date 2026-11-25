@@ -22,7 +22,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.5 Multiplayer menu bar | The team in the menu bar | **done** (11-24): menu bar 0.5.0, hub `/relay/team` live |
 | v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **done** (11-24): relay #5, board in workmesh-cloud #1; polish next |
 | v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **done** (11-24): names, markup, orchestrators, graph fit (relay in the next release, 0.9.1); Linear titles live |
-| v1 Coordinate | Claims, file leases, hold, Linear agent identities | later |
+| v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub side in workmesh-cloud |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
@@ -107,11 +107,26 @@ Found on the live board with real sessions, 11-24 (wire: SPEC §19):
 - **Publish:** relay 0.9.0 is out; these relay changes ship as 0.9.1. Still to do: the menu bar build as a release
   asset.
 
-### v1 Coordinate (Linear B3-7167)
+### v1 Coordinate (Linear B3-7167, in progress 11-25)
 - MCP server in every session: `roster`, `send`, `inbox`, `claim`, `lease`, `note`.
 - File leases enforced by a PreToolUse deny that names the holder; claims mirrored to Linear as agent sessions under
   one app identity per person (needs a Linear workspace admin).
 - "hold" from the board or a Linear comment stops the agent's next tool call.
+- **Wire (done, #10, SPEC §21):** `POST /relay/leases|claims|messages|notes|inbox/ack`, `GET /relay/sync` (leases,
+  holds, inbox, claims, roster, notes, and `edits` for "someone is working there"), lease path globs with covers and
+  overlap in `@workmesh/protocol/lease-paths`.
+- **Relay (built, SPEC §23, CLI 0.10.0 not published):** the daemon syncs every 5 s while a shared session runs and
+  answers hooks from memory (hook latency unchanged: 130-138 ms p50 before and after on the Studio). PreToolUse refuses
+  a held session's tool calls and edits to another session's leased files (file tools, `apply_patch`, shell commands
+  that plainly write a path) and warns before editing a file another person's agent edited in the last 10 minutes;
+  messages reach agents at their next tool boundary and are acked; a five-line note at the start of each shared
+  session. `workmesh mcp` with 11 tools, registered by `workmesh setup` for Claude Code (user scope) and Codex;
+  `workmesh leases|lease|unlease|claims|claim|send|inbox|note|notes|whoami`; holds and waiting messages in the menu
+  bar. Fails open: nothing is refused when the hub or daemon is unreachable, except a known hold (up to 30 min).
+  Verified with a real Claude Code session against a stand-in hub (refusal, guidance, MCP tools, a message delivered
+  and acked, fail-open timing); Codex output by its 0.164 hook schemas and fixtures.
+- **Next:** the hub side (workmesh-cloud: lease table, claims, holds from the board and Linear comments, routing
+  messages, notes), then publish 0.10.0 and roll out; Linear agent identities per person (needs An).
 
 ### v2 Delegate (Linear B3-7168)
 - Messages delivered into running and idle sessions (Claude Code session inbox, Codex app-server).
@@ -119,6 +134,12 @@ Found on the live board with real sessions, 11-24 (wire: SPEC §19):
 - Shared knowledge: rulings and conventions loaded at session start for everyone's agents.
 
 ## Decision log
+
+- 11-25 v1 relay: hooks are answered from the daemon's cached sync, never a network call, and everything fails open
+  (a lease counts only while the last sync is under 90 s old; only a hold the daemon already knew about outlives an
+  unreachable hub, for 30 minutes), so Workmesh never stops anyone's work because the hub is down. A lease binds the
+  same person's other sessions too (agents collide whoever owns them). Shell commands are checked only for paths they
+  plainly write; the MCP server is hand-written JSON-RPC (no SDK) and holds no token, the daemon makes every hub call.
 
 - 11-24 v0.7: a subagent's `name` is its task at conversation level and its type at metadata (the hub enforces the
   latter); orchestrators are marked by sending `repos`, and sit with the repo they touched last rather than in a

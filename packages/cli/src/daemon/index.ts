@@ -9,6 +9,10 @@ import { formatOptionsFromConfig, hubShareLevel, hubStickyShare, readHubConfig, 
 import type { Config, HubConfig } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
 import { TeamPoller } from "../hub/team";
+import { CoordClient } from "../hub/coord";
+import { CoordHooks } from "./coord-hooks";
+import { runCoordOp } from "./coord-ops";
+import type { CoordSummary } from "./server";
 import { readGithubLogin } from "../lib/github";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
@@ -66,6 +70,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   let forwarder: HubForwarder | undefined;
   // v0.5: the team view for the menu bar (GET /relay/team), beside the forwarder.
   let teamPoller: TeamPoller | undefined;
+  // v1 (SPEC §21, §23): leases, holds, claims, messages (GET /relay/sync), read by hooks from memory.
+  let coord: CoordClient | undefined;
   // v0.6: the GitHub login `gh` reports, read once per start (the config's copy from `hub connect` until then).
   let githubLogin: string | undefined;
   let githubRead = false;
@@ -75,6 +81,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     if (previous) void previous.stop().catch(() => {});
     teamPoller?.stop();
     teamPoller = undefined;
+    coord?.stop();
+    coord = undefined;
     if (!hub) return;
     const fwd = new HubForwarder({
       url: hub.url,
@@ -102,6 +110,15 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       },
     });
     teamPoller.start();
+    coord = new CoordClient({
+      url: hub.url,
+      token: hub.deviceToken,
+      deviceId: hub.deviceId,
+      person: hub.person?.name,
+      active: () => fwd.hasLiveShared(),
+      log,
+    });
+    coord.start();
     if (!githubRead) {
       githubRead = true;
       void readGithubLogin().then((login) => {
@@ -125,6 +142,59 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     store.apply(clean);
     pusher.notify();
     forwarder?.observe(clean);
+  };
+
+  // v1: hooks get refusals and context from the cached coordination state (never a network call).
+  const coordHooks = new CoordHooks({
+    coord: () => coord,
+    classify: (p) => forwarder?.classify(p),
+    isShared: (key) => forwarder?.isShared(key) ?? false,
+    projectName: () => liveConfig.hub?.project.name,
+  });
+  const applyHookEvent = (event: SessionEvent, hook: string) => {
+    let deny: string | undefined;
+    try {
+      deny = coordHooks.refuse(event, hook);
+    } catch {
+      deny = undefined; // fail open
+    }
+    if (deny) {
+      // The tool won't run: keep the session alive, but nothing about the refused call goes anywhere.
+      applyEvent({ ...event, kind: "heartbeat", activity: undefined, detail: undefined });
+      log(`refused ${event.detail?.tool ?? "a tool"} in ${event.source}:${event.sessionId.slice(0, 8)}: ${deny.slice(0, 80)}`);
+    } else {
+      applyEvent(event);
+      if (forwarder?.isShared(`${event.source}:${event.sessionId}`)) coord?.poke();
+    }
+    return coordHooks.answer(event, hook, deny);
+  };
+
+  /** v1: holds on this machine's agents and messages waiting for them, for the menu bar. */
+  const coordSummary = (): CoordSummary | undefined => {
+    if (!coord) return undefined;
+    const view = coord.view();
+    const nameOf = (local: string | undefined): string | undefined =>
+      local ? store.get(CoordClient.family(local))?.name : undefined;
+    const holds: CoordSummary["holds"] = [];
+    for (const h of view.state?.holds ?? []) {
+      const local = coord.localKey(h.sessionKey);
+      if (local === undefined || !coord.holdFor(local)) continue;
+      holds.push({ session: local, name: nameOf(local), by: h.by, reason: h.reason, since: h.since });
+    }
+    const unread = coord
+      .inboxItems()
+      .filter((m) => !m.delivered)
+      .map((m) => ({
+        id: m.id,
+        session: m.localKey,
+        name: nameOf(m.localKey),
+        from: m.from.person,
+        fromSession: m.from.sessionName,
+        text: m.text.slice(0, 500),
+        ts: m.ts,
+        delivered: m.delivered,
+      }));
+    return { available: view.available, holds, unread };
   };
 
   // Written before listen: the file must exist by the time /health answers,
@@ -185,8 +255,20 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         error: view.error,
         pollMs: view.pollMs,
         team: view.team,
+        coord: coordSummary(),
       };
     },
+    applyHookEvent,
+    coordOp: (req) =>
+      runCoordOp(req, {
+        coord: () => coord,
+        hub: () => liveConfig.hub,
+        getSession: (key) => store.get(key),
+        listSessions: () => store.list(),
+        classify: (p) => forwarder?.classify(p),
+        isShared: (key) => forwarder?.isShared(key) ?? false,
+        claudeSessions: () => readLiveClaudeSessions(),
+      }),
     reloadHub: () => {
       const hub = readHubConfig();
       if (hub === "unreadable") throw new Error("config file is unreadable — hub settings unchanged");
@@ -286,6 +368,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         }
         try {
           teamPoller?.stop();
+          coord?.stop();
           await Promise.all([pusher.shutdown(), forwarder?.stop()]);
         } catch {
           // best effort

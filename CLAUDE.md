@@ -12,7 +12,7 @@
 - **Repo**: github.com/b3-fun/workmesh (open source, MIT; renamed from b3-fun/agentblip, old URLs redirect)
 - **npm**: `@b3os/workmesh` (bins `workmesh` and the `agentblip` alias), published from the npclabs npm account
 - **Status**: building
-- **Last updated**: 2026-11-24 (split: client + protocol here, hosted hub in the private workmesh-cloud)
+- **Last updated**: 2026-11-25 (v1 Coordinate: wire merged, relay side on branch `coord-v1`)
 
 ---
 
@@ -72,7 +72,8 @@ Any tool (curl) ───┼─────────────────�
 │           ├── commands/      # setup, start/restart, stop, status, emit, hook, pause, unlink, doctor, hub
 │           ├── lib/           # config, paths + names (workmesh dirs, legacy agentblip names), migrate (one-time copy), daemon-control (stop/start pidfile logic)
 │           ├── adapters/      # claude-code (hooks), codex (hooks.json + notify + watcher), workflow (ultracode journal watcher), detail (local-only hook facts)
-│           ├── hub/           # hub forward: git (.git reader), rules (SPEC §3.3 reductions), redact (SPEC §9), transcript (tailer), forwarder (batching/retry)
+│           ├── hub/           # hub forward: git (.git reader), rules (SPEC §3.3 reductions), redact (SPEC §9), transcript (tailer), forwarder (batching/retry), coord (v1 sync client), shell-writes (paths a command writes)
+│           ├── mcp/           # `workmesh mcp`: stdio MCP server (hand-written JSON-RPC), talks to the daemon only
 │           └── sinks/         # relay, slack-direct, console
 ├── apps/
 │   └── menubar/               # native SwiftUI macOS menu bar app (thin daemon client)
@@ -100,6 +101,10 @@ Any tool (curl) ───┼─────────────────�
 - `GET /config` — token-free `safeConfig` view · `POST /config` — live-tune `granularity`/`statusPolicy`/`showProject`/`repoPrefix` (validated by `liveConfigPatchSchema`, applied via `pusher.applyConfig()`, persisted). Used by the menu bar app.
 - `GET /hub` — hub forwarder status (`{enabled:false}` when not paired) · `POST /hub/reload` — re-read the config's `hub` section and restart the forwarder (used by `workmesh hub connect|disconnect|include|exclude`)
 - `GET /team` (v0.5) — the team from the hub's `/relay/team` (polled by `hub/team.ts`), with `hubUrl`, `boardUrl`, `share`, `connected`, `halted`, `available` (false = older hub, 404); `?open=1` = the menu is open (15 s polling). The menu bar's team section reads only this.
+- v1 (SPEC §21, §23): `POST /event` with an `x-workmesh-hook: <HookEvent>` header answers `{ok, coord?: {deny?, context?}}`
+  from the cached coordination state (`daemon/coord-hooks.ts`; the hook prints it as hook JSON); `POST /coord/op
+  {op, args, caller}` runs an MCP/CLI coordination call (`daemon/coord-ops.ts`; the daemon resolves the caller's
+  session and makes the hub call); `GET /team` adds `coord` (holds on this machine's agents, undelivered messages).
 - `/state` sessions are `SessionView`s: `stateSince`, `background`, `cwd`, `name` (local only), `subagents` + `foldedInto` (fan-out folding). Keep it additive: the menu bar app and Sean's desk clock (~/dev/studio-pixbar) both read it.
 
 Wire contracts: `packages/core/src/events.ts` (zod schemas, shared CLI ↔ agentblip.com Worker). Hub wire format:
@@ -151,6 +156,14 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   `session_meta` for their parent; workflow runs sum their agents' tokens. `agent_message` from SendMessage (hook),
   peer messages and Codex sends (transcript tail). Links per event (Linear ids, gh PR/issue on shared repos, Slack
   at conversation level). `person.github` from `gh api user` (`lib/github.ts`) on heartbeats.
+- v1 Coordinate (SPEC §21, §23): `CoordClient` (`hub/coord.ts`) polls `/relay/sync` (5 s while a shared session is
+  live, else 60 s; backoff, 429, 404 off for 10 min, 401 halt) and makes lease/claim/message/note calls for the MCP
+  server and CLI. Hooks get refusals (hold; edit to another session's leased file, shell writes via
+  `hub/shell-writes.ts`), heads-ups (another person edited the file in the last 10 min), guidance once per shared
+  session and inbox messages (then acked), all from memory. Fail-open: leases need a sync under 90 s old; a known hold
+  lasts 30 min without one. A refused call is applied as a heartbeat. `workmesh setup` registers `workmesh mcp` for
+  Claude Code (`claude mcp add -s user`, else a `~/.claude.json` merge) and Codex (`[mcp_servers.workmesh]`); tests
+  pass `claudeBin: null` so the real `claude` CLI never runs.
 - v0.7 (SPEC §19): system-injected markup is read by `stripInjected` (`@workmesh/protocol`, zod-free, also
   `@workmesh/protocol/injected` for the hub's board). A wholly injected prompt (task notice, wrapped agent message,
   only provenance markers) maps to `InjectedPrompt` in the Claude Code and Codex hooks: a turn starts, no prompt is
@@ -230,6 +243,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 | 2026-11-24 | `@workmesh/protocol`: one wire package with two readings per body (strict to send, accept to read), tested so every strict-valid body parses unchanged on the hub | The relay and hub each had a copy of the schemas, kept in step by hand. The hub must stay tolerant (old and new relays, Postel), the relay strict (privacy: an extra field can't be sent), so both readings live together from shared field rules |
 | 2026-11-24 | Hub serves workmesh.b3os.org and bullpen.b3os.org; Worker script stays `bullpen` | Paired relays keep working without re-pairing; a renamed script would orphan the Durable Object |
 | 2026-11-24 | Split (Sean): the hub, board, summaries and B3OS kit move to the private `b3-fun/workmesh-cloud` (with `apps/hub`'s history, same path); this repo keeps the CLI, core, protocol, menu bar app, site, SPEC (protocol + privacy) and the one ROADMAP. workmesh-cloud pins this repo as a submodule for `@workmesh/protocol` | "The platform always remains hosted / by us, while the piece that gets installed on users machine is open source". Public history is not rewritten: the hub's code up to the split stays in it |
+| 2026-11-25 | v1 relay: hooks answered from the daemon's cached `/relay/sync` on the existing loopback request (a header, not a new endpoint, so new hooks and old daemons mix); fail-open everywhere except a known hold (30 min); the MCP server holds no token | More teammates are installing it; Sean: it must never get in the way of anyone's work. Hook latency measured unchanged (130-138 ms p50) |
 | 2026-11-23 | Menu bar 0.2: grouped live list, SF Symbol template icon (orange only for needs-you), row actions, snooze; all new data via `/state` fields and daemon endpoints | Keeps the thin-client rule; roadmap in apps/menubar/README.md |
 | 2026-11-24 | v0.7 (SPEC §19): one zod-free `stripInjected` in the protocol package for relay, hub and board; subagent `name` = task at conversation, type at metadata; orchestrators send `repos` | Injected markup reached the board as prompts and agent messages (and a tmp path in a task notice); one tested reading keeps relay, hub backstop and board in step. Subagents showed as raw keys. An orchestrator's repo flipped with each file it touched and said nothing about the others |
 | 2026-11-24 | v0.5/v0.6 relay: daemon polls the hub's `/relay/team` and serves `GET /team` for the menu bar; subagents are hub sessions with `parent`/`role`, sent only once the hub answers `/relay/team`; tokens as Claude Code counts an agent | One capability signal keeps an older hub's board from filling with subagents; Claude Code's own `totalTokens` matched the context + output reading exactly on 5 of 6 real subagents, while a billing sum ran 1.1–6× larger |
@@ -265,6 +279,8 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - [x] One repo (branch `monorepo`, 0.8.0, not published): hub + board under `apps/hub` with history, `@workmesh/protocol`, one SPEC/CONTRIBUTING, hub on workmesh.b3os.org + bullpen.b3os.org — CLI 478 tests, core 55, protocol 14, hub 105, worker 62
 - [x] Split (branch `split-hosted`): hub, board and B3OS kit moved to the private `b3-fun/workmesh-cloud` with their history; SPEC is the public protocol + privacy rules — CLI 478 tests, core 55, protocol 14, worker 62
 - [x] v0.6 wire (#3, merged): protocol 22 tests
+- [x] v1 Coordinate wire (#10, merged): protocol 60 tests
+- [ ] v1 Coordinate relay (branch `coord-v1`, 0.10.0 not published): sync, hook enforcement, inbox, MCP, setup, menu bar
 - [ ] v0.5/v0.6 relay (branch `relay-v06`): subagents, agent messages, links, avatars, `/team`, multiplayer menu bar — CLI 525 tests
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain
 - [x] GitHub github.com/b3-fun/workmesh public, CI + push-to-deploy green (secrets set)

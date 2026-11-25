@@ -12,7 +12,7 @@ https://workmesh.b3os.org; the hosted hub's code and internals are private (§14
 | Hub | hosted by B3 (private) | Pairs machines, keeps what they share, writes summaries, serves the board. |
 
 If this file and the code disagree, fix one of them in the same change. Section numbers are stable because code cites
-them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22) covered the hub's internals, which moved to the
+them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22, §25, §27) covered the hub's internals, which moved to the
 hosted hub's own docs. Sections 1–13 were written while the hub was Bullpen and the relay was agentblip; where they say
 agentblip, read the Workmesh CLI.
 
@@ -164,7 +164,7 @@ paths, never the values):
 
 Order of checks: `413`, then `401` for a missing or malformed token, then `400`, then `401` for an unknown or revoked
 token. `429` after 300 requests per device per minute. On `full: true`, the device's sessions that are missing from
-`sessions` and not already ended are marked `ended`.
+`sessions` and not already ended are marked `ended` (before v0.10; since then they are `missing` first, §24).
 
 ### 3.3 What may leave a machine (relay rules, enforced in `packages/cli`)
 
@@ -534,32 +534,179 @@ read and drops the rest one by one):
 
 - `Lease` = `{ id, repo, paths, holder: { person, sessionKey, sessionName? }, since?, expiresAt, reason? }`;
   `Note` = `{ id, by: { person, sessionKey?, sessionName? }, text, tags?, ts }`.
-- `inbox` holds this device's undelivered messages until the relay acks them; a relay may see an item again before
-  its ack lands and delivers it once (by `id`). The cursor lets a hub send only what changed; leases, holds, claims
-  and roster are always complete lists.
+- `inbox` lists every message for this device's sessions that the relay hasn't acked, on every sync; a relay may see
+  an item again before its ack lands and delivers it once (by `id`). Leases, holds, claims and roster are complete
+  lists too; the cursor is the hub's own (a relay sends back what it got). A relay keeps an undelivered item a hub
+  stops listing for a day (its session may come back), so a hub that lists each item once still works.
 - `edits` (optional): files sessions edited in the last 10 minutes (one row per session and path, the newest),
   from the `path` the hub already has (§3.2). A relay warns its agent before it edits a file another person's
   session touched there.
 
 ## 23. The relay side (`packages/cli`)
 
-- **Sync.** The daemon polls `/relay/sync` every 5 s while any shared session is live, every 60 s otherwise, backing
-  off on errors (to 5 min) and waiting out a `429`'s `Retry-After`; `404` turns coordination off and asks again in 10
-  minutes; `401` stops it, as for ingest. It keeps the last good answer in memory.
-- **Fail-open.** Nothing is ever blocked because the hub or the daemon is unreachable. A hook gets no decision when the
-  daemon doesn't answer within its usual timeout. The one exception is a hold the daemon already knew about: it stays
-  in force until a sync answers without it, or for 30 minutes after the last sync that carried it.
-- **Enforcement** (Claude Code and Codex `PreToolUse`, answered by the daemon from its cached state; no network call
-  in the hook path): a hold on the session (or its parent) refuses every tool call, naming who held it and why; an
-  edit (Edit, Write, MultiEdit, NotebookEdit, apply_patch, and shell commands that clearly write a path) to a file
-  another session's lease covers is refused, naming the holder, the entries, when the lease expires, and how to ask
-  them; an edit to a file another person's session edited in the last 10 minutes goes ahead, with a note to the agent
-  saying who is working there.
-- **Inbox.** A session's messages reach its agent at its next tool boundary (`additionalContext` on Claude Code's
-  PostToolUse and UserPromptSubmit, Codex's equivalents), as "Message from An (b3iq-strategy): …", and are then
-  acked. Nothing about them leaves the machine beyond the ack.
-- **MCP.** `workmesh mcp` (stdio) gives every agent `whoami`, `roster`, `send`, `inbox`, `claim`, `release`, `lease`,
-  `unlease`, `leases`, `note` and `notes`. It talks to the local daemon only and never holds the device token; the
-  daemon makes the hub calls.
-- **Guidance.** A shared session gets a short note at its start (or when it first becomes shared): it is on Workmesh
-  with its team, and how to claim, lease, read its inbox and message instead of editing leased files.
+- **Sync** (`hub/coord.ts`). The daemon polls `/relay/sync` every 5 s while any shared top-level session is live, every
+  60 s otherwise (a shared session's event brings the next poll forward), backing off on errors (10 s doubling to
+  5 min) and waiting out a `429`'s `Retry-After`; `404` turns coordination off and asks again in 10 minutes; `401`
+  stops it, as for ingest. It keeps the last good answer in memory, with the hub's clock offset (`serverNow`) for
+  expiries.
+- **Fail-open.** Nothing is ever blocked because the hub or the daemon is unreachable. A hook gets no answer when the
+  daemon doesn't answer within its usual timeout, and Claude Code and Codex then run the tool as they would without
+  Workmesh. Leases and recent edits count only while the last good sync is under 90 s old. The one exception is a
+  hold the daemon already knew about: it stays in force until a sync answers without it, or for 30 minutes after the
+  last sync that carried it. A `404` or `401` drops holds at once.
+- **Enforcement** (`daemon/coord-hooks.ts`; Claude Code and Codex `PreToolUse`). The hook sends its event on the same
+  loopback request as before (`POST /event`) with the hook's event name in an `x-workmesh-hook` header; the daemon
+  answers `{ ok: true, coord?: { deny?, context? } }` from its cached state, with no network call in the hook path,
+  and an older daemon ignores the header. The hook prints Claude Code's documented hook JSON (Codex 0.164's hook
+  output schemas take the same fields): `hookSpecificOutput.permissionDecision: "deny"` with
+  `permissionDecisionReason`, and `additionalContext`. It never answers `allow`: the agent's own permissions stand.
+  - A hold on the session (or the session a subagent runs under) refuses every tool call, naming who held it and why.
+  - An edit to a file another session's lease covers is refused, naming the file, the holder (person and session), the
+    reason, the entries that cover it, when the lease expires, and how to ask them. Edits are Edit, Write, MultiEdit,
+    NotebookEdit (their path), Codex `apply_patch` (every file in the patch), and shell commands that plainly write a
+    path (`> file`, `tee`, `rm`, `mv`, `cp`, `touch`, `truncate`, `ln`, `dd of=`, `sed -i`/`perl -i`, `git rm|mv|restore`,
+    `git checkout -- <paths>`; `cd` moves the base; variables, substitutions and heredoc bodies are not read). Only
+    paths in shared repos (§3.3) are checked, as repo-relative paths.
+  - An edit to a file another person's session edited in the last 10 minutes (`edits`) goes ahead, with a note to the
+    agent saying who is working there (once per file and editor per 10 minutes).
+  - A refused call is applied as a heartbeat: the session stays alive, and nothing about the call reaches Slack or the
+    hub.
+- **Inbox.** A session's messages reach its agent at its next tool boundary (`additionalContext` on PostToolUse and
+  UserPromptSubmit, Claude Code and Codex alike), at most five at a time, as "Message from An (b3iq-strategy): …",
+  framed as a colleague's note; they are then acked (`POST /relay/inbox/ack`). A message for a subagent
+  (`<key>/<agentId>`) reaches only that subagent. The MCP `inbox` tool and `workmesh inbox` list them too.
+- **MCP** (`mcp/server.ts`). `workmesh mcp` (stdio, JSON-RPC 2.0, one message per line; protocol versions 2024-11-05 to
+  2025-11-25) gives every agent `whoami`, `roster`, `send`, `inbox`, `claim`, `release`, `lease`, `unlease`, `leases`,
+  `note` and `notes`. It talks to the local daemon only (`POST /coord/op` on the loopback API, bearer secret as
+  everywhere) and never holds the device token; the daemon makes the hub calls. The daemon tells which session is
+  calling from the caller's parent process (Claude Code's `~/.claude/sessions/<pid>.json`), else
+  `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`, else the live session in the caller's directory that moved last;
+  none of them means the person at a terminal. Message and note text is redacted (§9) before it is sent.
+- **Registration.** `workmesh setup` (and `setup --hooks-only`; `--no-mcp` skips it) registers the server with Claude
+  Code at user scope (`claude mcp add -s user workmesh -- <node> <cli> mcp` when the `claude` CLI is on PATH, else a
+  merge into `~/.claude.json`, written by rename) and with Codex as `[mcp_servers.workmesh]` in `~/.codex/config.toml`.
+  Both back the file up once before the first change, repoint an older install of theirs, and leave alone another
+  server named `workmesh` or a file they can't read. `workmesh doctor` checks both, and whether the running daemon
+  coordinates.
+- **Guidance.** A shared top-level session gets a five-line note once (`SessionStart`, or the first boundary after it
+  becomes shared) while the hub coordinates: it is on Workmesh with its team, and how to claim, lease, read its inbox,
+  and message a holder instead of editing leased files.
+- **Menu bar.** `GET /team` adds `coord: { available, holds: [{ session, name, by, reason, since }], unread: [{ id,
+  session, name, from, fromSession, text, ts, delivered }] }` for this machine's sessions; Workmesh.app shows "On
+  hold" and "Messages for your agents".
+- **CLI.** `workmesh leases`, `lease`, `unlease`, `claims`, `claim`, `send`, `inbox`, `note`, `notes`, `whoami`, through
+  the same daemon call as the MCP tools.
+
+---
+
+# v0.10: liveness and persistence (Sean, 2026-11-25)
+
+"I see myself as offline at times, maybe when the daemon is interrupted." Two causes: the board worked out presence in
+the browser from a `lastSeenAt` the hub stopped sending while a device was busy, and a restarted daemon forgot which
+sessions it shared, so its first heartbeat ended them all. Still `v: 1`; every field below is optional.
+
+## 24. Liveness
+
+**Wire** (`packages/protocol`):
+- Ingest body `client`: the relay's name and version, `workmesh/0.10.0` (`HUB_CLIENT_RE`), on every request. The hub
+  keeps the latest one per device (before this it only had the pairing's).
+- `SessionUpsert.alive`: `true` when the relay saw the agent's process running, `false` when it is gone (the hub
+  ends the session at once), absent when the relay can't know (a Codex thread, a custom source).
+- `SessionUpsert.quietSince`: the session is working and alive but has sent no event since then (a long tool call, or
+  an agent that is stuck).
+- `GET /relay/team` people gain `presence` (below); `online` stays for older menu bars and is true for `online` and
+  `reconnecting`.
+
+**Presence** is the hub's, computed from ingests and pushed to boards; no client works it out from timestamps:
+`online` (an ingest within 90 s), `reconnecting` (90 s to 5 min), then `asleep` if the device went quiet with sessions
+open (a Mac that slept, a daemon that was killed) or `offline` if it had none. A person's presence is the best of their
+devices'. A relay sends at least one request every 30 s while it runs (a heartbeat, `full` or not), so only a stopped,
+killed or sleeping relay leaves `online`.
+
+**Heartbeats never end sessions on their own.** A session missing from a `full` heartbeat is `missing`: it keeps its
+state, the board shows it as unconfirmed for 10 minutes and then folds it away, and the hub ends it after 30 minutes
+missing. It ends at once on a SessionEnd (`state: "ended"`) or `alive: false`. A missing session that shows up again
+takes the state it reports.
+
+**The relay keeps its place across restarts** (`packages/cli`):
+- The hub forwarder writes its state to `~/.local/state/workmesh/hub-forward.json` (0600, atomic rename, at most once
+  a second, and on SIGTERM/SIGINT): the shared sessions (their last state, roots, repos, labels, issues, conversation
+  start time and transcript offsets), and the unsent queue (newest 1,000 events). A daemon that starts reads it back
+  before its first send, drops sessions whose process is gone (Claude Code: `~/.claude/sessions/<pid>.json`), keeps
+  the rest, and carries on sending where it stopped: no text from before a session was shared, no event twice (ids are
+  stable, the hub dedupes).
+- No `full` heartbeat goes out before that read is done, and none that is empty during the first 2 minutes after a
+  start; those heartbeats go as `full: false`.
+- On macOS `workmesh setup` runs the daemon under launchd (`~/Library/LaunchAgents/org.npclabs.workmesh.daemon.plist`:
+  RunAtLoad, KeepAlive, ThrottleInterval 10, logs in `~/Library/Logs/workmesh-daemon.log`), so a crash or kill brings
+  it back within seconds and a reboot or wake starts it; `workmesh restart` asks launchd (`launchctl kickstart -k`)
+  when the job is installed, and `workmesh doctor` reports it. Hooks still start a daemon when none answers. On Linux
+  `workmesh setup --service` writes a systemd `--user` unit.
+
+---
+
+# v0.11: the session mirror (Sean, 2026-11-25)
+
+"We want better representation of what the users see on their actual codex/claude sessions, ideally synced to this."
+The board's session page reads like the person's terminal: the title, harness and model at the top; prompts, the
+agent's messages and folded tool runs in order; the agent tool's own lines (a background agent waiting on its work, a
+shell that finished, a compaction, a plan update); each turn's end with what is still running; and a footer with the
+mode, the background tasks and the agents. Still `v: 1`; every field below is optional, and an older hub drops them
+(an older hub 400s the `notice` kind, so a relay holds notices back for 10 minutes after such a 400, as for `message`).
+
+## 26. Mirror fields
+
+**Wire** (`packages/protocol`):
+
+| Where | Field | Level | What |
+|---|---|---|---|
+| `SessionUpsert` | `title` (≤ 200) | conversation | since v0.11 also a main session's title: Claude Code's `custom-title` (a `/rename`), else its `ai-title`; redacted (§9) |
+| `SessionUpsert` | `mode` (`HUB_MODE_RE`, ≤ 40) | metadata | Claude Code's `permissionMode` (`default`, `auto`, `acceptEdits`, `plan`, `bypassPermissions`); Codex's approval and sandbox reduced to one word (`full-access`, `auto`, `read-only`, `untrusted`) |
+| `SessionUpsert` | `tasks` | metadata | background tasks running now: `{ shells?, monitors?, agents?, workflows?, other? }`, each 0–999 |
+| `SessionUpsert` | `model` | metadata | (v0.6) now also sent for a main Claude Code session, from its transcript |
+| `ActivityEvent` | kind `notice` + `noticeKind` | metadata | a line the agent tool writes itself (below) |
+| `ActivityEvent` | `desc` on a notice | conversation | the title the notice names: a background agent's task, a background command's description, a workflow's name |
+| `ActivityEvent` | `durationMs` on a notice | metadata | how long the task ran (agent notices), or the compaction took |
+| `ActivityEvent` | `ok` on a notice | metadata | the task completed (`true`) or failed (`false`) |
+| `ActivityEvent` | `tasks` on a `turn` | metadata | background tasks still running when the turn ended ("3 shells, 2 monitors still running", "waiting for 1 background agent") |
+| `ActivityEvent` | `plan` on a `plan` notice | conversation | 1–30 `{ step ≤ 200, status: pending \| in_progress \| completed }`, redacted |
+
+`noticeKind`: `agent_waiting` (a background agent stopped with background work of its own), `agent_done`,
+`agent_failed`, `agent_stopped`, `shell_done`, `shell_failed`, `shell_stopped`, `shell_running` (still running after a
+long time with no new output), `monitor_event`, `monitor_ended`, `workflow_done`, `workflow_failed`, `compact`, `plan`,
+`task` (any other task notice). A hub reads an unknown kind as absent and shows the event as a plain task notice; it
+reads a malformed `mode`, `tasks` or `plan` as absent, a bad plan step or task count on its own.
+
+What still never leaves a machine (§3.3 holds): a monitor's output (a `monitor_event` notice carries its kind only),
+a background command's command line, the text of a task's result, the agent's thinking, anything from a subagent's
+transcript beyond counts. A notice's `desc` and a plan are conversation text: a metadata device sends the notice's kind,
+duration and outcome only, and no `plan` notice at all. A metadata device's `title` stays a subagent's type (§19).
+
+**How the relay reads them** (`packages/cli`, verified on Claude Code 2.1.332 and Codex 0.164 rollouts, shapes only):
+- **Claude Code main transcript** (the tail of §9, from the moment the session is shared): `ai-title` (`aiTitle`) and
+  `custom-title` (`customTitle`) lines give the title, the custom one winning; `permission-mode` (`permissionMode`)
+  the mode (metadata, so the relay also reads the latest one from the file's last 64 KB when the tail starts);
+  `assistant` lines' `message.model` the model; `system` `compact_boundary` a `compact` notice (its
+  `compactMetadata.durationMs`); `system` `turn_duration`'s `pendingBackgroundAgentCount` and `pendingWorkflowCount`
+  the turn's waiting agents and workflows; `user` lines whose `origin.kind` is `task-notification` a notice, read from
+  Claude Code's own `<summary>` templates (`Agent "<title>" is waiting on its own background work`, `Agent "<title>"
+  finished`, `Background command "<description>" completed (exit code 0)`, `Monitor "<description>" stream ended`,
+  `Dynamic workflow "<name>" completed`, …) with `<task-id>`, `<status>` and `<duration_ms>`. A template the relay
+  doesn't know sends `task` with no `desc`.
+- **Background tasks:** the Stop and SubagentStop hooks' `background_tasks` (`id`, `type`: `shell`, `monitor`,
+  `subagent`, `workflow`, or another kind; `status`) are the session's running tasks, by id and kind only. A notice
+  whose `<task-id>` names one ends it; a background `Bash` (`toolUseResult.backgroundTaskId`), a `Monitor`
+  (`toolUseResult.taskId`) or a workflow launched in the tail adds one. A subagent's own tasks come from its
+  `agent-<id>.jsonl` the same way (launches minus completion notices), so the relay can say "waiting on 1 shell,
+  1 monitor" per agent. A subagent that stopped with tasks of its own (its SubagentStop with tasks running, or the
+  `agent_waiting` notice naming its id) stays open, `idle`, with that status line, until its `agent_done` /
+  `agent_failed` / `agent_stopped` notice or its parent ends.
+- **Codex rollouts:** `turn_context` gives `model` and `mode` (`approval_policy` `never` + `sandbox_policy`
+  `danger-full-access` → `full-access`; `on-request` + `workspace-write` → `auto`; `read-only` sandbox → `read-only`;
+  `untrusted` → `untrusted`); `compacted` lines and `item_completed` items of type `ContextCompaction` a `compact`
+  notice; `function_call` `update_plan` (`plan: [{step, status}]`) a `plan` notice. Exec cells are the tool events the
+  Codex hooks already send (§6), token use the v0.6 `tokensIn`/`tokensOut`.
+- **Freshness:** besides reading on every hook event, the relay checks each open shared session's transcript once a
+  second (a stat, then only new complete lines), so a notice or title Claude Code writes between hooks reaches the hub
+  within about two seconds.
+

@@ -82,7 +82,7 @@ describe("config dirs", () => {
 
 describe("setup --hooks-only", () => {
   it("hooks the --claude-dir profile only and leaves ~/.claude and an undetected Codex alone", () => {
-    const out = captureLog(() => installHooksOnly({ claudeDir: path.join(home, ".clive") }));
+    const out = captureLog(() => installHooksOnly({ claudeDir: path.join(home, ".clive"), claudeBin: null }));
     const settings = JSON.parse(fs.readFileSync(path.join(home, ".clive", "settings.json"), "utf8")) as {
       hooks: Record<string, unknown>;
     };
@@ -91,22 +91,25 @@ describe("setup --hooks-only", () => {
     expect(fs.existsSync(path.join(home, ".codex"))).toBe(false);
     expect(out).toContain(path.join(home, ".clive", "settings.json"));
     expect(out).toMatch(/codex: no Codex install found .*--codex/);
+    // the MCP server goes to that profile's own .claude.json, by file merge (never the `claude` CLI's default profile)
+    expect(fs.existsSync(path.join(home, ".clive", ".claude.json"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(false);
   });
 
   it("hooks the CLAUDE_CONFIG_DIR profile when no flag is given", () => {
     process.env.CLAUDE_CONFIG_DIR = path.join(home, ".clive");
-    captureLog(() => installHooksOnly({ codex: false }));
+    captureLog(() => installHooksOnly({ codex: false, claudeBin: null }));
     expect(fs.existsSync(path.join(home, ".clive", "settings.json"))).toBe(true);
     expect(fs.existsSync(path.join(home, ".claude"))).toBe(false);
   });
 
   it("--no-codex skips a detected Codex; --codex installs one that wasn't found", () => {
     fs.mkdirSync(path.join(home, ".codex"));
-    const skipped = captureLog(() => installHooksOnly({ codex: false }));
+    const skipped = captureLog(() => installHooksOnly({ codex: false, claudeBin: null }));
     expect(skipped).toContain("skipped (--no-codex)");
     expect(fs.readdirSync(path.join(home, ".codex"))).toEqual([]);
 
-    const found = captureLog(() => installHooksOnly({}));
+    const found = captureLog(() => installHooksOnly({ claudeBin: null }));
     expect(found).toMatch(/found .*\.codex, installing there \(pass --no-codex/);
     expect(fs.existsSync(path.join(home, ".codex", "hooks.json"))).toBe(true);
 
@@ -115,12 +118,12 @@ describe("setup --hooks-only", () => {
     delete process.env.CODEX_HOME;
     fs.rmSync(path.join(home, ".codex"), { recursive: true });
     expect(codexDecision(undefined).install).toBe(false);
-    captureLog(() => installHooksOnly({ codex: true }));
+    captureLog(() => installHooksOnly({ codex: true, claudeBin: null }));
     expect(fs.existsSync(path.join(home, ".codex", "hooks.json"))).toBe(true);
   });
 
   it("prints the sharing level, and how to choose metadata before connecting", () => {
-    const out = captureLog(() => installHooksOnly({ codex: false }));
+    const out = captureLog(() => installHooksOnly({ codex: false, claudeBin: null }));
     expect(out).toContain("shares conversation by default");
     expect(out).toContain("--share metadata");
   });

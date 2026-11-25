@@ -130,3 +130,52 @@ describe("workmesh uninstall", () => {
     }
   });
 });
+
+describe("MCP removal", () => {
+  it("takes our Claude Code server out of .claude.json and keeps the rest", async () => {
+    const { installClaudeMcp, removeClaudeMcp } = await import("../src/adapters/mcp-install");
+    const file = path.join(dir, ".claude.json");
+    const original = { numStartups: 7, mcpServers: { other: { type: "stdio", command: "other" } } };
+    fs.writeFileSync(file, JSON.stringify(original));
+    installClaudeMcp({ file, claudeBin: null });
+    expect(removeClaudeMcp(file).removed).toBe(true);
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual(original);
+    expect(removeClaudeMcp(file).removed).toBe(false);
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: { workmesh: { type: "http", url: "https://someone.else/mcp" } } }));
+    expect(removeClaudeMcp(file).removed).toBe(false); // not ours
+  });
+
+  it("takes our Codex table out of config.toml, restoring the file", async () => {
+    const { installCodexMcp, removeCodexMcp } = await import("../src/adapters/mcp-install");
+    const file = path.join(dir, "config.toml");
+    for (const text of ["", 'model = "o3"\n', 'model = "o3"\n\n[mcp_servers.linear]\ncommand = "npx"\n']) {
+      fs.writeFileSync(file, text);
+      expect(installCodexMcp(file).result).toBe("installed");
+      expect(removeCodexMcp(file).removed).toBe(true);
+      expect(fs.readFileSync(file, "utf8")).toBe(text);
+    }
+    fs.writeFileSync(file, '[mcp_servers.workmesh]\ncommand = "someone-else"\n');
+    expect(removeCodexMcp(file).removed).toBe(false);
+  });
+
+  it("notify, MCP table and hooks all come out of one Codex config together", () => {
+    const file = path.join(dir, "config.toml");
+    const text = 'model = "o3"\n\n[profiles.fast]\nmodel = "x"\n';
+    fs.writeFileSync(file, text);
+    installCodexNotify(file);
+    return import("../src/adapters/mcp-install").then(({ installCodexMcp, removeCodexMcp }) => {
+      installCodexMcp(file);
+      expect(removeCodexNotify(file)).toBe(true);
+      expect(removeCodexMcp(file).removed).toBe(true);
+      expect(fs.readFileSync(file, "utf8")).toBe(text);
+    });
+  });
+});
+
+describe("claudeJsonPath", () => {
+  it("is ~/.claude.json for the default profile and <dir>/.claude.json for another", async () => {
+    const { claudeJsonPath } = await import("../src/adapters/mcp-install");
+    expect(claudeJsonPath(path.join(os.homedir(), ".claude"))).toBe(path.join(os.homedir(), ".claude.json"));
+    expect(claudeJsonPath(path.join(dir, ".clive"))).toBe(path.join(dir, ".clive", ".claude.json"));
+  });
+});

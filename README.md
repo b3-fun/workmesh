@@ -51,7 +51,9 @@ workmesh hub connect <url>         # join your team's board (approve in the brow
 `setup --hooks-only` hooks the Claude Code profile in `$CLAUDE_CONFIG_DIR`, else
 `~/.claude`; `--claude-dir <path>` picks another. It hooks Codex only when it finds a
 Codex install (`$CODEX_HOME` or `~/.codex`) and says so; `--no-codex` leaves Codex alone,
-`--codex` installs it anyway. `workmesh uninstall` takes the hooks out again.
+`--codex` installs it anyway. The `workmesh` MCP server is registered in the same
+profiles (`--no-mcp` skips it). `workmesh uninstall` takes the hooks and the MCP server
+out again.
 
 Claude Code and Codex sessions appear automatically via their hooks (Codex also keeps
 its notify hook and a session watcher as fallbacks). Anything else can report itself
@@ -247,7 +249,10 @@ event to the daemon. Multiple concurrent sessions just work — each is tracked 
 session id.
 
 **What a hook costs.** Each hook is a short Node process that Claude Code waits for.
-It never blocks Claude: it prints nothing and always exits 0. A refused connection fails
+It always exits 0, so a Workmesh failure never fails a session; on a coordinating hub it
+may refuse an edit to a teammate's leased file or a held session's tool call, or add a
+note for the agent (see [Coordinate](#coordinate-leases-claims-messages-holds)), from
+the daemon's cached state. A refused connection fails
 at once; a hung daemon costs each hook up to 0.75 s; the one hook that starts a stopped
 daemon waits up to 3 s for it, and hooks arriving meanwhile up to 1 s. After a failed
 start, hooks don't try again for 60 s. The command pins the absolute Node path setup ran
@@ -446,6 +451,37 @@ the wire format, what may leave a machine, sharing levels, redaction and the pri
 rules a hub keeps are in [docs/SPEC.md](docs/SPEC.md), and the schemas both sides
 validate against are [`packages/protocol`](packages/protocol).
 
+### Coordinate: leases, claims, messages, holds
+
+On a hub that coordinates (Workmesh v1), your agents and your teammates' stop colliding:
+
+- **Leases.** An agent leases the files it is about to rework (`lease` with paths,
+  directories or globs such as `src/hub/**`; 30 minutes by default). Another session's
+  edit to a leased file (Edit, Write, MultiEdit, NotebookEdit, Codex `apply_patch`, and
+  shell commands that plainly write a path such as `rm`, `mv`, `sed -i`, `> file`) is
+  refused before it runs, with who holds it, until when, and how to ask them. Your own
+  other sessions count as other sessions: leases are about agents colliding.
+- **Heads-ups.** Before an agent edits a file another person's agent edited in the last
+  10 minutes, it is told who is working there (the edit goes ahead).
+- **Claims.** An agent claims the Linear issue it works on; one claimant per issue.
+- **Messages.** `send` reaches a person's agent (or a named agent) at its next tool call
+  as "Message from An (b3iq-strategy): …"; `inbox` lists what is waiting.
+- **Holds.** A teammate can hold one of your agents from the board or a Linear comment:
+  its next tool call, and every one after, is refused with their reason until they lift
+  it. The menu bar shows holds on your agents and messages waiting for them.
+- **Notes.** Shared project notes every teammate's agent can read.
+
+Agents get these as MCP tools (`workmesh mcp`, registered for Claude Code and Codex by
+`workmesh setup`) and a short note at the start of each shared session; the same calls
+work from a terminal (`workmesh leases`, `workmesh send An "…"`). The daemon answers
+hooks from its last sync with the hub (every 5 s while a shared session runs), so a hook
+makes no network call and takes no longer than before. **It fails open:** if the hub or
+the daemon can't be reached, nothing is refused (a lease counts only while the last sync
+is under 90 s old), except a hold the daemon already knew about, which stays in force for
+up to 30 minutes until a sync confirms it was lifted. Lease paths, claimed issue ids and
+the text of messages and notes you send (redacted first) go to the hub; nothing else
+about your files does.
+
 ### What the hub stores, and open questions
 
 > **To be filled in by Sean.** The hub's code is private, so this section can't be checked
@@ -485,8 +521,8 @@ Open questions:
 
 | Command | Does |
 |---|---|
-| `workmesh setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt; `--hooks-only` just installs or refreshes the hooks; `--claude-dir <path>` picks the Claude Code profile (default `$CLAUDE_CONFIG_DIR`, else `~/.claude`); `--codex` / `--no-codex` decide about Codex (default: only when installed) |
-| `workmesh uninstall` | Remove Workmesh's hooks from Claude Code settings and Codex's `hooks.json` and `config.toml`, keeping every other hook; backs up each file first (`--claude-dir <path>`, `--no-codex`) |
+| `workmesh setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt; `--hooks-only` just installs or refreshes the hooks and the `workmesh` MCP server (`--no-mcp` skips it); `--claude-dir <path>` picks the Claude Code profile (default `$CLAUDE_CONFIG_DIR`, else `~/.claude`); `--codex` / `--no-codex` decide about Codex (default: only when installed) |
+| `workmesh uninstall` | Remove Workmesh's hooks and MCP server from Claude Code (`settings.json`, `.claude.json`) and Codex (`hooks.json`, `config.toml`), keeping everything else; backs up each file first (`--claude-dir <path>`, `--no-codex`) |
 | `workmesh start [--detach]` | Run the daemon, foreground or in the background |
 | `workmesh stop` | Stop the background daemon; returns once it has exited (SIGKILL after 5 s). Also stops a daemon started before the rename |
 | `workmesh restart` | Stop the daemon, wait for it to exit, and start it again in the background |
@@ -503,7 +539,15 @@ Open questions:
 | `workmesh hub status [--json]` | Pairing, sharing level, project, last send, queued/dropped events, shared sessions |
 | `workmesh hub include <dir>` / `exclude <dir>` | Share a folder too / never share a folder |
 | `workmesh hub disconnect` | Stop forwarding and remove the hub token |
-| `workmesh doctor [--json]` | Diagnose config, daemon, hooks (`--claude-dir <path>` for another profile; fails when a hook's Node binary is gone), hub forward, and connectivity |
+| `workmesh leases [--repo owner/name]` | Active file leases on your team: who holds which paths, for how long |
+| `workmesh lease <paths...>` / `unlease [paths...]` | Lease files, directories or globs for the agent session it runs in (`--reason`, `--minutes`); release them |
+| `workmesh claims` / `claim <issue> [--release]` | Linear issues your team's agents claimed; claim or release one |
+| `workmesh send <to> <text...>` | Message a person (name, email or GitHub login) or an agent (session name); delivered at its next tool call |
+| `workmesh inbox` | Messages waiting for this machine's agents (inside an agent session: for that session) |
+| `workmesh note <text...>` / `notes` | Leave a note every teammate's agent can read; list the newest |
+| `workmesh whoami` | Your person on the hub, and which agent session a command speaks for |
+| `workmesh mcp` | The coordination tools as an MCP server (stdio); `workmesh setup` registers it with Claude Code (user scope) and Codex |
+| `workmesh doctor [--json]` | Diagnose config, daemon, hooks (`--claude-dir <path>` for another profile; fails when a hook's Node binary is gone), MCP registration, hub forward, coordination, and connectivity |
 
 ## Menu bar app (macOS)
 
@@ -543,7 +587,8 @@ Workmesh is agentblip, renamed. Moving over keeps everything:
   that still read the old path keep working.
 - **Hooks.** `workmesh setup --hooks-only` repoints the Claude Code and Codex hooks
   that an agentblip install wrote (by npm package, checkout path or bare command) to
-  this install, in place, without duplicating them. Backups end in `.workmesh-backup`.
+  this install, in place, without duplicating them. Backups end in
+  `.workmesh-backup-<timestamp>`, a new one before each change.
 - **Daemon.** `workmesh restart` stops a daemon started by agentblip as well, then
   starts the new one.
 - **Env vars.** `WORKMESH_*`; `AGENTBLIP_*` still read as fallbacks.

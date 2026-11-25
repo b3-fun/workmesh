@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { sessionEventSchema } from "@workmesh/core";
 import type { SessionEvent } from "@workmesh/core";
 import { mapHookInput } from "../adapters/claude-code";
@@ -5,6 +6,7 @@ import { mapCodexHookInput, mapNotifyArg } from "../adapters/codex";
 import { fitEventBody } from "../adapters/detail";
 import { loadConfigSafe } from "../lib/config";
 import { HOOK_TIMING, ensureDaemon, postEvent } from "../lib/daemon-client";
+import type { HookAnswer } from "../daemon/coord-hooks";
 
 const STDIN_TIMEOUT_MS = 1000;
 
@@ -31,6 +33,31 @@ function readStdin(timeoutMs: number): Promise<string> {
   });
 }
 
+/** Hook events whose JSON output can carry Workmesh's answer (Claude Code and Codex share the shape). */
+const ANSWERABLE = new Set(["PreToolUse", "PostToolUse", "UserPromptSubmit", "SessionStart"]);
+
+/**
+ * The hook's stdout for a daemon answer (Claude Code's documented hook JSON, which Codex 0.164's hook output schemas
+ * match field for field): a PreToolUse refusal as `permissionDecision: "deny"` with its reason, context as
+ * `additionalContext`. Never `allow`: Workmesh only ever refuses or informs, the agent's own permissions stand.
+ */
+export function hookOutput(hookEvent: string | undefined, answer: HookAnswer | undefined): string | undefined {
+  if (!answer || !hookEvent || !ANSWERABLE.has(hookEvent)) return undefined;
+  const out: Record<string, string> = { hookEventName: hookEvent };
+  if (answer.deny && hookEvent === "PreToolUse") {
+    out.permissionDecision = "deny";
+    out.permissionDecisionReason = answer.deny;
+  }
+  if (answer.context) out.additionalContext = answer.context;
+  if (Object.keys(out).length === 1) return undefined;
+  return JSON.stringify({ hookSpecificOutput: out });
+}
+
+function hookEventName(json: unknown): string | undefined {
+  const name = (json as { hook_event_name?: unknown } | null)?.hook_event_name;
+  return typeof name === "string" && name.length <= 64 ? name : undefined;
+}
+
 /**
  * Adapter entrypoint installed into agent hooks. It must NEVER break the host
  * agent session: every error is swallowed and the process always exits 0.
@@ -38,16 +65,22 @@ function readStdin(timeoutMs: number): Promise<string> {
 export async function runHook(source: string, payload?: string): Promise<void> {
   try {
     let event: SessionEvent | null = null;
+    // Claude Code and Codex hooks: the hook event name, so the daemon can answer it (v1 Coordinate).
+    let hook: string | undefined;
     if (source === "claude-code") {
       const raw = await readStdin(STDIN_TIMEOUT_MS);
       if (!raw.trim()) return;
-      event = mapHookInput(JSON.parse(raw) as unknown);
+      const json = JSON.parse(raw) as unknown;
+      hook = hookEventName(json);
+      event = mapHookInput(json);
     } else if (source === "codex-hooks") {
-      // Codex lifecycle hooks: JSON on stdin. Print nothing — Codex adds a
-      // SessionStart/UserPromptSubmit hook's stdout to the model's context.
+      // Codex lifecycle hooks: JSON on stdin. Codex adds a SessionStart/UserPromptSubmit hook's plain stdout to the
+      // model's context, so nothing is printed but the structured JSON answer below.
       const raw = await readStdin(STDIN_TIMEOUT_MS);
       if (!raw.trim()) return;
-      event = mapCodexHookInput(JSON.parse(raw) as unknown);
+      const json = JSON.parse(raw) as unknown;
+      hook = hookEventName(json);
+      event = mapCodexHookInput(json);
     } else if (source === "codex") {
       const raw = payload ?? (await readStdin(STDIN_TIMEOUT_MS));
       if (!raw.trim()) return;
@@ -62,7 +95,11 @@ export async function runHook(source: string, payload?: string): Promise<void> {
     if (!event) return;
     const config = loadConfigSafe();
     if (!(await ensureDaemon(config, HOOK_TIMING))) return;
-    await postEvent(config.port, fitEventBody(event), HOOK_TIMING.requestTimeoutMs);
+    // The daemon answers from cached state (fails open), so the hook's short timeout costs no answer that matters.
+    const res = await postEvent(config.port, fitEventBody(event), hook, HOOK_TIMING.requestTimeoutMs);
+    const out = hookOutput(hook, res.coord);
+    // Synchronous: the process exits right after, and a pipe write could be cut short.
+    if (out) fs.writeSync(1, `${out}\n`);
   } catch {
     // swallow everything — exit 0 below
   } finally {

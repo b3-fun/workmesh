@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import pkg from "../package.json";
 import {
   runApprovals,
@@ -47,6 +47,7 @@ import { runStatus } from "./commands/status";
 import { runStop } from "./commands/stop";
 import { runUninstall } from "./commands/uninstall";
 import { runUnlink } from "./commands/unlink";
+import { runUpdate } from "./commands/update";
 import { migrateLegacyDirs } from "./lib/migrate";
 import { errorMessage, red } from "./lib/ui";
 
@@ -89,6 +90,19 @@ program
   .option("--no-wake", "don't install the hook that wakes idle sessions for messages")
   .option("--repair", "pair again even if this machine is already paired with the hub")
   .action(wrap((url: string, opts: Parameters<typeof runInit>[1]) => runInit(url, opts)));
+
+program
+  .command("update")
+  .description("Install the newest Workmesh the way it was installed, refresh hooks, MCP and the daemon, roll back if it fails (safe to run again)")
+  .option("--check", "only say what's installed and what's out")
+  .option("--json", "with --check: machine-readable output")
+  .option("--to <version>", "a specific version instead of the latest")
+  .option("--auto <on|off>", "let the daemon install releases on its own, at most daily (patch releases unless --minor)")
+  .option("--minor", "with --auto on: minor releases too")
+  .addOption(new Option("--auto-run", "started by the daemon").hideHelp())
+  .addOption(new Option("--finish", "run by the newly installed version").hideHelp())
+  .addOption(new Option("--from <version>", "with --finish: the previous version").hideHelp())
+  .action(wrap((opts: Parameters<typeof runUpdate>[0]) => runUpdate(opts)));
 
 program
   .command("setup")

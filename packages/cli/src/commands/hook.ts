@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import pkg from "../../package.json";
 import { sessionEventSchema } from "@workmesh/core";
 import type { SessionEvent } from "@workmesh/core";
 import { mapHookInput } from "../adapters/claude-code";
@@ -7,6 +8,8 @@ import { fitEventBody } from "../adapters/detail";
 import { loadConfigSafe } from "../lib/config";
 import { HOOK_TIMING, ensureDaemon, postEvent } from "../lib/daemon-client";
 import type { HookAnswer } from "../daemon/coord-hooks";
+import type { HookMeta } from "../daemon/server";
+import { surfaceFingerprint } from "../lib/surface";
 
 const STDIN_TIMEOUT_MS = 1000;
 
@@ -59,6 +62,20 @@ function hookEventName(json: unknown): string | undefined {
 }
 
 /**
+ * 0.12 (SPEC §41): this hook's version, and at SessionStart what started the session (`startup`, `resume`, `clear`,
+ * `compact`) and the tools it got, so the daemon knows what a session started under.
+ */
+export function hookMeta(hook: string | undefined, json: unknown): HookMeta {
+  if (hook !== "SessionStart") return { version: pkg.version };
+  const source = (json as { source?: unknown } | null)?.source;
+  return {
+    version: pkg.version,
+    ...(typeof source === "string" && /^[a-z_-]{1,20}$/.test(source) ? { start: source } : {}),
+    surface: surfaceFingerprint(),
+  };
+}
+
+/**
  * Adapter entrypoint installed into agent hooks. It must NEVER break the host
  * agent session: every error is swallowed and the process always exits 0.
  */
@@ -67,11 +84,13 @@ export async function runHook(source: string, payload?: string): Promise<void> {
     let event: SessionEvent | null = null;
     // Claude Code and Codex hooks: the hook event name, so the daemon can answer it (v1 Coordinate).
     let hook: string | undefined;
+    let meta: HookMeta = {};
     if (source === "claude-code") {
       const raw = await readStdin(STDIN_TIMEOUT_MS);
       if (!raw.trim()) return;
       const json = JSON.parse(raw) as unknown;
       hook = hookEventName(json);
+      meta = hookMeta(hook, json);
       event = mapHookInput(json);
     } else if (source === "codex-hooks") {
       // Codex lifecycle hooks: JSON on stdin. Codex adds a SessionStart/UserPromptSubmit hook's plain stdout to the
@@ -80,6 +99,7 @@ export async function runHook(source: string, payload?: string): Promise<void> {
       if (!raw.trim()) return;
       const json = JSON.parse(raw) as unknown;
       hook = hookEventName(json);
+      meta = hookMeta(hook, json);
       event = mapCodexHookInput(json);
     } else if (source === "codex") {
       const raw = payload ?? (await readStdin(STDIN_TIMEOUT_MS));
@@ -96,7 +116,7 @@ export async function runHook(source: string, payload?: string): Promise<void> {
     const config = loadConfigSafe();
     if (!(await ensureDaemon(config, HOOK_TIMING))) return;
     // The daemon answers from cached state (fails open), so the hook's short timeout costs no answer that matters.
-    const res = await postEvent(config.port, fitEventBody(event), hook, HOOK_TIMING.requestTimeoutMs);
+    const res = await postEvent(config.port, fitEventBody(event), hook, HOOK_TIMING.requestTimeoutMs, meta);
     const out = hookOutput(hook, res.coord);
     // Synchronous: the process exits right after, and a pipe write could be cut short.
     if (out) fs.writeSync(1, `${out}\n`);

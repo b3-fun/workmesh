@@ -14,7 +14,10 @@ import {
 import { claudeJsonPath, isClaudeMcpInstalled, isCodexMcpInstalled } from "../adapters/mcp-install";
 import { delegateSettings, hubShareLevel, loadConfig, loadConfigSafe } from "../lib/config";
 import type { Config } from "../lib/config";
-import { getHealth, getHubState, getTeamState, sinkConfigured } from "../lib/daemon-client";
+import { getHealth, getHubState, getTeamState, getUpdateStatus, sinkConfigured } from "../lib/daemon-client";
+import pkg from "../../package.json";
+import { readUpdateCheck } from "../lib/update-state";
+import { isNewer } from "../lib/versions";
 import { codexHome, configPath, hubForwardStatePath } from "../lib/paths";
 import { serviceKind, serviceStatus } from "../lib/service";
 import type { ServiceStatus } from "../lib/service";
@@ -95,6 +98,9 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
         : "overwrite — displaces an existing status while agents work, restores it after",
     ),
   );
+
+  // 0.12 (SPEC §41): this version, a newer one when the daemon knows of it, and a daemon left on an older build.
+  checks.push(await versionCheck(cfg.port));
 
   // Linux: what systemd does with the daemon (asked once; the service check and the offline causes read it).
   const svc: ServiceStatus | undefined = serviceKind() ? serviceStatus() : undefined;
@@ -331,6 +337,35 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     }
   }
   if (failed) process.exitCode = 1;
+}
+
+/**
+ * "workmesh 0.12.0", or "0.12.1 available: `workmesh update`" (from the daemon's last check, else its saved one), or
+ * the daemon still running an older build than the CLI.
+ */
+export async function versionCheck(port: number, current = pkg.version): Promise<CheckResult> {
+  let daemon: string | undefined;
+  try {
+    daemon = (await getHealth(port)).version ?? "an older version";
+  } catch {
+    daemon = undefined;
+  }
+  let latest: string | undefined;
+  let hint: string | undefined;
+  try {
+    const u = await getUpdateStatus(port);
+    latest = u.latest;
+    if (!u.install.canUpdate) hint = u.install.hint;
+  } catch {
+    latest = readUpdateCheck().latest;
+  }
+  if (daemon && daemon !== current) {
+    return warn("version", `${current}, but the daemon still runs ${daemon} → \`workmesh update\` (or \`workmesh restart\`)`);
+  }
+  if (latest && isNewer(latest, current)) {
+    return warn("version", `${current}; ${latest} available: \`workmesh update\`${hint ? ` (${hint})` : ""}`);
+  }
+  return ok("version", `${current}${latest ? " (latest)" : ""}`);
 }
 
 /** When the hub last accepted a send from this machine, as the daemon saved it (SPEC §24 state file). */

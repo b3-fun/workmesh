@@ -9,6 +9,8 @@ import { resolveHubUrl, runHubConnect, runHubShare } from "./hub";
 import type { HubConnectOptions } from "./hub";
 import { LINGER_FIX, runServiceInstall } from "./service";
 import { installHooksOnly } from "./setup";
+import { markSetup } from "../lib/update-state";
+import pkg from "../../package.json";
 
 /**
  * `workmesh init <hub-url>`: one command onboards a machine onto a team's hub (Sean, 11-25: the whole team is
@@ -200,6 +202,9 @@ export async function runInit(url: string, opts: InitOptions = {}, deps: InitDep
         : `  daemon: ${yellow("not answering yet; hooks start one on the next agent event")}`,
     );
   }
+
+  // This version's setup ran here: `workmesh update` has nothing to finish (SPEC §41).
+  markSetup(pkg.version);
 
   // 3. Pairing.
   console.log(bold("\n3. hub"));

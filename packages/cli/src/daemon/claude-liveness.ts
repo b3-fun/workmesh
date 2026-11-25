@@ -24,6 +24,8 @@ export interface ClaudeProcess {
   name?: string;
   /** Claude Code's own status: "busy" | "idle" | "shell" (idle, background shells running) | … */
   status?: string;
+  /** When the process started (epoch ms): its MCP servers are as old as this (0.12, SPEC §41). */
+  startedAt?: number;
 }
 
 export { claudeConfigDir };
@@ -50,13 +52,14 @@ export function readLiveClaudeSessions(
       const info = JSON.parse(
         fs.readFileSync(path.join(claudeDir, "sessions", file), "utf8"),
       ) as Record<string, unknown>;
-      const { pid, sessionId, name, status } = info;
+      const { pid, sessionId, name, status, startedAt } = info;
       if (typeof pid !== "number" || typeof sessionId !== "string" || !alive(pid)) continue;
       live.set(sessionId, {
         pid,
         sessionId,
         name: typeof name === "string" && name ? name.slice(0, 120) : undefined,
         status: typeof status === "string" ? status : undefined,
+        ...(typeof startedAt === "number" && Number.isFinite(startedAt) ? { startedAt } : {}),
       });
     } catch {
       // half-written or foreign file: skip

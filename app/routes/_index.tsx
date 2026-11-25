@@ -174,6 +174,7 @@ export default function Index(_: Route.ComponentProps) {
                   { cmd: "npm install -g @b3os/workmesh" },
                   { cmd: "workmesh init <hub-url>", note: "# hooks, daemon, joins your team's board" },
                   { cmd: "workmesh setup", note: "# optional: your Slack status too" },
+                  { cmd: "workmesh update", note: "# later: the newest release, hooks and daemon too" },
                 ]}
               />
               <p className="mt-3 font-mono text-xs text-fg-faint">

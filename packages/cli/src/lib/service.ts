@@ -13,6 +13,15 @@ import { fileURLToPath } from "node:url";
  */
 
 export const LAUNCHD_LABEL = "org.npclabs.workmesh.daemon";
+
+/**
+ * The launchd label: `org.npclabs.workmesh.daemon`, or `WORKMESH_LAUNCHD_LABEL` for a second, separate install on one
+ * Mac (a test run in a temporary HOME must never replace the real daemon's job, whose label is per user, not per HOME).
+ */
+export function launchdLabel(env: NodeJS.ProcessEnv = process.env): string {
+  const v = env.WORKMESH_LAUNCHD_LABEL;
+  return v && /^[A-Za-z0-9][\w.-]{2,100}$/.test(v) ? v : LAUNCHD_LABEL;
+}
 export const SYSTEMD_UNIT = "workmesh.service";
 /** Set in the service's environment so the daemon knows it runs under the service manager. */
 export const SERVICE_ENV = "WORKMESH_SERVICE";
@@ -147,7 +156,7 @@ export function serviceKind(platform: NodeJS.Platform = process.platform): Servi
 }
 
 export function launchAgentPath(home = os.homedir()): string {
-  return path.join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
+  return path.join(home, "Library", "LaunchAgents", `${launchdLabel()}.plist`);
 }
 
 export function serviceLogPath(home = os.homedir()): string {
@@ -192,7 +201,8 @@ export function cliEntry(): string {
 export function serviceEnv(node: string, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const dirs = [path.dirname(node), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
   const out: Record<string, string> = { PATH: [...new Set(dirs)].join(":"), [SERVICE_ENV]: "1" };
-  for (const k of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "WORKMESH_CONFIG"]) {
+  // HOME too (0.12): launchd gives a job the account's home, which is the same unless Workmesh runs under another HOME.
+  for (const k of ["HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "WORKMESH_CONFIG", "WORKMESH_LAUNCHD_LABEL"]) {
     const v = env[k];
     if (v) out[k] = v;
   }
@@ -209,7 +219,7 @@ export function renderPlist(opts: { node: string; entry: string; env: Record<str
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>${LAUNCHD_LABEL}</string>
+  <key>Label</key><string>${xml(launchdLabel())}</string>
   <key>ProgramArguments</key>
   <array>
     <string>${xml(opts.node)}</string>
@@ -254,7 +264,7 @@ WantedBy=default.target
 }
 
 const uid = () => (typeof process.getuid === "function" ? process.getuid() : 0);
-const launchdTarget = () => `gui/${uid()}/${LAUNCHD_LABEL}`;
+const launchdTarget = () => `gui/${uid()}/${launchdLabel()}`;
 
 /** The ExecStart of an installed unit (node, entry), read back for doctor. */
 function unitProgram(text: string): string[] | undefined {
@@ -345,6 +355,11 @@ export function installService(
     probe?: SystemdUser;
     retries?: number;
     retryDelayMs?: number;
+    /**
+     * launchd: always unload and load the job, never `kickstart -k` (0.12, `workmesh update`): kickstart blocks while a
+     * job crash-loops (a bad build exits at once and launchd throttles it), so a rollback could never restart it.
+     */
+    reload?: boolean;
   } = {},
 ): InstallResult {
   const kind = opts.kind === undefined ? serviceKind() : opts.kind;
@@ -361,7 +376,7 @@ export function installService(
     const wrote = writeIfChanged(file, text);
     fs.mkdirSync(path.dirname(log), { recursive: true });
     const loaded = launchdLoaded(run);
-    if (loaded && !wrote) {
+    if (loaded && !wrote && !opts.reload) {
       // Same definition already loaded (setup or init run again): restart the job in place.
       run("launchctl", ["kickstart", "-k", launchdTarget()]);
       return { kind, file, wrote };

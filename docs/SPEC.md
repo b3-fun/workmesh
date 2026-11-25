@@ -1115,9 +1115,71 @@ an upgrade went on without the new tools until someone restarted them. From 0.12
 
 - Every ingest carries `client: workmesh/<version>` (since 0.10, §24): the hub keeps each device's version.
 - `GET /relay/team` adds `latestClient` (optional, `0.12.1`): the newest `@b3os/workmesh` on npm, as the hub last read
-  it (it reads the registry every 6 h). Absent until the hub has read it. Relays read it with `hubTeamAcceptSchema`,
+  it (it reads the registry every hour). Absent until the hub has read it. Relays read it with `hubTeamAcceptSchema`,
   which drops anything that isn't a release version.
 - The board compares the two: a device whose `client` is older than `latestClient` is behind. It says so quietly
   (each device's version on Settings → Devices, who's behind in the team view with the command to run, a dot in the
   header for the viewer's own), never with a banner.
 
+## 41. The relay side (`packages/cli`, 0.12.0)
+
+- **`workmesh update`.** Reads how Workmesh was installed from the path of the CLI file that runs
+  (`lib/install-method.ts`): a global npm install (`<prefix>/lib/node_modules/@b3os/workmesh`), pnpm (its store path is
+  read through the `node_modules/@b3os/workmesh` symlink), bun, yarn classic or Volta; a git checkout (a `.git` above
+  the package with no `node_modules` between: `npm link` resolves into one), a project dependency, npx's cache, or
+  something else. Only the first five can be updated; the others change nothing, exit 3 and say what to do (a git
+  checkout: pull, build, `workmesh restart`). An npm prefix this user can't write says to use `sudo npm i -g`. The
+  newest version is the `latest` dist-tag from the registry npm is configured with (`npm config get registry`, so a
+  mirror in `~/.npmrc` counts). When it is newer, the update:
+  1. keeps a copy of the installed package (npm: `~/.local/state/workmesh/update/previous/<version>`; other managers
+     reinstall the old version from the registry on a rollback);
+  2. installs `@b3os/workmesh@<latest>` the same way (`npm install --global --prefix <prefix>`, `pnpm add -g`,
+     `bun add -g`, `yarn global add`, `volta install`), its output indented under the step;
+  3. runs the NEW version's `workmesh update --finish`, so the code that knows the new hooks and tools re-runs the setup
+     steps: Claude Code hooks where Workmesh's are installed (the wake hook only if it was), Codex hooks and notify
+     where installed, the MCP registration where registered (a file merge, never the `claude` CLI), then stops the
+     daemon cleanly and starts it on the new build (by its service, whose definition is rewritten when it changed).
+     Its core checks: the daemon answers `/health` with the new version within 20 s, hooks still installed and pointing
+     at a Node that exists, MCP still registered, `workmesh --version` prints the new version. A failed check exits 2;
+  4. on that exit code (or a crash), rolls back: the copy goes back (or the old version is reinstalled), the old
+     version's own setup steps run and its daemon restarts, and it says so (exit 1).
+  Each step prints what it did. Up to date and set up, it changes nothing. Up to date but never set up here (installed
+  with `npm i -g` by hand, as 0.11.x users do once), or with the daemon still on an older build, it runs the setup
+  steps for this version. `update.json` (state dir, 0600) records the version whose setup last ran (`init` and
+  `setup` write it too) and the last update (`ok`, `rolledBack`, `auto`). One update at a time (`update.lock`).
+  `--check` only reports (`--json` too); `--to <version>` picks a version (0.12.0 or newer).
+- **Notices.** The daemon serves `GET /update` (bearer secret): `{current, latest?, available, checkedAt?, source?:
+  "hub" | "npm", install: {method, canUpdate, hint?}, run?: [node, cli, "update"], auto: {enabled, scope}, last?,
+  menubar?}`. `latest` is the hub's `latestClient` (§40) when the hub sends it, else (or when the hub's is older than this
+  relay, a hub that hasn't read npm since a release) the registry's, read at most every 6 h (attempts count, failed ones too; kept in `update-check.json` across restarts); the newer of the two wins.
+  `menubar` (macOS) is the latest GitHub release's `Workmesh-menubar-macos.zip` with the SHA-256 digest GitHub reports
+  for the asset, read at most every 6 h; a release without a digest offers nothing. `/health` adds `version`.
+  `workmesh status` ends with "0.12.1 available: `workmesh update`"; `doctor` has a `version` check (that notice, or the
+  daemon still on an older build than the CLI).
+- **Auto-update** (opt-in: `workmesh update --auto on`, `--minor` to include minor releases, `--auto off`; config
+  `update: {auto, scope}`). The daemon starts `workmesh update --auto-run` at most once a day for a release within the
+  scope (patch: same major.minor; minor: same major; never a major or a prerelease), never again for a version whose
+  update failed, and only for an install it can update. It runs detached in its own session (launchd cleans up only the
+  job's process group), on Linux in its own transient unit (`systemd-run --user`: stopping `workmesh.service` kills its
+  cgroup), with its output in `update.log`.
+- **Stale sessions.** A hook sends its version (`x-workmesh-client`) and, at SessionStart, the start's source
+  (`x-workmesh-start`: `startup`, `resume`, `clear`, `compact`) and a fingerprint of what a session takes from Workmesh
+  at start (`x-workmesh-surface`: the MCP tools' names and input schemas, the hook events). A new process (`startup`,
+  `resume`) records what it started under; `/clear` and compaction keep the process and the record
+  (`session-versions.json`, 0600, 14 days). When the daemon runs a newer version with a different fingerprint, the
+  session's next hook that carries context (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse; not a subagent's,
+  not a refused call) says once: "Workmesh was updated to 0.12.1 (this session started under 0.12.0)." plus what
+  reloads its tools (below). With no record (a session from before 0.12.0), a
+  Claude Code process (its `~/.claude/sessions/<pid>.json` `startedAt`) older than the daemon's first run of this
+  version counts as started under the previous one. Hook commands themselves run the files on disk, so they're new at
+  once; the `workmesh mcp` server a session started is not.
+- **What reloads** (verified live on Claude Code 2.1.332 and Codex 0.164, 11-25; the note's advice follows it). Claude
+  Code: hooks added to settings.json apply to running sessions within seconds; `/clear` keeps the MCP servers (it only
+  fires SessionStart with `clear`); `/mcp reconnect workmesh` (or Reconnect in the `/mcp` menu) starts a new MCP process
+  from the files on disk. Codex: a thread keeps the MCP servers and hooks it started with, a new thread (`/new`, or a
+  new `codex`) gets new ones, and there is no MCP reconnect (restarting Codex's background server reloads every
+  thread). So the note tells a Claude Code session its hooks are current and to run `/mcp reconnect workmesh` or start
+  a new session, and a Codex thread to start a new thread.
+- **Menu bar.** Workmesh.app reads `GET /update`: one "Update available" item that runs `run` in a window with its
+  output, and, when the release's menu bar app is newer than itself, downloads the zip, checks its SHA-256 against
+  `menubar.sha256`, swaps itself in place and relaunches (apps/menubar/README.md).

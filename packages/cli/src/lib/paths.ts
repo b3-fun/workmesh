@@ -112,3 +112,28 @@ export function handoffsDir(): string {
 export function checkoutsPath(): string {
   return path.join(stateDir(), "checkouts.json");
 }
+
+/** 0.12 (SPEC §41): what `workmesh update` last did and the version whose setup steps last ran here (0600). */
+export function updateStatePath(): string {
+  return path.join(stateDir(), "update.json");
+}
+
+/** 0.12: the daemon's last update check (newest version, where it read it, the menu bar release), 0600. */
+export function updateCheckPath(): string {
+  return path.join(stateDir(), "update-check.json");
+}
+
+/** 0.12: the version each agent session started under, and which sessions were told about an update (0600). */
+export function sessionVersionsPath(): string {
+  return path.join(stateDir(), "session-versions.json");
+}
+
+/** 0.12: the copy of the installed package `workmesh update` keeps until the new version passes its checks. */
+export function updateBackupDir(): string {
+  return path.join(stateDir(), "update", "previous");
+}
+
+/** 0.12: output of updates the daemon starts on its own (`workmesh update --auto on`). */
+export function updateLogPath(): string {
+  return path.join(stateDir(), "update.log");
+}

@@ -1041,3 +1041,16 @@ export function areClaudeHooksInstalled(settingsPath = claudeSettingsPath()): bo
     return false;
   }
 }
+
+/**
+ * Whether any Workmesh hook is installed (0.12, `workmesh update`): a version that adds a hook event finds the older
+ * install by the events it had, and adds the rest.
+ */
+export function hasAnyClaudeHook(settingsPath = claudeSettingsPath()): boolean {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as { hooks?: Record<string, unknown> };
+    return Object.values(parsed.hooks ?? {}).some((entries) => entryListHasOurs(entries));
+  } catch {
+    return false;
+  }
+}

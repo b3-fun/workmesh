@@ -10,6 +10,7 @@ const PROJECT = { id: "b3", name: "B3", include: { remotes: ["github.com/b3-fun/
 const pairings = new Map(); // code -> { deviceId, pollSecret, machine, client, approvedBy, delivered }
 const devices = new Map(); // id -> { id, email, machine, client, tokenHash, createdAt, lastSeenAt, revokedAt }
 const sessions = new Map(); // hubKey -> session
+let latestClient; // FAKE_HUB_TEAM: the newest relay version the hub "read from npm"
 const hash = (s) => crypto.createHash("sha256").update(s).digest("hex");
 const presence = (d) => (d.lastSeenAt == null ? "offline" : Date.now() - d.lastSeenAt <= 90_000 ? "online" : Date.now() - d.lastSeenAt <= 300_000 ? "reconnecting" : "offline");
 
@@ -77,6 +78,26 @@ http
       return send(res, 200, {
         devices: [...devices.values()].map(({ tokenHash: _t, ...d }) => ({ ...d, presence: presence(d) })),
         sessions: [...sessions.values()],
+      });
+    }
+    // FAKE_HUB_TEAM=1 (the update smoke test): a minimal team view carrying `latestClient` (SPEC §40), which
+    // `POST /api/latest {version}` sets the way the real hub's npm read would. Off by default: an older hub's 404.
+    if (process.env.FAKE_HUB_TEAM === "1" && req.method === "POST" && p === "/api/latest") {
+      const b = await read(req);
+      latestClient = typeof b.version === "string" ? b.version : undefined;
+      return send(res, 200, { ok: true, latestClient: latestClient ?? null });
+    }
+    if (process.env.FAKE_HUB_TEAM === "1" && req.method === "GET" && p === "/relay/team") {
+      const d = deviceOf(req);
+      if (!d || d.revokedAt) return send(res, 401, { error: "unknown or revoked device token; pair again" });
+      const me = { name: d.email.split("@")[0], email: d.email };
+      return send(res, 200, {
+        me,
+        people: [{ ...me, online: true, counts: { working: 0, waiting: 0, idle: 0 } }],
+        needsMe: [],
+        sessions: [],
+        serverNow: Date.now(),
+        ...(latestClient ? { latestClient } : {}),
       });
     }
     if (p.startsWith("/relay/") && !deviceOf(req)) return send(res, 401, { error: "unknown or revoked device token; pair again" });

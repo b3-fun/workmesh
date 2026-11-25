@@ -2,6 +2,7 @@ import { loadConfigSafe } from "../lib/config";
 import { getState } from "../lib/daemon-client";
 import type { DaemonState } from "../lib/daemon-client";
 import { bold, dim, formatDuration, renderTable, yellow } from "../lib/ui";
+import { updateNotice } from "./update";
 
 export interface StatusOptions {
   json?: boolean;
@@ -24,8 +25,10 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
     return;
   }
 
+  // 0.12 (SPEC §41): a newer Workmesh, as the daemon last heard (from the hub, else npm).
+  const notice = await updateNotice(config.port);
   if (opts.json) {
-    console.log(JSON.stringify({ ok: true, ...state }, null, 2));
+    console.log(JSON.stringify({ ok: true, ...state, ...(notice ? { update: { latest: notice.latest } } : {}) }, null, 2));
     return;
   }
 
@@ -63,6 +66,7 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
   console.log("");
   if (state.snapshot.sessions.length === 0) {
     console.log(dim("no live agent sessions"));
+    if (notice) console.log(`\n${notice.text}`);
     return;
   }
   const rows = state.snapshot.sessions.map((s) => [
@@ -73,4 +77,5 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
     `${formatDuration(Date.now() - s.updatedAt)} ago`,
   ]);
   console.log(renderTable(["SOURCE", "STATE", "ACTIVITY", "PROJECT", "UPDATED"], rows));
+  if (notice) console.log(`\n${notice.text}`);
 }

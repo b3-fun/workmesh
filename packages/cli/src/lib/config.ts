@@ -152,6 +152,17 @@ export const configSchema = z.object({
     .optional()
     .catch(undefined),
   /**
+   * 0.12 (SPEC §41): updates the daemon installs on its own (`workmesh update --auto on|off`). Absent = off. `scope`
+   * `patch` (default) takes 0.12.0 → 0.12.3 only; `minor` takes 0.12.x → 0.13.0 too. Never a new major or a prerelease.
+   */
+  update: z
+    .object({
+      auto: z.boolean().optional().catch(undefined),
+      scope: z.enum(["patch", "minor"]).optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+  /**
    * Present once paired with a hub (`workmesh hub connect`). A malformed
    * section reads as "not paired" instead of invalidating the Slack config.
    */
@@ -289,6 +300,11 @@ export function readHubConfig(file = configPath()): HubConfig | undefined | "unr
 }
 
 /** The v2 settings with their defaults (SPEC §31). */
+/** Auto-update settings (SPEC §41): off unless the person turned it on; patch releases only by default. */
+export function autoUpdateSettings(config: Pick<Config, "update">): { enabled: boolean; scope: "patch" | "minor" } {
+  return { enabled: config.update?.auto === true, scope: config.update?.scope ?? "patch" };
+}
+
 export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {
   wake: boolean;
   accept: "ask" | "auto-self" | "never";

@@ -767,3 +767,6 @@ export * from "./lease-paths.js";
 
 // v2 Delegate (SPEC §30): handoffs, approval gates, waking idle sessions; sync gains optional lists.
 export * from "./delegate.js";
+
+// Ask (SPEC §29): an agent's question about the team's agents, answered by the hub.
+export * from "./ask.js";

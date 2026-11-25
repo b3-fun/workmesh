@@ -104,10 +104,30 @@ describe("coordination ops (POST /coord/op)", () => {
     const st = hubSyncAcceptSchema.parse(SYNC);
     expect(recipient("an", undefined, st)).toEqual({ person: "An" });
     expect(recipient("an-b3", undefined, st)).toEqual({ person: "An" });
-    expect(recipient("b3iq-strategy", undefined, st)).toEqual({ agent: "b3iq-strategy" });
+    // A session by the name the board shows, or by its short key: its hub key.
+    expect(recipient("b3iq-strategy", undefined, st)).toEqual({ session: AN });
+    expect(recipient("b3iq-strategy", "session", st)).toEqual({ session: AN });
+    expect(recipient("B3IQ-Strategy", "agent", st)).toEqual({ session: AN });
+    expect(recipient("claude-code:s9", "session", st)).toEqual({ session: AN });
     expect(recipient(AN, undefined, st)).toEqual({ session: AN });
     expect(recipient("Gio", undefined, st)).toEqual({ person: "Gio" });
     expect(recipient("b3iq-strategy", "person", st)).toEqual({ person: "b3iq-strategy" });
+    expect(recipient("nope-99", "session", st)).toEqual({
+      error: 'No session "nope-99" on the team\'s board; live sessions: b3iq-strategy (An). Give a session\'s name, its key (claude-code:<id>) or its hub key.',
+    });
+    expect(recipient("someone-else", "agent", st)).toEqual({ agent: "someone-else" });
+    // Two sessions with one name: an error naming both, never a guess.
+    const two = hubSyncAcceptSchema.parse({
+      ...SYNC,
+      roster: [
+        { person: "An", sessions: [{ hubKey: AN, name: "docs-1", state: "working" }] },
+        { person: "Gio", sessions: [{ hubKey: "dev_01JDGIOGIOGIOGIOGIOGIOGIO00:claude-code:g1", name: "docs-1", state: "idle" }] },
+      ],
+    });
+    const both = recipient("docs-1", "session", two);
+    expect(both).toEqual({
+      error: `"docs-1" matches 2 sessions: docs-1 (An, working) ${AN}; docs-1 (Gio, idle) dev_01JDGIOGIOGIOGIOGIOGIOGIO00:claude-code:g1. Send to one of those keys.`,
+    });
   });
 
   it("lease: acquires for the calling session, reports conflicts by holder", async () => {
@@ -135,7 +155,53 @@ describe("coordination ops (POST /coord/op)", () => {
     expect(body.text).toContain("[redacted]");
     expect(body.text).toContain("~/.env");
     await h.op("send", { to: "b3iq-strategy", text: "hi" }, { cwd: "/nowhere" });
-    expect(h.calls[1]?.body).toEqual({ to: { agent: "b3iq-strategy" }, text: "hi" });
+    expect(h.calls[1]?.body).toEqual({ to: { session: AN }, text: "hi" });
+    expect(await h.op("send", { to: "nope-99", kind: "session", text: "hi" })).toMatchObject({ ok: false, text: expect.stringContaining('No session "nope-99"') });
+    expect(h.calls).toHaveLength(2);
+  });
+
+  it("send: an agent's reply wakes its recipient (in a thread it was sent, or to the session that wrote); chatter doesn't", async () => {
+    const h = harness();
+    const sent = () => h.calls.filter((c) => c.url.endsWith("/relay/messages")).map((c) => c.body);
+    // Unsolicited: no wake on the request (the hub's default: an agent's message doesn't wake).
+    await h.op("send", { to: "b3iq-strategy", text: "fyi, rebased" });
+    expect(sent()[0]).not.toHaveProperty("wake");
+    // b3iq-strategy's question (m1, SYNC's inbox) reaches this session.
+    await h.op("inbox");
+    await h.op("send", { to: "b3iq-strategy", text: "yes, take it" });
+    expect(sent()[1]).toMatchObject({ to: { session: AN }, wake: true });
+    // An agent of An's asked (its message carries its session): a reply to An wakes too. A person's own message doesn't
+    // make the answer to them wake their agent.
+    h.coord.apply(hubSyncAcceptSchema.parse({ ...SYNC, inbox: [{ id: "m2", to: `${DEV}:claude-code:s1`, from: { person: "An", sessionKey: AN }, text: "done?", ts: T }] }), T);
+    await h.op("inbox");
+    await h.op("send", { to: "An", text: "done" });
+    expect(sent()[2]).toMatchObject({ to: { person: "An" }, wake: true });
+    // The sender can always choose.
+    await h.op("send", { to: "b3iq-strategy", text: "no rush", wake: false });
+    expect(sent()[3]).toMatchObject({ wake: false });
+  });
+
+  it("a claim or lease shows in claims and leases at once (before the next sync)", async () => {
+    const h = harness([
+      { status: 200, body: { ok: true } },
+      { status: 200, body: { ok: true, lease: { ...SYNC.leases[0], id: "ls_9", paths: ["README.md"], holder: { person: "Sean", sessionKey: `${DEV}:claude-code:s1` } } } },
+      { status: 200, body: { ok: true } },
+      { status: 200, body: { ok: true, released: 1 } },
+    ]);
+    await h.op("claim", { issue: "B3-7300" });
+    expect((await h.op("claims")).text).toContain("- B3-7300 · Sean");
+    await h.op("lease", { paths: ["README.md"] });
+    expect((await h.op("leases")).text).toContain("README.md · Sean");
+    await h.op("release", { issue: "B3-7300" });
+    expect((await h.op("claims")).text).not.toContain("B3-7300");
+    await h.op("unlease", { paths: ["README.md"] });
+    expect((await h.op("leases")).text).not.toContain("README.md");
+  });
+
+  it("a refused claim is not ok (the CLI exits 1, --json says ok: false)", async () => {
+    const h = harness([{ status: 409, body: { ok: false, holder: { person: "An", sessionKey: AN, sessionName: "b3iq-strategy" }, since: T } }]);
+    const r = await h.op("claim", { issue: "B3-7200" });
+    expect(r).toMatchObject({ ok: false, text: "B3-7200 is already claimed by An (b3iq-strategy). Pick another issue, or ask An with `send`." });
   });
 
   it("inbox: an agent reads (and acks) its own; the person sees the machine's", async () => {
@@ -184,6 +250,109 @@ describe("coordination ops (POST /coord/op)", () => {
   });
 });
 
+describe("ask (SPEC §29)", () => {
+  const answer = {
+    ok: true,
+    answer: "An's agent b3iq-strategy is working on B3-7167: it is editing packages/cli/src/hub/coord.ts.",
+    sessions: [{ hubKey: AN, name: "b3iq-strategy", person: "An", state: "working" }],
+  };
+
+  it("asks the hub with the device token, the question redacted, this machine's time zone; answers with the text", async () => {
+    const h = harness([{ status: 200, body: answer }]);
+    h.deps.timeZone = () => "America/New_York";
+    const r = await h.op("ask", { question: "what is An's agent doing on B3-7167? see /home/me/notes.txt" });
+    expect(r.ok).toBe(true);
+    expect(r.text).toBe(
+      `${answer.answer}\n\nSessions it names (\`send\` takes the key):\n- b3iq-strategy (An, working) [${AN}]`,
+    );
+    expect(h.calls.at(-1)).toEqual({
+      url: "https://hub.test/relay/ask",
+      body: { question: "what is An's agent doing on B3-7167? see ~/notes.txt", zone: "America/New_York" },
+    });
+  });
+
+  it("fails soft: no Ask on the hub (404, 503), rate limits (429 + Retry-After), a failed model; remembered", async () => {
+    const h = harness([{ status: 404, body: "no" }]);
+    const off = await h.op("ask", { question: "who is working?" });
+    expect(off).toMatchObject({ ok: true, data: { answered: false, status: 404 } });
+    expect(off.text).toMatch(/^No answer from the team board: this team's hub has no Ask yet\. Don't ask again for 10 min\. Carry on without it/);
+    // Remembered: no second request for 10 minutes.
+    await h.op("ask", { question: "who is working?" });
+    expect(h.calls.filter((c) => c.url.endsWith("/relay/ask"))).toHaveLength(1);
+
+    const y = harness();
+    const fetchCalls: string[] = [];
+    let n = 0;
+    const replies = [
+      new Response(JSON.stringify({ error: "too many questions; try again shortly" }), { status: 429, headers: { "retry-after": "40" } }),
+      new Response(JSON.stringify({ error: "The model didn't answer" }), { status: 502 }),
+    ];
+    const coord = new CoordClient({
+      url: "https://hub.test",
+      token: TOKEN,
+      deviceId: DEV,
+      person: "Sean",
+      now: () => T + n,
+      fetchImpl: (async (url: string | URL) => {
+        fetchCalls.push(String(url));
+        return replies.shift() ?? new Response("{}", { status: 500 });
+      }) as typeof fetch,
+    });
+    coord.apply(hubSyncAcceptSchema.parse(SYNC), T);
+    y.deps.coord = () => coord;
+    const limited = await y.op("ask", { question: "who is working?" });
+    expect(limited.ok).toBe(true);
+    expect(limited.text).toBe(
+      "No answer from the team board: too many questions; try again shortly. Don't ask again for 1 min. Carry on without it, or ask your person.",
+    );
+    n = 20_000;
+    expect((await y.op("ask", { question: "again?" })).data).toMatchObject({ answered: false, status: 429, retryAfterMs: 20_000 });
+    expect(fetchCalls).toHaveLength(1);
+    n = 41_000;
+    const failed = await y.op("ask", { question: "and now?" });
+    expect(failed).toMatchObject({ ok: true, data: { answered: false, status: 502 } });
+    expect(failed.text).toContain("the hub's model failed (The model didn't answer)");
+    expect(fetchCalls).toHaveLength(2);
+  });
+
+  it("one question at a time per session; an empty question is the caller's to fix", async () => {
+    let release: (() => void) | undefined;
+    const h = harness();
+    const coord = new CoordClient({
+      url: "https://hub.test",
+      token: TOKEN,
+      deviceId: DEV,
+      person: "Sean",
+      now: () => T,
+      fetchImpl: (async () => {
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        return new Response(JSON.stringify(answer), { status: 200 });
+      }) as typeof fetch,
+    });
+    coord.apply(hubSyncAcceptSchema.parse(SYNC), T);
+    h.deps.coord = () => coord;
+    const first = h.op("ask", { question: "who is working?" });
+    await new Promise((r) => setTimeout(r, 0));
+    const second = await h.op("ask", { question: "and now?" });
+    expect(second).toMatchObject({ ok: true, data: { answered: false, status: 409 } });
+    expect(second.text).toContain("your last question is still being answered");
+    release?.();
+    expect((await first).ok).toBe(true);
+    expect(await h.op("ask", { question: "   " })).toMatchObject({ ok: false, text: expect.stringContaining("`ask` needs `question`") });
+  });
+
+  it("a 401 halts like the other calls; the MCP tool and the daemon's longer timeout", async () => {
+    const h = harness([{ status: 401, body: { error: "unknown token" } }]);
+    const r = await h.op("ask", { question: "who?" });
+    expect(r).toMatchObject({ ok: false, text: expect.stringContaining("workmesh hub connect") });
+    expect(h.coord.view().halted).toBe(true);
+    const tool = MCP_TOOLS.find((t) => t.name === "ask");
+    expect(tool?.inputSchema.required).toEqual(["question"]);
+  });
+});
+
 describe("MCP server (workmesh mcp)", () => {
   const caller = () => ({ ppid: 4242, cwd: ROOT });
   const opts = (calls: unknown[]) => ({
@@ -202,8 +371,8 @@ describe("MCP server (workmesh mcp)", () => {
     expect(init.result).toMatchObject({ protocolVersion: "2025-06-18", serverInfo: { name: "workmesh", version: "0.10.0" }, capabilities: { tools: {} } });
     expect(await handleMcpMessage({ jsonrpc: "2.0", method: "notifications/initialized" }, opts(calls), session)).toBeUndefined();
     const list = (await handleMcpMessage({ jsonrpc: "2.0", id: 2, method: "tools/list" }, opts(calls), session)) as { result: { tools: Array<{ name: string; description: string }> } };
-    expect(list.result.tools.map((t) => t.name)).toEqual(["whoami", "roster", "send", "inbox", "claim", "release", "lease", "unlease", "leases", "note", "notes", "handoff", "handoffs"]);
-    for (const t of list.result.tools) expect(t.description.length, t.name).toBeLessThanOrEqual(240);
+    expect(list.result.tools.map((t) => t.name)).toEqual(["whoami", "roster", "send", "inbox", "claim", "release", "lease", "unlease", "leases", "note", "notes", "handoff", "handoffs", "ask"]);
+    for (const t of list.result.tools) expect(t.description.length, t.name).toBeLessThanOrEqual(320);
     const ok = (await handleMcpMessage({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "send", arguments: { to: "An", text: "hi" } } }, opts(calls), session)) as { result: unknown };
     expect(ok.result).toEqual({ content: [{ type: "text", text: "did send" }], isError: false });
     expect(calls[0]).toEqual({ op: "send", args: { to: "An", text: "hi" }, c: { ppid: 4242, cwd: ROOT, client: "claude-code" } });
@@ -239,7 +408,7 @@ describe("MCP server (workmesh mcp)", () => {
     const msgs = out.map((l) => JSON.parse(l) as { id: unknown; error?: { code: number } });
     expect(msgs.map((m) => m.id).sort()).toEqual([1, 2, null]);
     expect(msgs.find((m) => m.id === null)?.error?.code).toBe(-32700);
-    expect(MCP_TOOLS).toHaveLength(13);
+    expect(MCP_TOOLS).toHaveLength(14);
   });
 });
 

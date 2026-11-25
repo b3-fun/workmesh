@@ -37,11 +37,11 @@ export const MCP_TOOLS: readonly ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
-        to: s("A person (name, email or GitHub login), an agent's session name, or a session's hub key."),
+        to: s("A person (name, email or GitHub login), a session's name as the board shows it, its key (claude-code:<id>), or its hub key."),
         text: s("The message (up to 4,000 characters)."),
         kind: { type: "string", enum: ["person", "agent", "session"], description: "What `to` names, when it is ambiguous." },
         thread: s("A thread id to reply in."),
-        wake: { type: "boolean", description: "Wake the recipient if it is idle (default: only a person's messages wake)." },
+        wake: { type: "boolean", description: "Wake the recipient if it is idle (default: a person's messages and replies to a session that wrote to you wake)." },
       },
       required: ["to", "text"],
       additionalProperties: false,
@@ -151,12 +151,25 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // Ask (SPEC §29): read-only questions to the board's Ask.
+  {
+    name: "ask",
+    description:
+      "Ask the team board about teammates' agents and work, in plain words (\"what is An's agent doing on B3-7167?\", \"who touched apps/hub today?\"). Answered from what the board shows (states, summaries, files, claims, leases, notes), never other sessions' prompts or messages. Read-only; a few questions a minute.",
+    inputSchema: {
+      type: "object",
+      properties: { question: s("The question (up to 2,000 characters).") },
+      required: ["question"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 export const MCP_INSTRUCTIONS =
   "Workmesh connects this session to your team's agents. Claim the Linear issue you work on, lease files before larger " +
   "edits (edits to another session's leased files are refused), read your inbox, and message a file's holder with " +
-  "`send` instead of editing around them. `handoff` gives a task to a teammate's (or your other machine's) agent.";
+  "`send` instead of editing around them. `handoff` gives a task to a teammate's (or your other machine's) agent; " +
+  "`ask` asks the team board what teammates' agents are doing.";
 
 export interface McpServerOptions {
   input: NodeJS.ReadableStream;

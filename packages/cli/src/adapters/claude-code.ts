@@ -42,6 +42,13 @@ export function claudeWakeCommand(): string {
 
 /** How long one wake waiter may run: Claude Code enforces `timeout` on asyncRewake hooks (the waiter leaves first). */
 export const WAKE_WINDOW_SEC = 3600;
+/**
+ * What Claude Code puts before a wake's text for the model, and the line the person sees, in place of its defaults
+ * ("Stop hook blocking error from command …" / "Stop hook feedback", which read as a failure). Claude Code 2.1.330+
+ * (the versions the waiter runs for) read both keys.
+ */
+export const WAKE_REWAKE_MESSAGE = "Workmesh, the team tool your person installed, woke this session (not an error):";
+export const WAKE_REWAKE_SUMMARY = "Workmesh";
 
 /** Our wake hook command, under any of our names and any install path. */
 export function isOurWakeHook(command: unknown): command is string {
@@ -914,11 +921,20 @@ function ensureWakeHook(hooks: Record<string, unknown>, want: boolean): boolean 
       if (!h || !isOurWakeHook(h.command)) continue;
       found = true;
       if (!want) continue;
-      if (h.command !== command || h.asyncRewake !== true || h.timeout !== WAKE_WINDOW_SEC || h.type !== "command") {
+      if (
+        h.command !== command ||
+        h.asyncRewake !== true ||
+        h.timeout !== WAKE_WINDOW_SEC ||
+        h.type !== "command" ||
+        h.rewakeMessage !== WAKE_REWAKE_MESSAGE ||
+        h.rewakeSummary !== WAKE_REWAKE_SUMMARY
+      ) {
         h.type = "command";
         h.command = command;
         h.asyncRewake = true;
         h.timeout = WAKE_WINDOW_SEC;
+        h.rewakeMessage = WAKE_REWAKE_MESSAGE;
+        h.rewakeSummary = WAKE_REWAKE_SUMMARY;
         changed = true;
       }
     }
@@ -929,7 +945,11 @@ function ensureWakeHook(hooks: Record<string, unknown>, want: boolean): boolean 
     return true;
   }
   if (found) return changed;
-  entries.push({ hooks: [{ type: "command", command, asyncRewake: true, timeout: WAKE_WINDOW_SEC }] });
+  entries.push({
+    hooks: [
+      { type: "command", command, asyncRewake: true, timeout: WAKE_WINDOW_SEC, rewakeMessage: WAKE_REWAKE_MESSAGE, rewakeSummary: WAKE_REWAKE_SUMMARY },
+    ],
+  });
   hooks.Stop = entries;
   return true;
 }

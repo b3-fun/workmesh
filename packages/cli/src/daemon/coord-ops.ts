@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import {
+  HUB_ASK_QUESTION_MAX,
   HUB_GATE_ACTIONS,
   HUB_LEASE_TTL_DEFAULT_SEC,
   HUB_LEASE_TTL_MAX_SEC,
@@ -39,6 +40,8 @@ export const COORD_OPS = [
   "handoffs",
   "gates",
   "approvals",
+  // Ask (SPEC §29)
+  "ask",
 ] as const;
 export type CoordOp = (typeof COORD_OPS)[number];
 
@@ -86,6 +89,8 @@ export interface CoordOpsDeps {
   onAccepted?: (h: HubHandoffAccepted) => void;
   /** v2: handoff ids running on this machine. */
   runningHandoffs?: () => ReadonlySet<string>;
+  /** Ask: this machine's IANA time zone, for "today" and clock times (default: the process's). */
+  timeZone?: () => string | undefined;
   now?: () => number;
   home?: string;
 }
@@ -252,13 +257,22 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       if (!toRaw) return fail("`send` needs `to`: a person (name, email or GitHub login), an agent's session name, or a session's hub key.");
       if (!text) return fail("`send` needs `text`.");
       const to = recipient(toRaw, str(a.kind, 20), st);
+      if ("error" in to) return fail(to.error);
+      const thread = str(a.thread, 64);
+      // v2 (SPEC §30): wake an idle recipient. Absent: an agent's reply (in a thread it was sent, or to the session
+      // that wrote to it in the last 30 minutes) wakes; otherwise the hub's default (a person's message wakes).
+      const wake =
+        typeof a.wake === "boolean"
+          ? a.wake
+          : key && coord.isReply(key, to, thread, now)
+            ? true
+            : undefined;
       const r = await coord.message({
         ...(key ? { from: CoordClient.family(key) } : {}),
         to,
         text,
-        ...(str(a.thread, 64) ? { thread: str(a.thread, 64) } : {}),
-        // v2 (SPEC §30): wake an idle recipient (absent: the hub's default, a person's message wakes).
-        ...(typeof a.wake === "boolean" ? { wake: a.wake } : {}),
+        ...(thread ? { thread } : {}),
+        ...(wake !== undefined ? { wake } : {}),
       });
       if (!r.ok) return hubError(r);
       if (!r.body.ok) return fail(`Workmesh: ${r.body.error || "the hub didn't take the message"}`);
@@ -482,6 +496,8 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         };
       }
       if (action !== "list") return fail("`handoffs` takes action list, accept or decline.");
+      await coord.refreshed();
+      const st = coord.view().state;
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
       if (st.handoffs === undefined) return fail("This team's hub has no handoffs yet (it predates Workmesh v2).");
       const me = coord.me()?.toLowerCase();
@@ -545,6 +561,8 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         return { ok: true, text: `${action === "approve" ? "Approved" : "Denied"}: ${r.body.approval.detail}.`, data: { approval: r.body.approval } };
       }
       if (action !== "list") return fail("`approvals` takes action list, approve or deny.");
+      await coord.refreshed();
+      const st = coord.view().state;
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
       if (st.approvals === undefined) return fail("This team's hub has no approvals yet (it predates Workmesh v2).");
       if (st.approvals.length === 0) return { ok: true, text: "No approvals.", data: { approvals: [] } };
@@ -557,6 +575,47 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       });
       return { ok: true, text: lines.join("\n"), data: { approvals: st.approvals } };
     }
+
+    // --- Ask (SPEC §29) -----------------------------------------------------------------
+
+    case "ask": {
+      const question = scrubText(str(a.question, 16_000), { home, max: HUB_ASK_QUESTION_MAX })?.text;
+      if (!question) return fail("`ask` needs `question`: what you want to know about the team's agents, in plain words.");
+      const zone = (deps.timeZone ?? localTimeZone)();
+      const r = await coord.ask({ question, ...(zone ? { zone } : {}) }, key ? CoordClient.family(key) : "person");
+      if (!r.ok) return askNoAnswer(r);
+      const named = r.body.sessions
+        .slice(0, 12)
+        .map((x) => `- ${x.name || x.hubKey} (${x.person}${x.state ? `, ${x.state}` : ""}) [${x.hubKey}]`);
+      const text = named.length > 0 ? `${r.body.answer}\n\nSessions it names (\`send\` takes the key):\n${named.join("\n")}` : r.body.answer;
+      return { ok: true, text, data: r.body };
+    }
+  }
+}
+
+/**
+ * Ask's no, softly (SPEC §29): the hub has no Ask, is rate-limiting, or its model failed. Not a tool error: the agent
+ * reads why and carries on without the answer.
+ */
+function askNoAnswer(r: Extract<CoordResult<unknown>, { ok: false }>): CoordOpResult {
+  const wait = r.retryAfterMs !== undefined ? Math.max(1, Math.ceil(r.retryAfterMs / 60_000)) : undefined;
+  const again = wait === undefined ? "" : wait >= 60 ? " Don't ask again for an hour or so." : ` Don't ask again for ${wait} min.`;
+  // 400 (a question the hub won't read) and 401 (pair again) are the caller's to fix; the rest is the hub saying no.
+  const soft = r.status !== 400 && r.status !== 401;
+  return {
+    ok: soft,
+    text: soft ? `No answer from the team board: ${r.error}.${again} Carry on without it, or ask your person.` : `Workmesh: ${r.error}`,
+    data: { answered: false, status: r.status, error: r.error, ...(r.retryAfterMs !== undefined ? { retryAfterMs: r.retryAfterMs } : {}) },
+  };
+}
+
+/** This machine's IANA time zone, if the runtime knows it. */
+function localTimeZone(): string | undefined {
+  try {
+    const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return z && /^[A-Za-z][\w+./-]{0,63}$/.test(z) ? z : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -577,21 +636,47 @@ export function personOf(
   return to.includes("@") || /^[\w .'-]{1,120}$/.test(to) ? to : undefined;
 }
 
-/** A `to` string → the wire recipient, using the roster to tell people from agents. */
+/** A `to` string → the wire recipient, using the roster to tell people from agents and sessions. */
 export function recipient(
   to: string,
   kind: string | undefined,
-  st: { roster: ReadonlyArray<{ person: string; github?: string; sessions: ReadonlyArray<{ hubKey: string; name: string }> }> } | undefined,
-): HubMessageTo {
+  st: { roster: ReadonlyArray<{ person: string; github?: string; sessions: ReadonlyArray<{ hubKey: string; name: string; state?: string }> }> } | undefined,
+): HubMessageTo | { error: string } {
   if (kind === "person") return { person: to };
-  if (kind === "agent") return { agent: to };
-  if (kind === "session" || /^dev_[0-9A-Z]{26}:/.test(to)) return { session: to };
+  if (/^dev_[0-9A-Z]{26}:/.test(to)) return { session: to };
   const low = to.toLowerCase();
-  for (const p of st?.roster ?? []) {
-    if (p.person.toLowerCase() === low || p.github?.toLowerCase() === low) return { person: p.person };
+  if (kind !== "session" && kind !== "agent") {
+    for (const p of st?.roster ?? []) {
+      if (p.person.toLowerCase() === low || p.github?.toLowerCase() === low) return { person: p.person };
+    }
   }
-  for (const p of st?.roster ?? []) {
-    for (const s of p.sessions) if (s.name && s.name.toLowerCase() === low) return { agent: s.name };
+  const sessions = (st?.roster ?? []).flatMap((p) => p.sessions.map((x) => ({ ...x, person: p.person })));
+  // A session's short key (`claude-code:<id>`, or the start of its id), as hooks and transcripts name it.
+  const short = /^[\w-]+:([\w-]+)$/.exec(to);
+  let hits = short
+    ? sessions.filter((x) => {
+        const k = x.hubKey.slice(x.hubKey.indexOf(":") + 1).toLowerCase();
+        return k === low || (short[1]!.length >= 6 && k.startsWith(low));
+      })
+    : [];
+  // A session's name, as the board and a lease refusal show it.
+  if (hits.length === 0) hits = sessions.filter((x) => x.name && x.name.toLowerCase() === low);
+  const live = hits.filter((x) => x.state !== "ended");
+  if (live.length > 0) hits = live;
+  if (hits.length === 1) return { session: hits[0]!.hubKey };
+  if (hits.length > 1) {
+    const list = hits
+      .slice(0, 8)
+      .map((x) => `${x.name || "(unnamed)"} (${x.person}${x.state ? `, ${x.state}` : ""}) ${x.hubKey}`)
+      .join("; ");
+    return { error: `"${to}" matches ${hits.length} sessions: ${list}. Send to one of those keys.` };
   }
+  if (kind === "session") {
+    const names = sessions.filter((x) => x.state !== "ended" && x.name).slice(0, 10).map((x) => `${x.name} (${x.person})`);
+    return {
+      error: `No session "${to}" on the team's board${names.length ? `; live sessions: ${names.join(", ")}` : ""}. Give a session's name, its key (claude-code:<id>) or its hub key.`,
+    };
+  }
+  if (kind === "agent") return { agent: to };
   return { person: to };
 }

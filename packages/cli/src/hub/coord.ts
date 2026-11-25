@@ -2,6 +2,8 @@ import {
   HUB_RECENT_EDIT_MS,
   hubApprovalRequestSchema,
   hubApprovalResponseAcceptSchema,
+  hubAskRequestSchema,
+  hubAskResponseAcceptSchema,
   hubGatesRequestSchema,
   hubGatesResponseAcceptSchema,
   hubHandoffRequestSchema,
@@ -22,6 +24,8 @@ import {
 import type {
   HubApprovalRequest,
   HubApprovalResponseAccepted,
+  HubAskRequest,
+  HubAskResponseAccepted,
   HubGatesRequest,
   HubGatesResponseAccepted,
   HubHandoffRequest,
@@ -94,7 +98,12 @@ export interface CoordClientOptions {
 /** What a hub call answered: the parsed body, or why there is none. */
 export type CoordResult<T> =
   | { ok: true; status: number; body: T }
-  | { ok: false; status?: number; error: string; unavailable?: boolean };
+  | { ok: false; status?: number; error: string; unavailable?: boolean; retryAfterMs?: number };
+
+/** Ask (SPEC §29): how long one question may take (the hub's model may take a few rounds). */
+export const ASK_TIMEOUT_MS = 90_000;
+/** After a 404 or 503 to `/relay/ask`, this hub is taken to have no Ask for this long. */
+const ASK_ABSENT_MS = 10 * 60_000;
 
 const MAX_DELIVERED = 2000;
 /** Ids of notices the daemon writes itself (an approval decided, a handoff finished): never acked to the hub. */
@@ -149,6 +158,12 @@ export class CoordClient {
   private readonly onSync: CoordClientOptions["onSync"];
   /** v2 endpoints this hub answered 404 to, and until when that is remembered. */
   private readonly v2Absent = new Map<string, number>();
+  /** Teammates' messages handed to this device's sessions, newest last, for telling a reply from new chatter. */
+  private readonly received: Array<{ to: string; id: string; thread?: string; fromKey?: string; fromName?: string; fromPerson: string; at: number }> = [];
+  /** Ask (SPEC §29): questions being answered, by asker (a session's key, or `person`). */
+  private readonly asking = new Set<string>();
+  /** Ask is off on this hub (404, 503), or rate-limited (429), until then, and why. */
+  private askBlocked: { until: number; status: number; error: string } | undefined;
 
   constructor(opts: CoordClientOptions) {
     this.url = opts.url.replace(/\/+$/, "");
@@ -403,6 +418,20 @@ export class CoordClient {
     for (const id of ids) {
       if (this.delivered.has(id)) continue;
       this.delivered.add(id);
+      const item = this.inbox.get(id)?.item;
+      const to = item ? this.recipientLocalKey(item) : undefined;
+      if (item && to !== undefined) {
+        this.received.push({
+          to: CoordClient.family(to),
+          id,
+          thread: item.thread,
+          fromKey: item.from.sessionKey,
+          fromName: item.from.sessionName,
+          fromPerson: item.from.person,
+          at: this.now(),
+        });
+        if (this.received.length > 500) this.received.splice(0, this.received.length - 500);
+      }
       if (id.startsWith(LOCAL_ID_PREFIX)) this.local.delete(id);
       else this.ackQueue.add(id);
     }
@@ -414,7 +443,43 @@ export class CoordClient {
     void this.flushAcks();
   }
 
+  /**
+   * Whether a message this session sends answers one it got (SPEC §23, 0.11.x): in a thread a message to it opened or
+   * carried, or to the session that wrote to it in the last 30 minutes. Such a reply wakes its recipient; an agent's
+   * unsolicited message doesn't.
+   */
+  isReply(localKey: string, to: { session?: string; agent?: string; person?: string }, thread?: string, now = this.now()): boolean {
+    const mine = CoordClient.family(localKey);
+    // The target session's name, for a message whose sender named only its session.
+    const targetName =
+      to.session === undefined
+        ? undefined
+        : this.state?.roster.flatMap((p) => p.sessions).find((x) => CoordClient.family(x.hubKey) === CoordClient.family(to.session!))?.name;
+    for (let i = this.received.length - 1; i >= 0; i--) {
+      const r = this.received[i]!;
+      if (r.to !== mine) continue;
+      if (thread !== undefined && (r.id === thread || r.thread === thread)) return true;
+      if (now - r.at > 30 * 60_000) continue;
+      if (to.session !== undefined && r.fromKey !== undefined && CoordClient.family(r.fromKey) === CoordClient.family(to.session)) return true;
+      if (to.session !== undefined && r.fromKey === undefined && targetName && r.fromName?.toLowerCase() === targetName.toLowerCase()) return true;
+      if (to.agent !== undefined && r.fromName !== undefined && r.fromName.toLowerCase() === to.agent.toLowerCase()) return true;
+      // An agent of that person wrote: the hub hands a person's message to their newest session.
+      if (to.person !== undefined && r.fromKey !== undefined && r.fromPerson.toLowerCase() === to.person.toLowerCase()) return true;
+    }
+    return false;
+  }
+
   // --- sync ---------------------------------------------------------------------
+
+  /**
+   * Syncs first when the last good sync is older than `maxAgeMs` (a person listing their handoffs or approvals while
+   * no shared session is live, when the poller is on its slow cadence). Never throws.
+   */
+  async refreshed(maxAgeMs = 5000): Promise<void> {
+    if (this.halted || this.available === false) return;
+    if (this.fetchedAt !== undefined && this.now() - this.fetchedAt <= maxAgeMs) return;
+    await this.sync();
+  }
 
   /** One `GET /relay/sync`. Never throws. */
   sync(): Promise<void> {
@@ -622,12 +687,53 @@ export class CoordClient {
     return { ok: false, status: res.status, error: typeof msg === "string" && msg ? msg.slice(0, 300) : `hub responded ${res.status}` };
   }
 
-  lease(req: HubLeaseRequest): Promise<CoordResult<HubLeaseResponseAccepted>> {
-    return this.post("/relay/leases", hubLeaseRequestSchema, req, hubLeaseResponseAcceptSchema);
+  async lease(req: HubLeaseRequest): Promise<CoordResult<HubLeaseResponseAccepted>> {
+    const r = await this.post("/relay/leases", hubLeaseRequestSchema, req, hubLeaseResponseAcceptSchema);
+    // The next `leases` (and the next hook) sees the write at once, not after the sync that follows it.
+    if (r.ok && r.body.ok && this.state) {
+      const st = this.state;
+      if (req.action === "acquire" && r.body.lease) {
+        const lease = r.body.lease;
+        this.state = { ...st, leases: [...st.leases.filter((l) => l.id !== lease.id), lease] };
+      } else if (req.action === "release") {
+        const holder = this.hubKey(CoordClient.family(req.sessionKey));
+        this.state = {
+          ...st,
+          leases: st.leases.filter(
+            (l) =>
+              !(
+                CoordClient.family(l.holder.sessionKey) === holder &&
+                l.repo === req.repo &&
+                (req.leaseId ? l.id === req.leaseId : req.paths.length === 0 || l.paths.some((p) => req.paths.includes(p)))
+              ),
+          ),
+        };
+      } else if (req.action === "renew" && r.body.lease) {
+        const lease = r.body.lease;
+        this.state = { ...st, leases: st.leases.map((l) => (l.id === lease.id ? lease : l)) };
+      }
+    }
+    return r;
   }
 
-  claim(req: HubClaimRequest): Promise<CoordResult<HubClaimResponseAccepted>> {
-    return this.post("/relay/claims", hubClaimRequestSchema, req, hubClaimResponseAcceptSchema);
+  async claim(req: HubClaimRequest): Promise<CoordResult<HubClaimResponseAccepted>> {
+    const r = await this.post("/relay/claims", hubClaimRequestSchema, req, hubClaimResponseAcceptSchema);
+    if (r.ok && r.body.ok && this.state) {
+      const st = this.state;
+      const others = st.claims.filter((c) => c.issue.toUpperCase() !== req.issue.toUpperCase());
+      if (req.action === "claim") {
+        const claim = r.body.claim ?? {
+          issue: req.issue,
+          holder: { person: this.me() ?? "me", sessionKey: this.hubKey(CoordClient.family(req.sessionKey)), sessionName: undefined },
+          since: this.hubNow(),
+          note: req.note,
+        };
+        this.state = { ...st, claims: [...others, claim] };
+      } else {
+        this.state = { ...st, claims: others };
+      }
+    }
+    return r;
   }
 
   message(req: HubMessageRequest): Promise<CoordResult<z.infer<typeof hubIdResponseAcceptSchema>>> {
@@ -651,4 +757,91 @@ export class CoordClient {
   setGates(req: HubGatesRequest): Promise<CoordResult<HubGatesResponseAccepted>> {
     return this.post("/relay/gates", hubGatesRequestSchema, req, hubGatesResponseAcceptSchema, true);
   }
+
+  // --- Ask (SPEC §29) --------------------------------------------------------------
+
+  /**
+   * `POST /relay/ask`: one question, answered whole. One at a time per asker; the hub's no (404 or 503: no Ask on this
+   * hub; 429: its rate limit or daily cap, with `Retry-After`) is remembered, so a retrying agent doesn't hammer it.
+   */
+  async ask(req: HubAskRequest, asker = "person", timeoutMs = ASK_TIMEOUT_MS): Promise<CoordResult<HubAskResponseAccepted>> {
+    if (this.halted) return { ok: false, status: 401, error: "the hub rejected this device's token: run `workmesh hub connect` again" };
+    if (this.available === false) {
+      return { ok: false, unavailable: true, error: "this hub has no coordination yet (it predates Workmesh v1)" };
+    }
+    const now = this.now();
+    const blocked = this.askBlocked;
+    if (blocked && blocked.until > now) {
+      return {
+        ok: false,
+        status: blocked.status,
+        error: blocked.error,
+        ...(blocked.status === 404 || blocked.status === 503 ? { unavailable: true } : {}),
+        retryAfterMs: blocked.until - now,
+      };
+    }
+    if (this.asking.has(asker)) return { ok: false, status: 409, error: "your last question is still being answered" };
+    const parsed = hubAskRequestSchema.safeParse(req);
+    if (!parsed.success) {
+      return { ok: false, status: 400, error: parsed.error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ") };
+    }
+    this.asking.add(asker);
+    let res: Response;
+    let raw: unknown;
+    try {
+      res = await this.fetchImpl(`${this.url}/relay/ask`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(parsed.data),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const text = await res.text().catch(() => "");
+      try {
+        raw = text ? (JSON.parse(text) as unknown) : {};
+      } catch {
+        raw = undefined;
+      }
+    } catch (err) {
+      const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+      return { ok: false, error: timedOut ? "the hub took too long to answer" : `hub unreachable: ${err instanceof Error ? err.message : String(err)}` };
+    } finally {
+      this.asking.delete(asker);
+    }
+    const said = (raw as { error?: unknown } | undefined)?.error;
+    const hubSaid = typeof said === "string" && said ? said.slice(0, 300) : undefined;
+    const block = (status: number, ms: number, error: string): CoordResult<HubAskResponseAccepted> => {
+      this.askBlocked = { until: this.now() + ms, status, error };
+      return { ok: false, status, error, ...(status === 404 || status === 503 ? { unavailable: true } : {}), retryAfterMs: ms };
+    };
+    switch (res.status) {
+      case 401:
+        this.halted = true;
+        this.holds.clear();
+        return { ok: false, status: 401, error: "the hub rejected this device's token: run `workmesh hub connect` again" };
+      case 404:
+        return block(404, ASK_ABSENT_MS, "this team's hub has no Ask yet");
+      case 503:
+        return block(503, ASK_ABSENT_MS, hubSaid ?? "Ask isn't set up on this team's hub");
+      case 429:
+        return block(429, askRetryAfter(res.headers.get("retry-after")), hubSaid ?? "the hub asked to slow down");
+      default:
+        break;
+    }
+    if (res.ok) {
+      const body = hubAskResponseAcceptSchema.safeParse(raw);
+      if (body.success) return { ok: true, status: res.status, body: body.data };
+      return { ok: false, status: res.status, error: "the hub sent an answer this relay can't read" };
+    }
+    if (res.status === 502) return { ok: false, status: 502, error: hubSaid ? `the hub's model failed (${hubSaid})` : "the hub's model failed to answer" };
+    return { ok: false, status: res.status, error: hubSaid ?? `hub responded ${res.status}` };
+  }
+}
+
+/** A `Retry-After` in seconds (or an HTTP date) → ms, between 5 s and an hour; absent, a minute. */
+export function askRetryAfter(value: string | null, now = Date.now()): number {
+  if (!value) return 60_000;
+  const secs = Number(value);
+  let ms = Number.isFinite(secs) ? secs * 1000 : Date.parse(value) - now;
+  if (!Number.isFinite(ms)) ms = 60_000;
+  return Math.min(Math.max(ms, 5000), 60 * 60_000);
 }

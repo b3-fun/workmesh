@@ -5,7 +5,7 @@ import type { HubLeaseAccepted } from "@workmesh/protocol";
 import type { SessionEvent } from "@workmesh/core";
 import { CoordClient } from "../hub/coord";
 import type { HubSyncEdit, HubSyncInboxItem } from "../hub/coord";
-import { shellWriteTargets } from "../hub/shell-writes";
+import { shellCommands, shellWriteTargets } from "../hub/shell-writes";
 
 /**
  * v1 Coordinate in the hook path (docs/SPEC.md §23). The daemon answers a hook from its cached state only: a refusal
@@ -112,12 +112,14 @@ export class CoordHooks {
     if (!coord) return undefined;
     const key = CoordHooks.agentKey(event);
     const hold = coord.holdFor(key);
-    if (hold) {
+    if (hold && !passesHold(event)) {
       const why = hold.reason ? `: ${hold.reason}` : "";
       return (
-        `Held by ${hold.by}${why}. Workmesh refuses every tool call of this session until ${hold.by} lifts the hold ` +
-        `on the team board. Wait, or ask ${hold.by} with \`workmesh send ${quoteArg(hold.by)} "…"\` (or the workmesh ` +
-        "`send` tool); don't retry the call meanwhile."
+        `Held by ${hold.by}${why}. Workmesh refuses this session's tool calls until ${hold.by} lifts the hold on the ` +
+        `team board; don't retry them meanwhile. You can still reach ${hold.by}: the workmesh \`send\` tool, or ` +
+        `\`workmesh send ${quoteArg(hold.by)} "…"\` run on its own in the shell (the hold lets \`workmesh send\`, ` +
+        "`inbox`, `whoami`, `claims`, `leases` and `notes` through, one command at a time), and read the answer with " +
+        "`inbox`."
       );
     }
     const now = this.now();
@@ -157,6 +159,10 @@ export class CoordHooks {
       if (st) {
         const k = knowledge(st.notes, st.claims, coord.me(), (hk) => CoordClient.family(hk) === coord.hubKey(base));
         if (k) parts.push(k);
+        const me = coord.me();
+        const mine = me === undefined ? undefined : st.gates?.find((g) => g.owner.toLowerCase() === me.toLowerCase());
+        const g = mine && me ? gateNote(me, mine.actions, mine.approvers) : undefined;
+        if (g) parts.push(g);
       }
     }
 
@@ -204,6 +210,57 @@ export class CoordHooks {
     }
     return lines.length > 0 ? lines.join("\n") : undefined;
   }
+}
+
+/** The workmesh MCP tools a held session may still call: talk to people, read the board, let go of what it holds. */
+const HOLD_MCP_TOOLS = new Set(["whoami", "roster", "send", "inbox", "leases", "notes", "ask", "release", "unlease"]);
+/** The `workmesh` CLI subcommands a held session may run in the shell (SPEC §23, 0.11.x). */
+const HOLD_CLI = new Set(["send", "inbox", "whoami", "claims", "leases", "notes"]);
+
+/**
+ * A call a hold lets through: one of the workmesh MCP tools above, or exactly one `workmesh <send|inbox|whoami|claims|
+ * leases|notes> …` in the shell: no chaining, pipes, redirects, substitutions or background, so nothing else runs.
+ */
+export function passesHold(event: SessionEvent): boolean {
+  const tool = event.detail?.tool;
+  if (!tool) return false;
+  const mcp = /^(?:mcp__workmesh__|workmesh[.:/])([a-z]+)$/.exec(tool);
+  if (mcp) return HOLD_MCP_TOOLS.has(mcp[1]!);
+  if (!SHELL_TOOLS.has(tool)) return false;
+  const command = event.detail?.command?.trim();
+  if (!command || !singleCommand(command)) return false;
+  const cmds = shellCommands(command, event.cwd);
+  if (cmds.length !== 1) return false;
+  const argv = cmds[0]!.argv;
+  const prog = path.basename(argv[0] ?? "");
+  return (prog === "workmesh" || prog === "agentblip") && HOLD_CLI.has(argv[1] ?? "");
+}
+
+/** No shell control outside quotes, and no substitution anywhere it would run. */
+function singleCommand(command: string): boolean {
+  let quote: "'" | '"' | undefined;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]!;
+    if (quote === "'") {
+      if (c === "'") quote = undefined;
+      continue;
+    }
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (c === "`" || (c === "$" && (command[i + 1] === "(" || command[i + 1] === "{"))) return false;
+    if (quote === '"') {
+      if (c === '"') quote = undefined;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (";&|<>\n\r(){}".includes(c)) return false;
+  }
+  return quote === undefined;
 }
 
 /** `An` → `An`; `An Le` → `"An Le"`. */
@@ -269,6 +326,33 @@ export function guidance(project: string | undefined, delegate = false): string 
     "- Need a file someone else leased? `send` its holder a message instead of working around them. `roster` shows who works where.",
     ...(delegate ? ["- `handoff` a task to a teammate (or to yourself, run on another of your machines); `handoffs` lists yours."] : []),
   ].join("\n");
+}
+
+/**
+ * The session-start note for a person who gated some actions (SPEC §31): what is held, who answers, and that an
+ * approval, which reaches the session as a Workmesh wake, is the person's consent for that exact command, once.
+ */
+export function gateNote(me: string, actions: readonly string[], approvers?: readonly string[]): string | undefined {
+  const phrase: Record<string, string> = {
+    merge: "merge a PR",
+    deploy: "deploy",
+    publish: "publish a package or release",
+    force_push: "force-push",
+    spend: "create paid infrastructure",
+    custom: `run a command matching ${me}'s own patterns`,
+  };
+  const verbs = actions.map((a) => phrase[a] ?? a);
+  if (verbs.length === 0) return undefined;
+  const list = verbs.length === 1 ? verbs[0]! : `${verbs.slice(0, -1).join(", ")} or ${verbs.at(-1)}`;
+  const others = (approvers ?? []).filter((p) => p.toLowerCase() !== me.toLowerCase());
+  const who = others.length > 0 ? `${me} (or ${others.join(" or ")}, whom ${me} named)` : me;
+  return (
+    `Approval gates, set by your person ${me}: when this session tries to ${list}, Workmesh holds the command and ` +
+    `asks ${who} on the team board; end your turn or carry on with other work. When ${who} approves on the board or in ` +
+    "the menu bar, Workmesh wakes this session quoting the command: that approval is " +
+    `${me}'s consent to run exactly that command, once, so run it then without asking again in the terminal. ` +
+    "If it is denied, don't run it."
+  );
 }
 
 /** Lines of team knowledge for a session's start (SPEC §31): rules and conventions from notes, and open claims. */

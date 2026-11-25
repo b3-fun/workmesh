@@ -52,7 +52,18 @@ export function versionAtLeast(v: readonly number[], min: readonly number[]): bo
   return true;
 }
 
+/**
+ * A Claude Code session nobody sits at: a Workmesh handoff's agent (`WORKMESH_HANDOFF`), or one started by `claude -p`
+ * or an SDK (`CLAUDE_CODE_ENTRYPOINT` sdk-cli, sdk-ts, sdk-py; interactive sessions say cli, or an editor's name).
+ */
+export function isHeadless(env: NodeJS.ProcessEnv): boolean {
+  if (env.WORKMESH_HANDOFF) return true;
+  const entry = env.CLAUDE_CODE_ENTRYPOINT ?? "";
+  return /^sdk/i.test(entry) || entry === "mcp";
+}
+
 export interface WakeWaitDeps {
+  env?: NodeJS.ProcessEnv;
   stdin?: () => Promise<string>;
   wait?: typeof wakeWait;
   daemonUp?: (port: number) => Promise<boolean>;
@@ -74,6 +85,9 @@ export async function wakeWaitOnce(source: string, deps: WakeWaitDeps = {}): Pro
     if (input.hook_event_name !== undefined && input.hook_event_name !== "Stop") return 0;
     const sessionId = typeof input.session_id === "string" && /^[\w-]{1,128}$/.test(input.session_id) ? input.session_id : undefined;
     if (!sessionId) return 0;
+    // Headless runs (`claude -p`, the SDK, a handoff's agent) end when their turn does: a waiter would hold them open
+    // (Claude Code waits for an asyncRewake hook before a print-mode run exits), and nobody is there to wake.
+    if (isHeadless(deps.env ?? process.env)) return 0;
     // An older Claude Code that doesn't know asyncRewake would run this in the foreground and hold the turn's end:
     // wait only when the transcript says a version that runs it in the background.
     const version = transcriptVersion(typeof input.transcript_path === "string" ? input.transcript_path : undefined);

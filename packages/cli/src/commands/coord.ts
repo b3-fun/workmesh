@@ -117,6 +117,11 @@ export function runWhoami(opts: CoordCliOptions): Promise<void> {
   return runOp("whoami", {}, opts);
 }
 
+/** `workmesh ask <question…>`: the board's Ask, read-only (SPEC §29). */
+export function runAsk(words: string[], opts: CoordCliOptions): Promise<void> {
+  return runOp("ask", { question: words.join(" ") }, opts);
+}
+
 // --- v2 Delegate (SPEC §31) -----------------------------------------------------------
 
 export function runHandoff(

@@ -12,7 +12,7 @@
 - **Repo**: github.com/b3-fun/workmesh (open source, MIT; renamed from b3-fun/agentblip, old URLs redirect)
 - **npm**: `@b3os/workmesh` (bins `workmesh` and the `agentblip` alias), published from the npclabs npm account
 - **Status**: building
-- **Last updated**: 2026-11-25 (v2 Delegate: wire merged #22; relay side 0.11.0: `workmesh init`, wake, handoffs, approval gates, team knowledge at session start)
+- **Last updated**: 2026-11-25 (v2 follow-ups: an approval runs its exact command once, agents' `ask`, a live two-person handoff, coordination fixes from a live test)
 
 ---
 
@@ -195,13 +195,23 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - v2 Delegate (SPEC §30, §31, 0.11.0): `CoordClient` reads the optional v2 sync lists (absent = no v2) and makes the
   v2 calls (a `404` there turns off only v2, for 10 min); the daemon writes its own notices into the inbox (`wm_` ids,
   never acked). `daemon/delegate.ts`: approval gates in `PreToolUse` (matcher `daemon/gates.ts`, table-tested; asks in
-  the background; approved within the hour runs, denied refuses, a failed ask lets it run), handoff policy
+  the background; approved runs its command once, denied refuses, a failed ask lets it run), handoff policy
   (`handoffs.accept`, default `auto-self`), sender notices, and wake waiters (`POST /wake/wait`, long-poll ≤ 55 s).
   `daemon/handoff-runner.ts`: checkout index (`checkouts.json` + `handoffs.roots`), worktree, detached `claude -p
   --session-id` / `codex exec` wrapped in `sh` (exit code file), done/fail, `handoffs/running.json`. Claude Code wake is
   the `wake-wait claude-code` asyncRewake Stop hook (exit 2 + stderr), Codex is `codex queue` (`daemon/codex-wake.ts`).
   `commands/init.ts` is the one-step onboarding. Agents can't set gates or decide approvals (no MCP tools; the ops
   refuse an agent caller).
+  0.11.x follow-ups: an approval lets the exact command it was asked for through once within 30 minutes (hash of the
+  normalized command, kept in the daemon; a rerun asks with `renew: true`); the decision's notice quotes that command
+  and names who decided; the SessionStart note of a person with gates says an approval is their consent for that
+  command; the wake hook carries `rewakeMessage`/`rewakeSummary`; `wake-wait` exits at once in headless sessions
+  (`WORKMESH_HANDOFF`, `CLAUDE_CODE_ENTRYPOINT` sdk-*), which Claude Code otherwise holds open; `handoffs.model`.
+  Agents' `ask` (MCP + `workmesh ask`) through `/relay/ask` (`CoordClient.ask`: one per session, 404/503/429
+  remembered). `send` resolves names and short keys from the roster (ambiguity refused), agents' replies wake, a
+  hold lets `workmesh send|inbox|whoami|claims|leases|notes` and the talk-and-read MCP tools through
+  (`passesHold`), and claims/leases patch the cached sync at once. Live harness and evidence:
+  `~/Documents/b3/b3os-orch/scratch/team-hub/evidence/delegate-followups/`.
 
 ## The hosted hub (private)
 
@@ -276,6 +286,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 | 2026-11-24 | Hub serves workmesh.b3os.org and bullpen.b3os.org; Worker script stays `bullpen` | Paired relays keep working without re-pairing; a renamed script would orphan the Durable Object |
 | 2026-11-24 | Split (Sean): the hub, board, summaries and B3OS kit move to the private `b3-fun/workmesh-cloud` (with `apps/hub`'s history, same path); this repo keeps the CLI, core, protocol, menu bar app, site, SPEC (protocol + privacy) and the one ROADMAP. workmesh-cloud pins this repo as a submodule for `@workmesh/protocol` | "The platform always remains hosted / by us, while the piece that gets installed on users machine is open source". Public history is not rewritten: the hub's code up to the split stays in it |
 | 2026-11-25 | v1 relay: hooks answered from the daemon's cached `/relay/sync` on the existing loopback request (a header, not a new endpoint, so new hooks and old daemons mix); fail-open everywhere except a known hold (30 min); the MCP server holds no token | More teammates are installing it; Sean: it must never get in the way of anyone's work. Hook latency measured unchanged (130-138 ms p50) |
+| 2026-11-25 | An approval is consent for one exact command, once; the notice quotes it and the session start explains it; a person's own CLAUDE.md rule against automated approvals is left to win | Live: clean setups carried on every time; with such a rule Haiku still asks in the terminal, which is the person's call, not Workmesh's to override |
 | 2026-11-25 | v2 relay: gates and handoffs opt-in per person, wake via Claude Code's `asyncRewake` Stop hook (2.1.330+ by the transcript's version) and `codex queue`; handoffs in a new worktree; texts say the gate re-checks so an agent needn't trust a wake | The whole team onboards at once: nothing may stop anyone's work. Live, a woken model won't treat hook feedback as consent, which is right; the gate's own re-check is what makes the retry safe |
 | 2026-11-23 | Menu bar 0.2: grouped live list, SF Symbol template icon (orange only for needs-you), row actions, snooze; all new data via `/state` fields and daemon endpoints | Keeps the thin-client rule; roadmap in apps/menubar/README.md |
 | 2026-11-24 | v0.7 (SPEC §19): one zod-free `stripInjected` in the protocol package for relay, hub and board; subagent `name` = task at conversation, type at metadata; orchestrators send `repos` | Injected markup reached the board as prompts and agent messages (and a tmp path in a task notice); one tested reading keeps relay, hub backstop and board in step. Subagents showed as raw keys. An orchestrator's repo flipped with each file it touched and said nothing about the others |

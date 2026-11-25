@@ -138,6 +138,8 @@ export const configSchema = z.object({
       maxRunning: z.number().int().min(0).max(10).optional().catch(undefined),
       /** Claude Code `--permission-mode` for a handoff's session (default `auto`). */
       permissionMode: z.enum(["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"]).optional().catch(undefined),
+      /** The model a handoff's agent runs on (`--model` / `-m`, e.g. `haiku`, `sonnet`); absent: the agent's default. */
+      model: z.string().regex(/^[\w.:\[\]/-]{1,80}$/).optional().catch(undefined),
       maxMinutes: z.number().int().min(5).max(24 * 60).optional().catch(undefined),
     })
     .optional()
@@ -295,6 +297,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
   worktree: boolean;
   maxRunning: number;
   permissionMode: string;
+  model?: string;
   maxMinutes: number;
   customGates: string[];
 } {
@@ -307,6 +310,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
     worktree: h?.worktree ?? true,
     maxRunning: h?.maxRunning ?? 2,
     permissionMode: h?.permissionMode ?? "auto",
+    ...(h?.model ? { model: h.model } : {}),
     maxMinutes: h?.maxMinutes ?? 120,
     customGates: config.gates?.custom ?? [],
   };

@@ -26,6 +26,14 @@ import path from "node:path";
  *   (`input_tokens`, `output_tokens`, …) and `turn_context` lines the `model`.
  */
 
+/**
+ * Token use as Claude Code shows it per agent: `tokensIn` is the agent's
+ * context now (the input, cache reads and cache writes of its latest model
+ * call), `tokensOut` what it has generated so far (output summed over its
+ * calls). Claude Code's own per-agent "tokens" figure (the Agent result's
+ * `totalTokens`) is tokensIn plus the latest call's output: verified against
+ * six finished subagents on this machine.
+ */
 export interface Usage {
   tokensIn: number;
   tokensOut: number;
@@ -136,15 +144,17 @@ async function readNewLines(
 }
 
 /**
- * Token totals of one Claude Code transcript, read incrementally from the
- * start (each pass reads only new complete lines). Usage is counted once per
- * API message id: the lines of a multi-block message repeat it.
+ * Token use of one Claude Code transcript (see Usage), read incrementally
+ * from the start (each pass reads only new complete lines). Output is counted
+ * once per API message id: the lines of a multi-block message repeat it.
  */
 export class ClaudeUsageReader {
   private readonly cur: FileCursor = { offset: 0, skipping: false };
-  private readonly perMessage = new Map<string, { in: number; out: number }>();
-  /** Totals of messages evicted from `perMessage` (bounded memory on long agents). */
-  private base = { in: 0, out: 0 };
+  private readonly perMessage = new Map<string, number>();
+  /** Output of messages evicted from `perMessage` (bounded memory on long agents). */
+  private baseOut = 0;
+  /** Context of the latest call. */
+  private latestIn = 0;
   private model: string | undefined;
 
   constructor(
@@ -159,20 +169,17 @@ export class ClaudeUsageReader {
     if (!res) return undefined;
     if (res.restarted) {
       this.perMessage.clear();
-      this.base = { in: 0, out: 0 };
+      this.baseOut = 0;
+      this.latestIn = 0;
     }
     for (const line of res.lines) this.take(line);
     return { ...this.totals(), more: res.more };
   }
 
   totals(): Usage {
-    let tokensIn = this.base.in;
-    let tokensOut = this.base.out;
-    for (const u of this.perMessage.values()) {
-      tokensIn += u.in;
-      tokensOut += u.out;
-    }
-    return { tokensIn, tokensOut, model: this.model };
+    let tokensOut = this.baseOut;
+    for (const out of this.perMessage.values()) tokensOut += out;
+    return { tokensIn: this.latestIn, tokensOut, model: this.model };
   }
 
   private take(line: string): void {
@@ -190,22 +197,18 @@ export class ClaudeUsageReader {
     const model = cleanModel(m.model);
     if (model) this.model = model;
     const id = typeof m.id === "string" ? m.id : undefined;
-    const tally = {
-      in: finiteInt(u.input_tokens) + finiteInt(u.cache_creation_input_tokens) + finiteInt(u.cache_read_input_tokens),
-      out: finiteInt(u.output_tokens),
-    };
+    this.latestIn = finiteInt(u.input_tokens) + finiteInt(u.cache_creation_input_tokens) + finiteInt(u.cache_read_input_tokens);
+    const out = finiteInt(u.output_tokens);
     if (!id) {
-      this.base.in += tally.in;
-      this.base.out += tally.out;
+      this.baseOut += out;
       return;
     }
     this.perMessage.delete(id); // re-insert: newest last, so eviction drops the oldest
-    this.perMessage.set(id, tally);
+    this.perMessage.set(id, out);
     while (this.perMessage.size > this.maxIds) {
-      const [oldId, old] = this.perMessage.entries().next().value as [string, { in: number; out: number }];
+      const [oldId, old] = this.perMessage.entries().next().value as [string, number];
       this.perMessage.delete(oldId);
-      this.base.in += old.in;
-      this.base.out += old.out;
+      this.baseOut += old;
     }
   }
 }
@@ -230,9 +233,10 @@ async function readTailLines(file: string, bytes: number): Promise<string[] | un
 }
 
 /**
- * A Codex thread's token totals and model from the end of its rollout:
- * `token_count` totals are cumulative, so the last one in the tail is the
- * thread's total. Undefined when the tail holds neither.
+ * A Codex thread's token use (see Usage) and model from the end of its
+ * rollout: the last `token_count` line's `last_token_usage.input_tokens` is
+ * its context now, `total_token_usage.output_tokens` (cumulative) what it has
+ * generated. Undefined when the tail holds neither.
  */
 export async function readCodexUsage(file: string, tailBytes = 512 * 1024): Promise<Usage | undefined> {
   const lines = await readTailLines(file, tailBytes);
@@ -254,8 +258,12 @@ export async function readCodexUsage(file: string, tailBytes = 512 * 1024): Prom
     const p = e.payload;
     if (!p || typeof p !== "object") continue;
     if (!usage && e.type === "event_msg" && p.type === "token_count") {
-      const total = (p.info as { total_token_usage?: Record<string, unknown> } | undefined)?.total_token_usage;
-      if (total && typeof total === "object") usage = { in: finiteInt(total.input_tokens), out: finiteInt(total.output_tokens) };
+      const info = p.info as { total_token_usage?: Record<string, unknown>; last_token_usage?: Record<string, unknown> } | undefined;
+      const total = info?.total_token_usage;
+      const last = info?.last_token_usage;
+      if (total && typeof total === "object") {
+        usage = { in: finiteInt(last && typeof last === "object" ? last.input_tokens : total.input_tokens), out: finiteInt(total.output_tokens) };
+      }
     } else if (!model && e.type === "turn_context") {
       model = cleanModel(p.model);
     }

@@ -179,7 +179,7 @@ describe("Claude Code subagents (SPEC §15)", () => {
     h.advance(6000);
     h.claude("p1", beta, { hook_event_name: "SubagentStop", agent_id: AGENT, agent_type: "general-purpose", agent_transcript_path: file, last_assistant_message: "SUBAGENT_LAST", background_tasks: [] });
     await h.send();
-    expect(h.last(`claude-code:p1/${AGENT}`)).toMatchObject({ state: "ended", tokensIn: 101, tokensOut: 25 });
+    expect(h.last(`claude-code:p1/${AGENT}`)).toMatchObject({ state: "ended", tokensIn: 1, tokensOut: 25 });
     expect(h.raw.join("\n")).not.toContain("SUBAGENT_LAST");
     expect(h.fwd.status()).toMatchObject({ structured: true, subagentSessions: 0 });
   });

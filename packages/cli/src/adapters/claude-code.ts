@@ -374,8 +374,8 @@ const SLACK_TS_RE = /^\d{9,11}\.\d{1,9}$/;
  * Slack messages an MCP Slack tool call touched (shapes read from real
  * transcripts of the Slack plugin: inputs carry `channel_id` and `message_ts`
  * or `thread_ts`; slack_send_message answers `{message_link, message_context:
- * {channel_id, message_ts}}`). Channel ids, message ts and the permalink only;
- * never message text.
+ * {channel_id, message_ts}}` as JSON text with escaped slashes). Channel ids,
+ * message ts and the permalink only; never message text.
  */
 export function slackRefs(
   toolName: string | undefined,
@@ -397,7 +397,8 @@ export function slackRefs(
       responseText = undefined;
     }
   }
-  const link = responseText ? SLACK_LINK_RE.exec(responseText.slice(0, 200_000)) : null;
+  // The Slack MCP server's JSON escapes slashes (`https:\/\/x.slack.com\/archives\/…`), verified on real results.
+  const link = responseText ? SLACK_LINK_RE.exec(responseText.slice(0, 200_000).replace(/\\+\//g, "/")) : null;
   if (link) {
     const url = link[0].length <= DETAIL_LIMITS.slackLink ? link[0] : undefined;
     add({ channel: link[1]!, ts: `${link[2]}.${link[3]}`, link: url });

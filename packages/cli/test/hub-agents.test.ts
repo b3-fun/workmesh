@@ -29,7 +29,7 @@ const write = (name: string, lines: string[]): string => {
 };
 
 describe("Claude Code subagent usage (v0.6)", () => {
-  it("sums input (with cache reads and writes) and output once per API message, incrementally", async () => {
+  it("reports the latest context (input with cache reads and writes) and output summed once per API message", async () => {
     const usage = { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 1000, output_tokens: 7 };
     const f = write("agent-a1.jsonl", [
       sl.claudeUsage("msg_1", usage, 1, "claude-opus-5-5", 0),
@@ -39,16 +39,16 @@ describe("Claude Code subagent usage (v0.6)", () => {
     const r = new ClaudeUsageReader(f);
     expect(await r.read()).toEqual({ tokensIn: 1110, tokensOut: 7, model: "claude-opus-5-5", more: false });
     fs.appendFileSync(f, `${sl.claudeUsage("msg_2", { input_tokens: 5, output_tokens: 3 }, 2, "claude-haiku-5-5")}\n`);
-    expect(await r.read()).toEqual({ tokensIn: 1115, tokensOut: 10, model: "claude-haiku-5-5", more: false });
+    expect(await r.read()).toEqual({ tokensIn: 5, tokensOut: 10, model: "claude-haiku-5-5", more: false });
     // A partial line waits for its newline.
     fs.appendFileSync(f, sl.claudeUsage("msg_3", { input_tokens: 1, output_tokens: 1 }).slice(0, 40));
-    expect((await r.read())?.tokensIn).toBe(1115);
+    expect((await r.read())?.tokensOut).toBe(10);
   });
 
   it("keeps totals when old message ids are evicted, and restarts on a replaced file", async () => {
     const f = write("agent-a2.jsonl", Array.from({ length: 6 }, (_, i) => sl.claudeUsage(`m${i}`, { input_tokens: 1, output_tokens: 2 })));
     const r = new ClaudeUsageReader(f, 2 * 1024 * 1024, 2);
-    expect(await r.read()).toMatchObject({ tokensIn: 6, tokensOut: 12 });
+    expect(await r.read()).toMatchObject({ tokensIn: 1, tokensOut: 12 }); // evicted ids keep their output
     fs.rmSync(f);
     write("agent-a2.jsonl", [sl.claudeUsage("n1", { input_tokens: 4, output_tokens: 4 })]);
     expect(await r.read()).toMatchObject({ tokensIn: 4, tokensOut: 4 });
@@ -100,7 +100,7 @@ describe("Codex threads (v0.6)", () => {
     expect((await readCodexThreadMeta(top))?.parentThreadId).toBeUndefined();
   });
 
-  it("takes the last cumulative token_count and the model from the rollout's end", async () => {
+  it("takes the context and cumulative output of the last token_count, and the model, from the rollout's end", async () => {
     const f = write("rollout-usage.jsonl", [
       cx.sessionMeta("t2"),
       sl.codexTurnContext("gpt-6-codex"),

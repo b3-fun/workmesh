@@ -152,12 +152,13 @@ export const structureLines = {
       multi_agent_version: "v2",
       source: { subagent: { thread_spawn: { parent_thread_id: parent, depth: 1, agent_path: agentPath, agent_nickname: "Gauss", agent_role: "worker" } } },
     }),
-  codexTokenCount: (input: number, output: number, ts = 1): string =>
+  /** `context`: the latest call's input (the thread's context now); `output`: cumulative output. */
+  codexTokenCount: (context: number, output: number, ts = 1): string =>
     codex("event_msg", {
       type: "token_count",
       info: {
-        total_token_usage: { input_tokens: input, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0, total_tokens: input + output },
-        last_token_usage: { input_tokens: 1, output_tokens: 1 },
+        total_token_usage: { input_tokens: context * 4, cached_input_tokens: context * 3, cache_write_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0, total_tokens: context * 4 + output },
+        last_token_usage: { input_tokens: context, cached_input_tokens: context - 1, output_tokens: 1 },
         model_context_window: 400000,
       },
     }, ts),

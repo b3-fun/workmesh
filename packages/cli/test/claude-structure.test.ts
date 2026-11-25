@@ -139,6 +139,16 @@ describe("Slack MCP tools (v0.6)", () => {
     expect(JSON.stringify(e?.detail?.slack)).not.toContain("MESSAGE_TEXT");
   });
 
+  it("reads the permalink when the server escapes its slashes (the real shape)", () => {
+    const text = '{"message_link":"https:\\/\\/b3-labs.slack.com\\/archives\\/C0123ABCD\\/p1795545603000100?thread_ts=1795545000.000200&cid=C0123ABCD","message_context":{"channel_id":"C0123ABCD","message_ts":"1795545603.000100"}}';
+    expect(text).toContain("https:\\/\\/");
+    expect(slackRefs(send, { channel_id: "C0123ABCD", message: "x", thread_ts: "1795545000.000200" }, [{ type: "text", text }])?.[0]).toEqual({
+      channel: "C0123ABCD",
+      ts: "1795545603.000100",
+      link: "https://b3-labs.slack.com/archives/C0123ABCD/p1795545603000100?thread_ts=1795545000.000200&cid=C0123ABCD",
+    });
+  });
+
   it("reads a thread's channel and ts from the call; other tools have none", () => {
     expect(slackRefs("mcp__plugin_slack_slack__slack_read_thread", { channel_id: "C0123ABCD", message_ts: "1795545603.000100" })).toEqual([
       { channel: "C0123ABCD", ts: "1795545603.000100", name: undefined },

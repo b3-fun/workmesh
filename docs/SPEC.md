@@ -12,7 +12,7 @@ https://workmesh.b3os.org; the hosted hub's code and internals are private (§14
 | Hub | hosted by B3 (private) | Pairs machines, keeps what they share, writes summaries, serves the board. |
 
 If this file and the code disagree, fix one of them in the same change. Section numbers are stable because code cites
-them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22, §25, §27) covered the hub's internals, which moved to the
+them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22, §25, §27, §28) covered the hub's internals, which moved to the
 hosted hub's own docs. Sections 1–13 were written while the hub was Bullpen and the relay was agentblip; where they say
 agentblip, read the Workmesh CLI.
 
@@ -700,3 +700,31 @@ duration and outcome only, and no `plan` notice at all. A metadata device's `tit
   second (a stat, then only new complete lines), so a notice or title Claude Code writes between hooks reaches the hub
   within about two seconds.
 
+---
+
+# Ask: an agent asks the team's hub (Sean, 2026-11-25)
+
+A hub may answer questions about the team's agents in plain words ("what are An's agents working on?", "who touched
+apps/hub today?"). People ask on the board (the hosted hub's side); this section is the relay's way in, for an MCP
+tool the relay will add. Still `v: 1`; an older hub answers `404`, which a relay reads as "this hub has no Ask".
+
+## 29. `POST /relay/ask`
+
+- **Request:** `POST /relay/ask` with the device token (`Authorization: Bearer bp_…`, under the `/relay/*` bypass),
+  body `{ question: string 1..2000, zone?: string ≤ 64 }`. `zone` is the IANA time zone ("America/New_York") that
+  "today" and clock times are read in; absent, UTC.
+- **Answer:** `200 { ok: true, answer: string, sessions: [{ hubKey, name, person, state }] }`. `answer` is plain text
+  that names sessions and people by name; `sessions` lists the sessions it names (hub keys, §2), so a caller can link
+  or message them. `400` schema error, `401` as for ingest, `429` with `Retry-After` (a few questions a minute per
+  device, and a daily cap per person shared with the board), `502` the hub's model failed, `503` the hub has no model.
+  `Cache-Control: no-store`.
+- **What it may say:** only what the hub already shows the device's person, read-only: sessions, states, now lines,
+  turn summaries, waiting reasons, tool activity and file paths, claims, leases, holds and notes. Never another
+  session's prompt, message or tool-description text, at any sharing level. An agent's question can't act: no
+  messages, holds or notes come of it (on B3's hub, people propose those on the board and confirm each one).
+- **Privacy:** the question goes to the hub and its model provider (B3's hub: OpenRouter, as for summaries, §Privacy
+  rules); the hub keeps no conversation for it, only a count toward the person's daily limit. Logs carry no question
+  or answer.
+- **The relay side (to come):** an `ask { question }` tool in `workmesh mcp` (§23), answered by the daemon calling this
+  endpoint with the device token (the agent never holds it): text only, no streaming, one question in flight per
+  session, `404` remembered for 10 minutes like the other v1 endpoints.

@@ -24,6 +24,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **done** (11-24): names, markup, orchestrators, graph fit (relay in the next release, 0.9.1); Linear titles live |
 | Liveness | Presence from the hub, not the browser; a restart never ends sessions; the daemon as a launchd / systemd service; current client versions; quiet and stalled sessions | **done** (11-25): wire #11, relay (in 0.10.0 with v1, not yet on npm), hub in workmesh-cloud #4 |
 | v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub and board live (workmesh-cloud #5) |
+| Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); relay MCP tool `ask` next |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
@@ -155,6 +156,15 @@ Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interru
 - **Next:** publish 0.10.0 and roll out; Linear agent identities per person (needs An); claims mirrored to Linear (needs
   a key that can write).
 
+### Ask (Linear B3-7165, done on the board 11-25)
+- "Ask ⌘K" on the board: questions in plain words ("What are An's agents working on?", "What's waiting on me?", "Who
+  touched apps/hub today?") answered by a tool-calling model (OpenRouter) from what the board already holds: sessions,
+  turns, activity, claims, leases, notes, Linear tickets. Answers name sessions and people as links.
+- Actions: it can draft a message to an agent or a person, a hold or release, or a project note; each is a card with
+  exactly what will happen and runs only when you confirm it, as you.
+- Agents: `POST /relay/ask` (SPEC §29) answers an agent's question from the same data minus other sessions' prompt and
+  message text, and can't act. **Next:** the relay's `ask` MCP tool.
+
 ### v2 Delegate (Linear B3-7168)
 - Messages delivered into running and idle sessions (Claude Code session inbox, Codex app-server).
 - Handoffs to another person's runner through that person's policy; approval gates at merge, deploy, spend.
@@ -162,6 +172,8 @@ Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interru
 
 ## Decision log
 
+- 11-25 Ask: answers come only from tool reads of the hub's own data; actions are proposals a person confirms on a
+  card, never run from a model's turn; agents asking get read tools only and no prompt or message text.
 - 11-25 Liveness: presence is computed and pushed by the hub, never derived in a client; a heartbeat can no longer end
   a session (missing for 30 min, SessionEnd or a gone process can); the daemon runs as a launchd / systemd service
   that restarts it unless `workmesh stop` asked it to stop; the forwarder's saved state is local only (0600).

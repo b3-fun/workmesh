@@ -153,8 +153,10 @@ export type HubApprovalAccepted = z.infer<typeof approvalAccept>;
 
 /**
  * `POST /relay/approvals`. `request`: a session asks to take a gated action (one pending request per session, gate
- * and detail: asking again returns the same approval). `approve` / `deny`: a person decides one they may decide (the
- * gate's owner or one of its approvers) from a relay, as on the board.
+ * and detail: asking again returns the same approval, or a decision made a few minutes ago). `renew: true` (§31: the
+ * relay used the last approval for its one run) asks anew: only a pending one is returned, never a decision.
+ * `approve` / `deny`: a person decides one they may decide (the gate's owner or one of its approvers) from a relay,
+ * as on the board.
  */
 export const hubApprovalRequestSchema = z.union([
   z.strictObject({
@@ -162,6 +164,7 @@ export const hubApprovalRequestSchema = z.union([
     sessionKey,
     gate: hubGateActionSchema,
     detail,
+    renew: z.literal(true).optional(),
   }),
   z.strictObject({
     action: z.enum(["approve", "deny"]),
@@ -176,6 +179,7 @@ export const hubApprovalRequestAcceptSchema = z.union([
     sessionKey,
     gate: hubGateActionSchema,
     detail: textAccept(HUB_APPROVAL_DETAIL_MAX),
+    renew: z.boolean().nullish().catch(undefined).transform((v) => v === true || undefined),
   }),
   z.object({
     action: z.enum(["approve", "deny"]),

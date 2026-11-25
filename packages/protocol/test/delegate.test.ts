@@ -108,6 +108,7 @@ describe("approvals and gates (SPEC §30)", () => {
   it("request, approve and deny build strictly and read unchanged", () => {
     for (const b of [
       { action: "request", sessionKey: "claude-code:s1", gate: "merge", detail: approval.detail },
+      { action: "request", sessionKey: "claude-code:s1", gate: "merge", detail: approval.detail, renew: true },
       { action: "approve", id: "ap_1" },
       { action: "deny", id: "ap_1", note: "wait for the freeze to lift" },
     ]) {
@@ -119,9 +120,16 @@ describe("approvals and gates (SPEC §30)", () => {
       { action: "request", sessionKey: "claude-code:s1", gate: "merge", detail: "" },
       { action: "request", sessionKey: "claude-code:s1", gate: "merge", detail: "x".repeat(HUB_APPROVAL_DETAIL_MAX + 1) },
       { action: "request", sessionKey: "claude-code:s1", gate: "merge", detail: "x", command: "gh pr merge" },
+      { action: "request", sessionKey: "claude-code:s1", gate: "merge", detail: "x", renew: false },
     ]) {
       expect(hubApprovalRequestSchema.safeParse(b).success, JSON.stringify(b)).toBe(false);
     }
+    // A hub reads a malformed `renew` as absent (ask as before), never as a reason to drop the request.
+    const odd = hubApprovalRequestAcceptSchema.parse({ action: "request", sessionKey: "claude-code:s1", gate: "merge", detail: "x", renew: "yes" });
+    expect(odd).toMatchObject({ action: "request", detail: "x" });
+    expect((odd as { renew?: boolean }).renew).toBeUndefined();
+    const renewed = hubApprovalRequestAcceptSchema.parse({ action: "request", sessionKey: "claude-code:s1", gate: "merge", detail: "x", renew: true });
+    expect((renewed as { renew?: boolean }).renew).toBe(true);
   });
 
   it("an approval round-trips; a decided one carries who and why", () => {

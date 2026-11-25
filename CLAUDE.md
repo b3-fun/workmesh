@@ -229,7 +229,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 
 - **Contract:** `docs/SPEC.md` is the relay ↔ hub contract (wire format, what may leave a machine, sharing levels,
   redaction, privacy rules). Change it in the same commit as any code that departs from it.
-- **Linear:** parent B3-7165, v0 B3-7166, v1 B3-7167, v2 B3-7168 (project "Workmesh", team NPC Labs; "B3OS Beta" until
+- **Linear:** parent B3-7165, v0 B3-7166, v1 B3-7167, v2 B3-7168, v3 Memory B3-7203 (project "Workmesh", team NPC Labs; "B3OS Beta" until
   11-25, ids unchanged; new Workmesh issues go to `--project "Workmesh"`). Sean's agents prefix every Linear
   comment with "(Claude, for Sean)", comment at each merge and deploy, and re-read the issue's comments before each
   merge or deploy. A person's comment is an instruction; "hold" pauses the work.
@@ -326,6 +326,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - [x] v1 Coordinate wire (#10, merged): protocol 60 tests
 - [x] v1 Coordinate relay (0.10.0): sync, hook enforcement, inbox, MCP, setup, menu bar
 - [x] v2 Delegate wire (#22, merged): protocol 79 tests
+- [x] v3 Memory wire (SPEC §35–36, `packages/protocol/src/memory.ts`): protocol 90 tests
 - [ ] v2 Delegate relay (branch `delegate-v2`, 0.11.0 not published): init, wake, handoffs, gates, knowledge, menu bar — CLI 769 tests
 - [ ] v0.5/v0.6 relay (branch `relay-v06`): subagents, agent messages, links, avatars, `/team`, multiplayer menu bar — CLI 525 tests
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain

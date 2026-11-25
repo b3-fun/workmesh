@@ -237,6 +237,10 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     classify: (p) => forwarder?.classify(p),
     isShared: (key) => forwarder?.isShared(key) ?? false,
     projectName: () => liveConfig.hub?.project.name,
+    // v3 (SPEC §36): which memories a session started with, reported in the background (a failure is dropped).
+    memoriesUsed: (key, ids) => {
+      void coord?.memoryUsed(key, ids);
+    },
   });
   const applyHookEvent = (event: SessionEvent, hook: string) => {
     let deny: string | undefined;

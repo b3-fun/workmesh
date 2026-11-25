@@ -24,7 +24,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **done** (11-24): names, markup, orchestrators, graph fit (relay in the next release, 0.9.1); Linear titles live |
 | Liveness | Presence from the hub, not the browser; a restart never ends sessions; the daemon as a launchd / systemd service; current client versions; quiet and stalled sessions | **done** (11-25): wire #11, relay (in 0.10.0 with v1, not yet on npm), hub in workmesh-cloud #4 |
 | v0.11 Session mirror | The board's session page reads like the person's terminal: title, harness and model; prompts, messages, folded tool runs; background-agent and shell notices; turn lines with what's still running; mode, background tasks and agents in a footer | **done** (11-25): wire #13, relay #14 + #20 (on Sean's Mac, in the next release), hub and board workmesh-cloud #8 (live) |
-| v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub and board live (workmesh-cloud #5) |
+| v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub and board live (workmesh-cloud #5); the Workmesh agent in Linear live (workmesh-cloud #11, #13, #14) |
 | Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); relay MCP tool `ask` next |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | **in progress** (11-25): wire (SPEC §30); relay and hub building |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
@@ -160,8 +160,8 @@ this". Wire: SPEC §26.
 
 ### v1 Coordinate (Linear B3-7167, in progress 11-25)
 - MCP server in every session: `roster`, `send`, `inbox`, `claim`, `lease`, `note`.
-- File leases enforced by a PreToolUse deny that names the holder; claims mirrored to Linear as agent sessions under
-  one app identity per person (needs a Linear workspace admin).
+- File leases enforced by a PreToolUse deny that names the holder; claims mirrored to Linear as agent sessions, each
+  agent named on the issue as its person's agent.
 - "hold" from the board or a Linear comment stops the agent's next tool call.
 - **Wire (done, #10, SPEC §21):** `POST /relay/leases|claims|messages|notes|inbox/ack`, `GET /relay/sync` (leases,
   holds, inbox, claims, roster, notes, and `edits` for "someone is working there"), lease path globs with covers and
@@ -183,8 +183,14 @@ this". Wire: SPEC §26.
   "go ahead" releases it; read-only, once a minute). The board shows held sessions in Waiting ("Held by An · reason"),
   claimed issues on chips with the claimant, a Work tab (claims, leased files and the edits they turned away, notes),
   Workmesh messages in Messages with a reply box, and turned-away edits in the feed.
-- **Next:** publish 0.10.0 and roll out; Linear agent identities per person (needs An); claims mirrored to Linear (needs
-  a key that can write).
+- **The Workmesh agent in Linear (live 11-25, workmesh-cloud #11, #13, #14):** one Linear app, "Workmesh", installed by
+  Sean as a workspace admin. A claim opens a thread on its issue in the agent's name ("Sean · Claude", the person's
+  GitHub avatar, the team's "(Claude, for Sean)" marker) with Workmesh's agent session on it: progress, holds and
+  resumes, PRs for that issue, and a closing note when the claim ends. A reply in that thread, or a mention of
+  @Workmesh on a claimed issue, reaches the claiming agent as a Workmesh message, and it can answer there; Linear's
+  "stop" holds it. Connect or reconnect from the board's Settings. Checked live on a test issue (B3-7199): claim,
+  thread, progress, a reply both ways, release.
+- **Next:** publish 0.10.0 and roll out.
 
 ### Ask (Linear B3-7165, done on the board 11-25)
 - "Ask ⌘K" on the board: questions in plain words ("What are An's agents working on?", "What's waiting on me?", "Who
@@ -204,6 +210,11 @@ this". Wire: SPEC §26.
   gates), `wake` on messages and inbox items, and optional `handoffs`, `gates`, `approvals` lists on `/relay/sync`.
 
 ## Decision log
+
+- 11-25 Linear identities: one Workmesh app for the team, not one per person. Linear gives an app one identity, so the
+  hub names each agent on its comments (`createAsUser`, the person's avatar) and the agent session stays Workmesh's.
+  PRs are never attached to the issue by the hub: an attached PR closes the issue when it merges, and Linear's GitHub
+  integration already links PRs that name the issue.
 
 - 11-25 v2 wire: a handoff runs only after its recipient accepts it (a self-handoff by the sender's own policy);
   an accept from a relay names the runner, one from the board lets the first relay to `start` win. Gates are a
@@ -270,5 +281,5 @@ this". Wire: SPEC §26.
 
 ## Links
 
-- Linear (project "B3OS Beta"): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2).
+- Linear (project "Workmesh", team NPC Labs): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2).
 - Live hub: https://workmesh.b3os.org (also https://bullpen.b3os.org)

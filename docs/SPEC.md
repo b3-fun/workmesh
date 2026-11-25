@@ -382,8 +382,8 @@ Ingest body adds `person: { github?: string ≤ 40 }`: the person's GitHub login
 logged in), sent on every heartbeat for the board's and menu bar's avatars. The hub reads a malformed value as absent.
 
 Linear ids (rule 6, and these `linear` links) are never read from a prompt the agent tool injected, from Workmesh's
-own lines (its guidance, inbox notes and heads-ups start with "Workmesh"), or from an id written as an example
-("e.g. B3-123").
+own lines (its guidance, inbox notes and heads-ups start with "Workmesh"), from an id written as an example
+("e.g. B3-123"), or from past a command's first line (a heredoc's or a script's body is file text).
 
 What still never leaves a machine (§3.3 holds): tool input or output, file contents, full commands, a subagent's
 prompt or its transcript text (the main thread's only, §9; what agents write to each other travels as

@@ -768,7 +768,8 @@ export class HubForwarder {
 
     const keys = this.rule.issueKeys;
     const ids = [
-      ...new Set([...extractIssues(issueText(d?.prompt), keys), ...extractIssues(issueText(d?.command), keys)]),
+      // A command's first line only: a heredoc or a script's body is file text, not the work (a test's fixture ids).
+      ...new Set([...extractIssues(issueText(d?.prompt), keys), ...extractIssues(issueText(d?.command?.split("\n", 1)[0]), keys)]),
     ];
     this.addIssues(t, ids);
 

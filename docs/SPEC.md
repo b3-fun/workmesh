@@ -16,7 +16,7 @@ them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17
 hosted hub's own docs. Sections 1–13 were written while the hub was Bullpen and the relay was agentblip; where they say
 agentblip, read the Workmesh CLI.
 
-Linear: parent B3-7165, v0 B3-7166 (project "B3OS Beta"). Research behind it: the Linear document
+Linear: parent B3-7165, v0 B3-7166 (project "Workmesh"). Research behind it: the Linear document
 "Research: multiplayer agents".
 
 ## Privacy rules

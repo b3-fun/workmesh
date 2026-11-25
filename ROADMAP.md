@@ -298,5 +298,5 @@ this". Wire: SPEC §26.
 
 ## Links
 
-- Linear (project "B3OS Beta"): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2).
+- Linear (project "Workmesh", team NPC Labs): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2).
 - Live hub: https://workmesh.b3os.org (also https://bullpen.b3os.org)

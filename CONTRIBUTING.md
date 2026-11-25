@@ -88,7 +88,7 @@ developed here.
 
 How we work:
 
-- Linear, project "B3OS Beta": parent **B3-7165**; v0 See **B3-7166**, v1 Coordinate **B3-7167**, v2 Delegate
+- Linear, project "Workmesh": parent **B3-7165**; v0 See **B3-7166**, v1 Coordinate **B3-7167**, v2 Delegate
   **B3-7168**. Research: the Linear document "Research: multiplayer agents".
 - The team protocol (b3os-beta `docs/how-we-work.md`): one human owner per epic; an agent claims an issue with a plan
   comment, reports at each merge and deploy, re-reads comments before each step, and marks its comments

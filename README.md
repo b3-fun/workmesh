@@ -74,6 +74,34 @@ It ends by checking that the hub heard from this machine: from then on you show 
 online on the board, with "no agents running" until an agent works in a shared repo.
 `workmesh doctor` says what is wrong when a machine shows offline, and what to run.
 
+### Staying current
+
+`init` is for a new machine; after that, one command keeps it current:
+
+```bash
+workmesh update            # install the newest release, refresh hooks, MCP and the daemon
+```
+
+It installs the new version the way you installed Workmesh (npm, pnpm, bun, yarn or
+Volta, globally), then the new version re-runs the setup steps that changed and restarts
+the daemon, printing each step. If the new version fails its checks (the daemon must come
+back on it, hooks and the MCP server must still be in place), it rolls back to the one you
+had. Run it again and it changes nothing. A git checkout or a project dependency is left
+alone: it says what to do instead. `workmesh update --check` only reports.
+
+`workmesh status`, `doctor` and the menu bar say when a release is out
+("0.12.1 available: `workmesh update`"); the daemon learns it from your hub, else from
+npm at most every 6 hours. `workmesh update --auto on` lets the daemon install patch
+releases on its own, at most once a day (`--minor` takes minor releases too;
+`--auto off` stops it). Agent sessions that started before an update keep the older
+Workmesh tools until they restart; each one is told once.
+
+On 0.11 or older (no `update` command yet), once:
+
+```bash
+npm i -g @b3os/workmesh@latest && workmesh update
+```
+
 ### Linux
 
 `workmesh init` works the same on Linux, with Node 20, 22 or 24:
@@ -598,6 +626,7 @@ Open questions:
 | Command | Does |
 |---|---|
 | `workmesh init <hub-url>` | One-step setup for a team hub: hooks and MCP tools, the daemon (restarted on this build), pairing; safe to run again (`--share`, `--no-codex`, `--no-open`, `--machine`, `--claude-dir`, `--no-mcp`, `--no-service`, `--no-wake`, `--repair`) |
+| `workmesh update` | Install the newest release the way Workmesh was installed, have it refresh hooks, MCP and the service and restart the daemon, roll back if it fails its checks; safe to run again; a git checkout is left alone (`--check [--json]`, `--to <version>`, `--auto on\|off [--minor]`) |
 | `workmesh setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt; `--hooks-only` just installs or refreshes the hooks and the `workmesh` MCP server (`--no-mcp` skips it); `--claude-dir <path>` picks the Claude Code profile (default `$CLAUDE_CONFIG_DIR`, else `~/.claude`); `--codex` / `--no-codex` decide about Codex (default: only when installed) |
 | `workmesh uninstall` | Remove Workmesh's hooks and MCP server from Claude Code (`settings.json`, `.claude.json`) and Codex (`hooks.json`, `config.toml`), keeping everything else, and its launchd / systemd daemon service (which stops the daemon it ran); backs up each file first (`--claude-dir <path>`, `--no-codex`, `--no-service`) |
 | `workmesh start [--detach]` | Run the daemon, foreground or in the background |
@@ -649,6 +678,9 @@ cd apps/menubar && ./scripts/make-app.sh 0.3.0 && open dist/Workmesh.app
 ```
 
 Requires macOS 13+ and the daemon running. See [`apps/menubar/`](apps/menubar/README.md).
+When a release is out it shows one "Update available" item that runs `workmesh update`
+with the output in a window, and updates itself from the release's zip after checking its
+SHA-256.
 
 ## Self-hosting & direct mode
 

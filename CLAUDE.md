@@ -69,7 +69,7 @@ Any tool (curl) ───┼─────────────────�
 │   ├── protocol/              # @workmesh/protocol — relay ↔ hub wire schemas (strict to send, accept to read), limits
 │   └── cli/                   # @b3os/workmesh npm CLI (daemon + adapters + sinks)
 │       └── src/
-│           ├── commands/      # init, setup, start/restart, stop, status, emit, hook, wake, pause, unlink, doctor, hub, coord, roots
+│           ├── commands/      # init, setup, update, start/restart, stop, status, emit, hook, wake, pause, unlink, doctor, hub, coord, roots
 │           ├── lib/           # config, paths + names (workmesh dirs, legacy agentblip names), migrate (one-time copy), daemon-control (stop/start pidfile logic)
 │           ├── adapters/      # claude-code (hooks), codex (hooks.json + notify + watcher), workflow (ultracode journal watcher), detail (local-only hook facts)
 │           ├── hub/           # hub forward: git (.git reader), rules (SPEC §3.3 reductions), redact (SPEC §9), transcript (tailer), forwarder (batching/retry), coord (v1 sync client), shell-writes (paths a command writes)
@@ -99,6 +99,7 @@ Any tool (curl) ───┼─────────────────�
 - `POST /pause` — empty body pauses until resumed; `{for: "30m"|"1h"|"tomorrow"}` or `{until}` snoozes, the pusher's sweep tick auto-resumes (`lib/snooze.ts`); `/state.pausedUntil`
 - `POST /sessions/dismiss {key}` — drops a session (`SessionStore.remove`); it returns with its next event
 - `GET /config` — token-free `safeConfig` view · `POST /config` — live-tune `granularity`/`statusPolicy`/`showProject`/`repoPrefix` (validated by `liveConfigPatchSchema`, applied via `pusher.applyConfig()`, persisted). Used by the menu bar app.
+- `GET /update` (0.12, SPEC §41) — `{current, latest, available, source, install: {method, canUpdate, hint}, run, auto, last, menubar}` for the menu bar, `status` and `doctor`; `/health` carries `version`
 - `GET /hub` — hub forwarder status (`{enabled:false}` when not paired) · `POST /hub/reload` — re-read the config's `hub` section and restart the forwarder (used by `workmesh hub connect|disconnect|include|exclude`)
 - `GET /team` (v0.5) — the team from the hub's `/relay/team` (polled by `hub/team.ts`), with `hubUrl`, `boardUrl`, `share`, `connected`, `halted`, `available` (false = older hub, 404); `?open=1` = the menu is open (15 s polling). The menu bar's team section reads only this.
 - v1 (SPEC §21, §23): `POST /event` with an `x-workmesh-hook: <HookEvent>` header answers `{ok, coord?: {deny?, context?}}`
@@ -212,6 +213,17 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   hold lets `workmesh send|inbox|whoami|claims|leases|notes` and the talk-and-read MCP tools through
   (`passesHold`), and claims/leases patch the cached sync at once. Live harness and evidence:
   `~/Documents/b3/b3os-orch/scratch/team-hub/evidence/delegate-followups/`.
+
+- 0.12 Keeping current (SPEC §40, §41): `commands/update.ts` (`workmesh update`: `lib/install-method.ts` reads the
+  install from the CLI's own path, table-tested; installs the release the same way; the NEW version's hidden
+  `update --finish` re-runs hooks/MCP/service and restarts the daemon, then checks; exit 2 makes the old process roll
+  back: npm from a copy in `state/update/previous`, others reinstall; a git checkout exits 3 untouched). `init` and
+  `setup` record the version whose setup ran (`update.json`), so `update` on an up-to-date but never-set-up install
+  finishes it. `daemon/updates.ts` (`UpdateChecker`: hub `latestClient`, else npm ≤ 6 h, GitHub release zip + digest
+  ≤ 6 h on macOS, opt-in daily auto-update in its own session / systemd unit) serves `GET /update`; `/health` has
+  `version`. `daemon/session-versions.ts`: hooks send `x-workmesh-client` (and at SessionStart `-start`, `-surface`
+  from `lib/surface.ts`); a session on older tools is told once. `WORKMESH_LAUNCHD_LABEL` gives a test HOME its own
+  launchd job (`scripts/smoke-update/run.sh`: four packed releases on a local registry, never published).
 
 ## The hosted hub (private)
 

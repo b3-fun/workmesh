@@ -29,6 +29,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **done** (11-25): wire #22 (SPEC §30), relay #23 + #26 in **0.11.0** (npm, GitHub release v0.11.0), hub and board workmesh-cloud #12; follow-ups (approval → the agent carries on, a live two-person handoff) in 0.11.x |
 | Onboarding hardening | First run solid on macOS and Linux: lingering so an SSH box stays online after logout, no half-installed systemd unit, `init` checks the hub heard from the machine, `doctor` names why a machine shows offline, one pairing per machine (the same hub under two addresses, a re-pair retires the old device), "online, no agents running" and "paired, never connected" on the board; a Docker smoke test (Node 20/22/24, with and without systemd, over SSH) | **in review** (11-25): relay 0.11.1 (not published), hub workmesh-cloud |
 | v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **in progress** (11-25): wire (SPEC §35–36) |
+| Keeping current | `workmesh update` (install the newest release the way it was installed, refresh hooks, MCP and the daemon, roll back on failed checks), update notices from the hub, opt-in auto-update, a once-per-session note to sessions on older tools, "Update available" in the menu bar, versions on the board | **in progress** (11-25): wire #33 (SPEC §40) merged; relay (SPEC §41), menu bar and board in review |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -292,7 +293,34 @@ base people trust. Contract: SPEC §35 (wire) and §36 (relay).
 - **Next:** relay 0.12.0, then the hub and board (Memory tab, Needs-you cards, Settings, Ask, proposals from finished
   sessions, notes migrated).
 
+### Keeping current (Linear B3-7168 follow-up, in progress 11-25)
+
+Every release from 0.10.0 to 0.11.1 meant a Slack DM to each teammate with an npm command, and sessions started before
+an upgrade went on without the new tools until someone restarted them (An's test session, 11-25). Contract: SPEC §40
+(wire) and §41 (relay).
+- **`workmesh update`:** finds how Workmesh was installed (npm, pnpm, bun, yarn, Volta; a git checkout, a project
+  dependency and npx are left alone with what to do instead), installs the newest release the same way, has the new
+  version re-run the setup steps (hooks, MCP, service) and restart the daemon, and rolls back to the previous version
+  when the new one fails the core checks. Safe to run again. `--check`, `--to`.
+- **Notices:** the daemon learns the newest version from the hub's `latestClient` (else npm, at most every 6 h);
+  `status`, `doctor` and the menu bar say "0.12.1 available: `workmesh update`". `--auto on` installs patch releases
+  daily (`--minor` too), never a version that already failed.
+- **Stale sessions:** a session that started under an older Workmesh is told once, at its next hook, and what reloads
+  the tools.
+- **Menu bar:** one "Update available" item runs the update with its output in a window; the app updates itself from
+  the release zip after checking its SHA-256.
+- **Board:** each device's version on Settings → Devices, who's behind (with the command to run) in the team view, a
+  quiet dot in the header for your own; no banners.
+- **Proof:** a temp-HOME smoke test (`scripts/smoke-update/run.sh`) with four packed releases on a local registry:
+  install, notice, update, stale note, a broken release rolled back, the daemon updating itself.
+- **Next:** 0.12.0 is the last release that needs a message: `npm i -g @b3os/workmesh@latest && workmesh update`.
+
 ## Decision log
+
+- 11-25 Keeping current (Sean: upgrades stop needing Slack DMs): `init` stays the one-liner for new machines, `update`
+  is for existing ones. Auto-update is opt-in and patch-only by default; the daemon never retries a version that
+  failed its checks. A git checkout is never touched by `update`. The stale-session note is said once per session and
+  only when the tools a session got at start differ from the new version's.
 
 - 11-25 Memory: agents propose, people accept; only accepted memories reach agents, and a hub's own proposals from
   finished sessions are never accepted without a person. A person may let their own agents' memories through, never

@@ -129,6 +129,8 @@ export class Delegate {
   private readonly selfFirstSeen = new Map<string, number>();
   /** Handoff ids with an accept/decline/start call in flight. */
   private readonly handoffCalls = new Set<string>();
+  /** When this device last tried to start each accepted handoff (a failed start is retried a minute later). */
+  private readonly startTried = new Map<string, number>();
   /** Handoffs this device was told it can't run (logged once). */
   private readonly cantRunLogged = new Set<string>();
   /** Sessions that ended (SessionEnd, a gone process): their waiters stop. */
@@ -376,6 +378,7 @@ export class Delegate {
       // Sent from this machine: give the person's other machines a head start ("another of your machines").
       const first = this.selfFirstSeen.get(h.id) ?? this.now();
       this.selfFirstSeen.set(h.id, first);
+      if (this.selfFirstSeen.size > 1000) this.selfFirstSeen.clear();
       if (this.now() - first < SELF_HANDOFF_SENDER_DELAY_MS) return;
     }
     this.handoffCalls.add(h.id);
@@ -406,6 +409,10 @@ export class Delegate {
       return;
     }
     if (!runner.hasRoom()) return;
+    const tried = this.startTried.get(h.id);
+    if (!force && tried !== undefined && this.now() - tried < 60_000) return;
+    this.startTried.set(h.id, this.now());
+    if (this.startTried.size > 1000) this.startTried.clear();
     runner.run(h);
   }
 

@@ -13,16 +13,30 @@
 // v2: handoffs offered to me or running here, and approvals; POST /coord/op answers
 // them, so Accept, Decline, Approve and Deny work against the mock).
 //
+// GET /update: legacy answers 404 (an older daemon), the scenarios above "up to
+// date". The update scenarios are team plus a newer release:
+//   update          `workmesh update` can run here; `run` is scripts/mock-update.mjs,
+//                   which prints for a few seconds, exits 0 and restarts this mock
+//                   (down 3 s, new secret), after which /update says it's current
+//   update-fail     the same, but the run fails and rolls back (exit 1)
+//   update-git      a git checkout: no run, a hint with a command to copy
+//   update-menubar  the CLI is current, only the menu bar app is behind
+// Release options: --current 0.12.0 --latest 0.12.1 --menubar-version <latest>,
+// --menubar-zip <path> (served at /mock/Workmesh-menubar-macos.zip with its real
+// SHA-256; without it a placeholder that won't unpack), --menubar-sha256 <hex>
+// (announce another digest: the tampered-download test).
+//
 // It writes <XDG_STATE_HOME>/workmesh/daemon.secret and
 // <XDG_CONFIG_HOME>/workmesh/config.json ({"port": ...}) so the app finds it.
 // Both variables are required and must not be the real ~/.config or
 // ~/.local/state: this never touches a live install. Plain Node, no deps.
 
-import { randomBytes } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
 const arg = (name, fallback) => {
@@ -31,7 +45,13 @@ const arg = (name, fallback) => {
 };
 const port = Number(arg("port", "45190"));
 const scenario = arg("scenario", "team");
-const SCENARIOS = ["team", "coord", "delegate", "empty", "unpaired", "halted", "noteam", "legacy"];
+const UPDATE_SCENARIOS = ["update", "update-fail", "update-git", "update-menubar"];
+const SCENARIOS = ["team", "coord", "delegate", "empty", "unpaired", "halted", "noteam", "legacy", ...UPDATE_SCENARIOS];
+const CURRENT = arg("current", "0.12.0");
+const LATEST = arg("latest", "0.12.1");
+const MENUBAR_VERSION = arg("menubar-version", LATEST);
+const MENUBAR_ZIP = arg("menubar-zip", "");
+const MENUBAR_SHA = arg("menubar-sha256", "");
 
 function die(msg) {
   console.error(`mock-daemon: ${msg}`);
@@ -53,7 +73,7 @@ for (const [dir, real] of [
   if (resolve(dir) === resolve(real)) die(`${dir} is the real config/state dir; use a scratch directory`);
 }
 
-const secret = randomBytes(24).toString("hex");
+let secret = randomBytes(24).toString("hex");
 mkdirSync(join(stateHome, "workmesh"), { recursive: true });
 mkdirSync(join(configHome, "workmesh"), { recursive: true });
 writeFileSync(join(stateHome, "workmesh", "daemon.secret"), secret + "\n", { mode: 0o600 });
@@ -288,6 +308,54 @@ function team(open) {
   return out;
 }
 
+// GET /update. The menu bar zip comes from --menubar-zip (or a placeholder).
+const updateResultPath = join(stateHome, "workmesh", "mock-update-result.json");
+rmSync(updateResultPath, { force: true });
+if (MENUBAR_ZIP && !existsSync(MENUBAR_ZIP)) die(`--menubar-zip ${MENUBAR_ZIP} doesn't exist`);
+const menubarZip = MENUBAR_ZIP ? readFileSync(MENUBAR_ZIP) : Buffer.from("not a zip: start the mock with --menubar-zip <Workmesh-menubar-macos.zip>\n");
+const menubarSha = MENUBAR_SHA || createHash("sha256").update(menubarZip).digest("hex");
+const mockUpdate = join(dirname(fileURLToPath(import.meta.url)), "mock-update.mjs");
+
+function update() {
+  const result = existsSync(updateResultPath) ? JSON.parse(readFileSync(updateResultPath, "utf8")) : null;
+  const updated = result?.ok === true;
+  const current = scenario === "update-menubar" || updated ? LATEST : CURRENT;
+  const base = {
+    current,
+    latest: UPDATE_SCENARIOS.includes(scenario) ? LATEST : current,
+    available: false,
+    checkedAt: T0 - 5 * 60_000,
+    source: "npm",
+    install: { method: "npm", canUpdate: true },
+    run: [process.execPath, mockUpdate, "update"],
+    auto: { enabled: true, scope: "patch" },
+  };
+  if (!UPDATE_SCENARIOS.includes(scenario)) return base;
+  const out = {
+    ...base,
+    source: "hub",
+    available: scenario !== "update-menubar" && !updated,
+    run: [process.execPath, mockUpdate, "update", "--from", CURRENT, "--to", LATEST, ...(scenario === "update-fail" ? ["--fail"] : [])],
+    menubar: {
+      version: MENUBAR_VERSION,
+      url: `http://127.0.0.1:${port}/mock/Workmesh-menubar-macos.zip`,
+      sha256: menubarSha,
+      size: menubarZip.length,
+      releaseUrl: `https://github.com/b3-fun/workmesh/releases/tag/v${MENUBAR_VERSION}`,
+    },
+  };
+  if (scenario === "update-git") {
+    out.install = {
+      method: "git",
+      canUpdate: false,
+      hint: "This Workmesh runs from a git checkout at ~/src/workmesh: pull and build it there, then run `workmesh update`.",
+    };
+    delete out.run;
+  }
+  if (result) out.last = { at: result.at, ok: result.ok, from: result.from, to: result.to, rolledBack: result.rolledBack, message: result.message };
+  return out;
+}
+
 // ---------------------------------------------------------------- server
 
 function send(res, status, body) {
@@ -301,7 +369,26 @@ const server = http.createServer((req, res) => {
   if (method === "GET" && url.pathname === "/health") {
     return send(res, 200, { ok: true, pid: process.pid, uptimeSec: Math.round((Date.now() - T0) / 1000), mock: scenario });
   }
+  // Like a GitHub release asset: no daemon secret.
+  if (method === "GET" && url.pathname === "/mock/Workmesh-menubar-macos.zip") {
+    if (process.env.MOCK_DAEMON_VERBOSE) console.log(`GET ${url.pathname} (${menubarZip.length} bytes)`);
+    res.writeHead(200, { "content-type": "application/zip", "content-length": menubarZip.length });
+    return res.end(menubarZip);
+  }
   if (req.headers.authorization !== `Bearer ${secret}`) return send(res, 401, { ok: false, error: "unauthorized" });
+  if (method === "GET" && url.pathname === "/update") {
+    if (scenario === "legacy") return send(res, 404, { ok: false, error: "not found" });
+    const body = update();
+    if (process.env.MOCK_DAEMON_VERBOSE) console.log(`GET /update -> current ${body.current}, available ${body.available}${body.menubar ? `, menubar ${body.menubar.version}` : ""}`);
+    return send(res, 200, body);
+  }
+  // mock-update.mjs, at the end of a good run: go away like a restarting daemon.
+  if (method === "POST" && url.pathname === "/mock/restart") {
+    req.resume();
+    send(res, 200, { ok: true });
+    setTimeout(restart, 50);
+    return;
+  }
   if (method === "GET" && url.pathname === "/state") return send(res, 200, state());
   if (method === "GET" && url.pathname === "/config") return send(res, 200, config);
   if (method === "GET" && url.pathname === "/hub") return send(res, 200, hub());
@@ -342,4 +429,16 @@ const server = http.createServer((req, res) => {
 server.listen(port, "127.0.0.1", () => {
   console.log(`mock-daemon: ${scenario} on http://127.0.0.1:${port} (secret in ${join(stateHome, "workmesh", "daemon.secret")})`);
 });
+
+// Down for 3 s, then back on a new secret, as the real daemon is after an update.
+function restart() {
+  console.log("mock-daemon: restarting (down 3 s, new secret)");
+  server.close();
+  server.closeAllConnections();
+  setTimeout(() => {
+    secret = randomBytes(24).toString("hex");
+    writeFileSync(join(stateHome, "workmesh", "daemon.secret"), secret + "\n", { mode: 0o600 });
+    server.listen(port, "127.0.0.1", () => console.log("mock-daemon: back"));
+  }, 3000);
+}
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => server.close(() => process.exit(0)));

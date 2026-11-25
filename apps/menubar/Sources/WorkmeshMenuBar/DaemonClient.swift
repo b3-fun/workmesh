@@ -72,6 +72,17 @@ struct DaemonClient {
         }
     }
 
+    /// What the daemon knows about a newer Workmesh and how to install it here.
+    /// nil for a daemon without the endpoint (404): the menu shows nothing.
+    func fetchUpdate() async throws -> UpdateInfo? {
+        do {
+            let data = try await request("GET", "/update")
+            return try JSONDecoder().decode(UpdateInfo.self, from: data)
+        } catch DaemonError.http(404) {
+            return nil
+        }
+    }
+
     @discardableResult
     func pause() async throws -> Data { try await request("POST", "/pause") }
 

@@ -457,6 +457,31 @@ describe("Codex threads and workflows (SPEC §15)", () => {
     ]);
   });
 
+  it("a main Codex thread's title is the name its TUI shows (session_index.jsonl), at the conversation level only", async () => {
+    const MAIN = "019b0000-0000-7000-8000-00000000000c";
+    const file = path.join(codexDay, `rollout-2026-11-24T00-00-02-${MAIN}.jsonl`);
+    fs.writeFileSync(file, `${cx.sessionMeta(MAIN)}\n`);
+    fs.writeFileSync(
+      path.join(home, ".codex", "session_index.jsonl"),
+      `${JSON.stringify({ id: MAIN, thread_name: "Set answer to 42", updated_at: "2026-11-24T00:00:05Z" })}\n`,
+    );
+    for (const share of ["conversation", "metadata"] as const) {
+      const h = harness({ share });
+      const codex = (input: Record<string, unknown>): void =>
+        h.feed(mapCodexHookInput({ session_id: MAIN, cwd: beta, transcript_path: file, model: "gpt-6-luna", ...input }, h.now()));
+      codex({ hook_event_name: "UserPromptSubmit", prompt: "set the answer" });
+      codex({ hook_event_name: "Stop", last_assistant_message: "done" });
+      await h.send();
+      expect(h.last(`codex:${MAIN}`)?.title).toBeUndefined(); // read a moment after the turn ends
+      h.advance(2000);
+      await h.send();
+      h.advance(31_000); // the next upsert carries it
+      await h.send();
+      if (share === "conversation") expect(h.last(`codex:${MAIN}`)).toMatchObject({ role: "main", title: "Set answer to 42" });
+      else expect(h.upserts(`codex:${MAIN}`).every((u) => u.title === undefined)).toBe(true);
+    }
+  });
+
   it("a workflow run is a workflow session under its orchestrator, with its agents' tokens", async () => {
     const h = harness();
     const wfDir = path.join(projects, "w1", "subagents", "workflows", "wf_1");

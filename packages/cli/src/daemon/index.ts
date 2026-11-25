@@ -2,7 +2,7 @@ import fs from "node:fs";
 import pkg from "../../package.json";
 import { SessionStore, formatStatus } from "@workmesh/core";
 import type { SessionEvent } from "@workmesh/core";
-import { codexSessionsDir, createCodexWatcher } from "../adapters/codex";
+import { CODEX_NOTIFY_HOOK_EVENT, codexNotifyApplies, codexSessionsDir, createCodexWatcher } from "../adapters/codex";
 import type { CodexWatcher } from "../adapters/codex";
 import { claudeProjectsDir, createWorkflowWatcher } from "../adapters/workflow";
 import type { WorkflowWatcher } from "../adapters/workflow";
@@ -25,6 +25,8 @@ import { CoordHooks } from "./coord-hooks";
 import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
+import { codexHomeOfRollout } from "../hub/agents";
+import { CodexEndGuard } from "./codex-liveness";
 import { codexWaker } from "./codex-wake";
 import type { CoordSummary, HookMeta } from "./server";
 import { readGithubLogin } from "../lib/github";
@@ -133,6 +135,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     dir: handoffsDir(),
     log,
   });
+  /** Codex: the home each thread lives in, from its rollout path (a `CODEX_HOME` the daemon's env may not have). */
+  const codexHomes = new Map<string, string>();
   const delegate = new Delegate({
     coord: () => coord,
     getSession: (key) => store.get(key),
@@ -140,7 +144,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     repoOf: (dir) => forwarder?.classify(dir)?.repo,
     settings,
     runner,
-    codexWake: config.adapters.codex.enabled ? codexWaker({ log }) : undefined,
+    codexWake: config.adapters.codex.enabled ? codexWaker({ log, homeOf: (id) => codexHomes.get(`codex:${id}`) }) : undefined,
     log,
   });
   /** The cwd each session last reported (the checkout index learns a repo's checkout once per session and dir). */
@@ -222,7 +226,29 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   };
 
   const hidden = new Set(config.hideProjects ?? []);
+  // Codex: threads whose hooks run (their notify is redundant), and SessionEnds that may be a daemon restart.
+  const codexHooked = new Set<string>();
+  const codexEnds = new CodexEndGuard({ apply: (e) => applyNow(e), log });
   const applyEvent = (event: SessionEvent): void => {
+    if (event.source === "codex") {
+      const key = `codex:${event.sessionId}`;
+      const hookEvent = event.detail?.hookEvent;
+      if (hookEvent === CODEX_NOTIFY_HOOK_EVENT) {
+        if (!codexNotifyApplies(store.get(key) !== undefined, codexHooked.has(key))) return;
+      } else if (hookEvent) {
+        if (codexHooked.size > 2000) codexHooked.clear();
+        codexHooked.add(key);
+      }
+      const home = codexHomeOfRollout(event.detail?.transcriptPath);
+      if (home && codexHomes.get(key) !== home) {
+        if (codexHomes.size > 2000) codexHomes.clear();
+        codexHomes.set(key, home);
+      }
+      if (codexEnds.intercept(event)) return;
+    }
+    applyNow(event);
+  };
+  const applyNow = (event: SessionEvent): void => {
     // A hidden project contributes no project text anywhere, its path and
     // hook detail included.
     const clean =
@@ -474,9 +500,20 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
 
     let watcher: CodexWatcher | undefined;
     const sessionsDir = config.adapters.codex.sessionsDir ?? codexSessionsDir();
-    if (config.adapters.codex.enabled && fs.existsSync(sessionsDir)) {
+    // Codex makes its sessions dir at its first run, which may come after the daemon started (a new install, or a
+    // daemon kept running by launchd): look again every minute until it is there.
+    let codexDirTimer: ReturnType<typeof setInterval> | undefined;
+    const watchCodex = (): boolean => {
+      if (watcher || !fs.existsSync(sessionsDir)) return watcher !== undefined;
       watcher = createCodexWatcher(sessionsDir, applyEvent, log);
       log(`watching codex sessions in ${sessionsDir}`);
+      return true;
+    };
+    if (config.adapters.codex.enabled && !watchCodex()) {
+      codexDirTimer = setInterval(() => {
+        if (watchCodex() && codexDirTimer) clearInterval(codexDirTimer);
+      }, 60_000);
+      codexDirTimer.unref?.();
     }
 
     let wfWatcher: WorkflowWatcher | undefined;
@@ -523,6 +560,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         if (livenessTimer) clearInterval(livenessTimer);
         updates.stop();
         sessionVersions.flush();
+        if (codexDirTimer) clearInterval(codexDirTimer);
+        codexEnds.stop();
         server.close();
         try {
           await watcher?.close();

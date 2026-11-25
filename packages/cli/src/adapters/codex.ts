@@ -74,7 +74,23 @@ export function mapNotifyArg(argvJson: string, fallbackNow = Date.now()): Sessio
     kind: "idle",
     activity: activity || undefined,
     ts: fallbackNow,
+    // Local only: the daemon applies a notify only to a thread it knows that has no hooks (see codexNotifyApplies).
+    detail: compactDetail({ hookEvent: CODEX_NOTIFY_HOOK_EVENT }),
   };
+}
+
+/** `detail.hookEvent` of a notify event. */
+export const CODEX_NOTIFY_HOOK_EVENT = "notify";
+
+/**
+ * Whether the daemon applies a Codex notify (`agent-turn-complete`). Codex also notifies for its own helper threads (a
+ * thread's title is generated in one, whose "last message" is `{"title":…}`), which have no rollout and no hooks, so
+ * a notify for a thread the daemon never saw made a ghost session (live, codex-cli 0.164). With hooks the Stop hook
+ * already says the turn ended. So a notify counts only for a known thread whose hooks don't run (an older Codex, or
+ * hooks not trusted yet), where the rollout watcher made the session.
+ */
+export function codexNotifyApplies(known: boolean, hooked: boolean): boolean {
+  return known && !hooked;
 }
 
 export type CodexInstallResult = "installed" | "already-installed" | "manual";
@@ -531,7 +547,7 @@ function mapCodexEvent(
         }),
       };
     case "SessionEnd":
-      return { ...base, kind: "end" };
+      return { ...base, kind: "end", detail: compactDetail({ hookEvent: event }) };
     default:
       return null;
   }

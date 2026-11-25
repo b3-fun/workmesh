@@ -111,7 +111,10 @@ export class UpdateChecker {
   private async runTick(): Promise<void> {
     const now = this.now();
     let dirty = false;
-    if (!this.deps.hubLatest() && now - (this.check.npmAt ?? 0) >= NPM_EVERY_MS) {
+    // npm when the hub gives no version, or one older than this relay (a hub that hasn't read npm since a release).
+    const hub = this.deps.hubLatest();
+    const hubKnows = hub !== undefined && compareVersions(hub.version, this.deps.current) >= 0;
+    if (!hubKnows && now - (this.check.npmAt ?? 0) >= NPM_EVERY_MS) {
       this.check.npmAt = now;
       dirty = true;
       try {

@@ -1123,8 +1123,8 @@ an upgrade went on without the new tools until someone restarted them. From 0.12
   `--check` only reports (`--json` too); `--to <version>` picks a version (0.12.0 or newer).
 - **Notices.** The daemon serves `GET /update` (bearer secret): `{current, latest?, available, checkedAt?, source?:
   "hub" | "npm", install: {method, canUpdate, hint?}, run?: [node, cli, "update"], auto: {enabled, scope}, last?,
-  menubar?}`. `latest` is the hub's `latestClient` (§40) when the hub sends it, else the registry's, read at most every
-  6 h (attempts count, failed ones too; kept in `update-check.json` across restarts); the newer of the two wins.
+  menubar?}`. `latest` is the hub's `latestClient` (§40) when the hub sends it, else (or when the hub's is older than this
+  relay, a hub that hasn't read npm since a release) the registry's, read at most every 6 h (attempts count, failed ones too; kept in `update-check.json` across restarts); the newer of the two wins.
   `menubar` (macOS) is the latest GitHub release's `Workmesh-menubar-macos.zip` with the SHA-256 digest GitHub reports
   for the asset, read at most every 6 h; a release without a digest offers nothing. `/health` adds `version`.
   `workmesh status` ends with "0.12.1 available: `workmesh update`"; `doctor` has a `version` check (that notice, or the

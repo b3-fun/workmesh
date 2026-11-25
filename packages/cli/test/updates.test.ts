@@ -107,6 +107,13 @@ describe("update notices in the daemon", () => {
     expect(h.checker.status()).toMatchObject({ latest: "0.12.2", source: "hub", available: true });
   });
 
+  it("a hub that names a version older than this relay hasn't read npm since a release: npm is asked too", async () => {
+    const h = harness({ hub: "0.11.1", npm: "0.12.1" });
+    await h.checker.tick();
+    expect(h.calls.npm).toBe(1);
+    expect(h.checker.status()).toMatchObject({ latest: "0.12.1", source: "npm", available: true });
+  });
+
   it("up to date: nothing available", async () => {
     const h = harness({ hub: "0.12.0" });
     await h.checker.tick();

@@ -383,8 +383,27 @@ hooks and its `notify` line again. Codex maps like
 Claude Code: `apply_patch` shows as "editing <file>", shell calls as "running
 commands", and a question or an approval prompt as waiting on you.
 
-Codex runs a new user hook only after you trust it: open Codex and run `/hooks` once
-after setup.
+Codex runs a new user hook only after you trust it: when Codex starts after setup it
+asks ("Hooks need review"); pick "Trust all", or run `/hooks`. It asks again whenever a
+hook changes (a Workmesh update that moves the CLI, for one). `workmesh doctor` asks
+Codex itself and says how many of Workmesh's hooks it trusts.
+
+With a team hub, Codex gets what Claude Code gets (checked live on codex-cli 0.164,
+docs/SPEC.md §42): the session on the board with its model, mode and title, prompts,
+messages, tool runs and compactions; the `workmesh` MCP tools, which Codex runs without
+asking; refusals for a teammate's lease (`apply_patch` and shell writes) and for a
+hold; teammates' messages at the next tool call, or, for an idle thread, at once
+through `codex queue`; approval gates; and handoffs run with `codex exec` in a fresh
+worktree (set `"handoffs": { "agent": "codex" }` in the config to prefer it over
+Claude Code). What Codex doesn't have, and what stands in:
+
+- Inside Codex's sandbox a shell command can't reach the daemon, so a Codex agent uses
+  the MCP tools, not the `workmesh` CLI.
+- Codex 0.164's default tools have no plan tool, so no plan steps on the board.
+- A thread keeps the MCP server it started with: start a new thread (`/new`) after an
+  update.
+- Closing the Codex TUI ends the session about a minute later, when Codex unloads the
+  thread; a message for it waits until you resume the thread.
 
 The older `notify` hook (`workmesh hook codex`) stays installed for Codex builds
 without hooks, and the daemon still watches Codex session logs to mark sessions

@@ -923,8 +923,8 @@ command run; a waiter that can't reach the daemon ends.
   `handoffs.roots`), makes `git worktree add -b workmesh/handoff-<id> <checkout>-handoff-<id> <origin's default
   branch>` (`handoffs.worktree: false` runs in the checkout), and starts the agent detached, wrapped in `sh` so its
   exit code lands in a file: `claude -p <prompt> --session-id <uuid chosen before start> --output-format json
-  --permission-mode <handoffs.permissionMode, default auto> --name "handoff: …"`, or `codex exec --json -C <dir> -s
-  workspace-write -o <file> <prompt>` (its thread id, read from the first event, goes to the hub as a second
+  --permission-mode <handoffs.permissionMode, default auto> --name "handoff: …"`, or `codex exec --json -C <dir> --approve-for-me -o <file> <prompt>`
+  (§42) (its thread id, read from the first event, goes to the hub as a second
   `start`), each with `--model` / `-m <handoffs.model>` when the person set one (e.g. `haiku`). A handoff with no repo runs in a scratch dir under the state dir, which is shared (it is Workmesh's own
   and holds nothing else). At exit the runner sends `done` (exit 0) or `fail`, with the agent's last words as the
   note at the conversation level (redacted, ≤ 500) and only how it ended at `metadata`. Runs survive a daemon
@@ -1183,3 +1183,78 @@ an upgrade went on without the new tools until someone restarted them. From 0.12
 - **Menu bar.** Workmesh.app reads `GET /update`: one "Update available" item that runs `run` in a window with its
   output, and, when the release's menu bar app is newer than itself, downloads the zip, checks its SHA-256 against
   `menubar.sha256`, swaps itself in place and relaunches (apps/menubar/README.md).
+
+---
+
+# Codex parity (relay 0.12.x, Sean 2026-11-25)
+
+"Teammates use Codex too." The 11-25 two-person test was Claude Code only, and Codex support had been built against
+fixtures. A live run (codex-cli 0.164 in temp `CODEX_HOME`s, its background app server auto-updated to 0.172, two
+relays paired with a local hub as two people) found what follows. No wire change: everything here is on the relay.
+
+## 42. Codex on the relay (`packages/cli`)
+
+- **Where Codex runs threads.** Codex 0.164+ runs threads in a shared app server per Codex home (a background daemon
+  that updates itself); the TUI and `codex exec` are its clients. Quitting the TUI fires no `SessionEnd` (the thread
+  stays loaded); the server unloads it about a minute later and then fires `SessionEnd`. Restarting or updating the
+  server unloads every thread, firing `SessionEnd`, and an open TUI resumes its thread a second or two later, firing
+  nothing.
+- **SessionEnd** (`daemon/codex-liveness.ts`). A Codex `SessionEnd` waits 10 s. If by then Codex holds the thread again
+  (its writer lock `<home>/thread-writer-locks/<id>.lock` exists, made at or after the end; `<home>` read from the
+  rollout path, so a `CODEX_HOME` the daemon's env lacks still counts), the session stays, as idle; otherwise it ends.
+  A hook event from the thread meanwhile drops the pending end. Without this the board showed a live thread ended and
+  the daemon stopped waking it until its person typed.
+- **Notify.** Codex also notifies for its own helper threads (a thread's title is generated in one whose "last
+  message" is `{"title":…}`). A notify (`detail.hookEvent: "notify"`, local only) counts only for a thread the daemon
+  already knows and whose hooks don't run (an older Codex, hooks not trusted yet); otherwise it is dropped. Before,
+  every titled thread left a ghost session in the menu bar.
+- **Rollout watcher.** For a thread whose hooks run, a rollout write is only a heartbeat (nothing, once the thread
+  ended): Codex writes a turn's last records after its Stop hook, which flipped the idle thread back to working for
+  the three minutes until the stale sweep, and no wake reached it (an approval waited minutes, live). Without hooks the
+  watcher still marks the thread working.
+- **Title** (conversation level). A main thread's title is the name its TUI shows, the last `thread_name` for the
+  thread in `<home>/session_index.jsonl` (Codex 0.164 writes it nowhere in the rollout), read 1.5 s after each turn
+  ends. A spawned thread's stays its task name (§15).
+- **MCP tools without prompts.** Every Workmesh tool carries MCP annotations: `readOnlyHint` (`whoami`, `roster`,
+  `inbox`, `leases`, `notes`, `ask`, `recall`, `memories`) or `destructiveHint: false, openWorldHint: false` (the
+  rest: they change team state on the hub, a closed domain, and delete nothing). Codex's default `auto` approval then
+  runs them without asking; without the hints Codex asked the person before every Workmesh call (so a woken session
+  stalled on "Allow the workmesh MCP server to run tool send?") and, under `approval_policy = "never"` (`codex exec`,
+  so every handoff run), refused them all. Claude Code ignores the hints; its permissions stand.
+- **The shell can't reach the daemon.** Codex's sandbox blocks loopback connections (`curl 127.0.0.1:4519` exits 7 in
+  `workspace-write`), so the `workmesh` CLI run by a Codex agent fails unless the person approves an escalation. A
+  Codex session's guidance, hold refusal and lease refusal name the MCP tools only (the MCP server runs outside the
+  sandbox). A Codex refusal drops its final period: Codex prints "Command blocked by PreToolUse hook: <reason>.
+  Command: …".
+- **Messages are framed as their sender's.** The daemon's own notices have `wmn_` ids. The hub's message ids are
+  `wm_<ULID>`, which the daemon's notices used to share, so a teammate's message read as "news about its own earlier
+  work" with no "Message from An" (Claude Code and Codex alike).
+- **Wake.** `codex queue --thread <id> --message <text>` gets the wake inside `<workmesh-wake>…</workmesh-wake>`: Codex
+  hands a queued message to the thread as a user prompt, and the tag makes the hook read it as injected (§19), so the
+  board shows a turn and no prompt the person didn't type. `codex queue` runs in the thread's Codex home. A thread
+  Codex unloaded (its TUI closed a minute ago) has ended: the message waits in the inbox and is delivered when the
+  person resumes the thread (`codex resume <id>` fires `SessionStart`, the daemon queues it, the thread answers).
+- **Handoff runs.** `codex exec --json -C <dir> --approve-for-me --skip-git-repo-check -o <file> -c
+  sandbox_workspace_write.network_access=true [-m <model>] <prompt>`, plus a line in the prompt that `git commit` and
+  `git push` need escalated sandbox permissions. Under `-s workspace-write` with approvals off a run edited files but
+  never committed: Codex keeps the repo's git metadata read-only, a worktree's gitdir included (even when added with
+  `--add-dir`), and gave it no network to push. `--approve-for-me` keeps that sandbox and sends each escalation to
+  Codex's automatic reviewer, Codex's counterpart of the `auto` permission mode a Claude Code handoff runs in. A Codex
+  whose `exec --help` lacks the flag runs as before.
+- **Doctor.** `workmesh doctor` asks Codex itself whether it trusts Workmesh's hooks: `codex app-server` over stdio,
+  `initialize`, then `hooks/list` for the home directory (what Codex's `/hooks` reads), reporting trusted, not trusted
+  yet, changed since trusted (Codex re-asks after any change to a hook's command or timeout) and turned off. When Codex
+  can't answer it reads `[hooks.state."<hooks.json>:<event>:<group>:<hook>"]` `trusted_hash` tables in config.toml
+  (which can't show a change). It follows `notify` through another tool's chain (Codex Computer Use passes the
+  previous notify on as a JSON array) to the Workmesh CLI it runs, and warns when that file is gone or is another
+  install.
+- **Uninstall** also removes `[mcp_servers.workmesh.tools.*]` tables (Codex writes them for "Always allow"): left
+  alone, they make an `mcp_servers.workmesh` with no command, and Codex then won't load its config at all.
+- **Not available in Codex** (and what stands in):
+  - A live process check (`alive`): no per-thread process; the writer lock and the 15-minute idle sweep stand in.
+  - `update_plan`: Codex 0.164+ in its default code mode has no plan tool, so `plan` notices come only from older
+    builds' rollouts.
+  - A per-tool `desc`: Codex's shell calls carry no description (only an escalation's justification).
+  - An MCP reconnect: a thread keeps the MCP server it started with; a new thread (`/new`) gets the current one.
+  - The shell CLI inside the default sandbox (above): the MCP tools stand in.
+  - A wake for a thread nobody has open: the message waits for its next turn, as for a closed Claude Code session.

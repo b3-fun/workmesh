@@ -57,7 +57,9 @@ import {
   claudeSubagentsDir,
   codexTaskTitle,
   readClaudeSubagentMeta,
+  codexHomeOfRollout,
   readCodexThreadMeta,
+  readCodexThreadName,
   readCodexUsage,
 } from "./agents";
 import type { CodexThreadMeta, Usage } from "./agents";
@@ -274,6 +276,8 @@ interface Tracked {
   bg?: { shells: number; agents: number };
   /** Codex: the thread's rollout file, from a hook or the watcher. */
   rollout?: string;
+  /** Codex: when to read the thread's name from session_index.jsonl (set at each turn's end). */
+  codexTitleAt?: number;
   /** Codex: who spawned this thread (read once from the rollout's session_meta). */
   codexMeta?: { state: "pending" | "done"; meta?: CodexThreadMeta; tries: number; nextAt: number };
   /** Workflow sessions: the run's dir (journal + agent transcripts). */
@@ -330,6 +334,8 @@ interface SubState {
 const SESSION_REQUIRED = new Set(["key", "source", "state", "startedAt", "updatedAt", "stateSince"]);
 const EVENT_REQUIRED = new Set(["id", "key", "ts", "kind"]);
 const MAX_BACKOFF_MS = 60_000;
+/** Codex writes a thread's name to session_index.jsonl during its first turn; read it this long after a turn ends. */
+const CODEX_TITLE_DELAY_MS = 1500;
 const DEFAULT_RETRY_AFTER_MS = 30_000;
 /** Requests one tick may send while a backlog drains (the hub allows 300/min/device). */
 const MAX_REQUESTS_PER_TICK = 4;
@@ -825,6 +831,8 @@ export class HubForwarder {
       if (file) t.rollout = file;
       t.usageDirty = true;
       t.codexMeta ??= { state: "pending", tries: 0, nextAt: 0 };
+      // Codex names a thread during its first turn (and on /rename): read it once the turn ends.
+      if (event.kind === "idle" || event.kind === "start") t.codexTitleAt = this.now() + CODEX_TITLE_DELAY_MS;
       return;
     }
     if (event.source === "workflow") {
@@ -1751,6 +1759,16 @@ export class HubForwarder {
           cm.state = "done";
         } else {
           cm.nextAt = now + 30_000;
+        }
+      }
+      if (t.codexTitleAt !== undefined && now >= t.codexTitleAt && !t.sub) {
+        t.codexTitleAt = undefined;
+        // A spawned thread's title is its task name (session_meta); a main thread's is the name its TUI shows.
+        if (this.conversationShared(t) && !t.codexMeta?.meta?.parentThreadId) {
+          budget--;
+          const home = codexHomeOfRollout(t.rollout) ?? path.dirname(this.codexSessionsDir);
+          const name = await readCodexThreadName(home, t.key.slice("codex:".length));
+          if (name) this.mirrorOf(t).title = { text: name, custom: true };
         }
       }
       const working = t.sub ? t.sub.ended === undefined : t.last?.state === "working";

@@ -3,7 +3,7 @@ import path from "node:path";
 import { isLeaseGlob, normalizeLeasePath } from "@workmesh/protocol";
 import type { HubLeaseAccepted } from "@workmesh/protocol";
 import type { SessionEvent } from "@workmesh/core";
-import { CoordClient } from "../hub/coord";
+import { CoordClient, isLocalNotice } from "../hub/coord";
 import type { HubSyncEdit, HubSyncInboxItem } from "../hub/coord";
 import { shellCommands, shellWriteTargets } from "../hub/shell-writes";
 import { selectMemories } from "./memory";
@@ -120,9 +120,19 @@ export class CoordHooks {
     const hold = coord.holdFor(key);
     if (hold && !passesHold(event)) {
       const why = hold.reason ? `: ${hold.reason}` : "";
-      return (
+      const head =
         `Held by ${hold.by}${why}. Workmesh refuses this session's tool calls until ${hold.by} lifts the hold on the ` +
-        `team board; don't retry them meanwhile. You can still reach ${hold.by}: the workmesh \`send\` tool, or ` +
+        `team board; don't retry them meanwhile. `;
+      // Codex's sandbox keeps a shell command off the loopback daemon (live, codex-cli 0.164), so a Codex agent is
+      // pointed at the MCP tools only; they run outside the sandbox.
+      if (event.source === "codex") {
+        return (
+          `${head}You can still reach ${hold.by}: the workmesh \`send\` tool (the hold lets the workmesh tools that ` +
+          "talk and read through), and read the answer with the workmesh `inbox` tool."
+        );
+      }
+      return (
+        `${head}You can still reach ${hold.by}: the workmesh \`send\` tool, or ` +
         `\`workmesh send ${quoteArg(hold.by)} "…"\` run on its own in the shell (the hold lets \`workmesh send\`, ` +
         "`inbox`, `whoami`, `claims`, `leases` and `notes` through, one command at a time), and read the answer with " +
         "`inbox`."
@@ -132,7 +142,7 @@ export class CoordHooks {
     for (const t of this.targets(event)) {
       const hits = coord.leasesCovering(t.repo, t.rel, key, now);
       if (hits.length === 0) continue;
-      return leaseRefusal(t, hits[0]!.lease, hits[0]!.entries, coord, now, hits.length - 1);
+      return leaseRefusal(t, hits[0]!.lease, hits[0]!.entries, coord, now, hits.length - 1, event.source === "codex");
     }
     return undefined;
   }
@@ -162,7 +172,7 @@ export class CoordHooks {
       this.guided.add(base);
       if (this.guided.size > 5000) this.guided.clear();
       const memoryOn = coord.memoryAvailable(now);
-      parts.push(guidance(this.deps.projectName?.(), coord.delegateAvailable(), memoryOn));
+      parts.push(guidance(this.deps.projectName?.(), coord.delegateAvailable(), memoryOn, event.source === "codex"));
       const st = coord.view().state;
       if (st) {
         const isMine = (hk: string): boolean => CoordClient.family(hk) === coord.hubKey(base);
@@ -342,13 +352,16 @@ function leaseRefusal(
   coord: CoordClient,
   now: number,
   others: number,
+  codex = false,
 ): string {
   const why = lease.reason ? `: ${lease.reason.replace(/[.\s]+$/, "")}` : "";
   const covers = entries[0] === t.rel ? "" : ` The lease covers ${entries.slice(0, 3).join(", ")}.`;
   const more = others > 0 ? ` ${others} more lease${others === 1 ? "" : "s"} cover it too.` : "";
   const ask = coord.me()?.toLowerCase() === lease.holder.person.toLowerCase()
     ? `Finish there first, or have that session \`unlease\` it.`
-    : `Work on something else meanwhile, or ask ${lease.holder.person} to hand it over: \`workmesh send ${quoteArg(lease.holder.person)} "…"\` (or the workmesh \`send\` tool${lease.holder.sessionName ? `, to: ${lease.holder.sessionName}` : ""}).`;
+    : codex
+      ? `Work on something else meanwhile, or ask ${lease.holder.person} to hand it over with the workmesh \`send\` tool (to: ${lease.holder.sessionName ?? lease.holder.person}).`
+      : `Work on something else meanwhile, or ask ${lease.holder.person} to hand it over: \`workmesh send ${quoteArg(lease.holder.person)} "…"\` (or the workmesh \`send\` tool${lease.holder.sessionName ? `, to: ${lease.holder.sessionName}` : ""}).`;
   return (
     `Workmesh: ${t.rel} in ${t.repo} is leased to ${holderPhrase(lease, coord)} ${until(lease.expiresAt, coord.hubNow(now))}` +
     `${why}.${covers}${more} Don't edit it. ${ask}`
@@ -364,10 +377,12 @@ function editWarning(t: Target, e: HubSyncEdit, hubNow: number): string {
 }
 
 /** The note a shared session gets once (SPEC §23), under ~8 lines. */
-export function guidance(project: string | undefined, delegate = false, memory = false): string {
+export function guidance(project: string | undefined, delegate = false, memory = false, codex = false): string {
   const team = project ? ` (${project})` : "";
+  // Codex's sandbox keeps shell commands off the loopback daemon, so a Codex agent gets the MCP tools only.
+  const how = codex ? "the workmesh tools (MCP server `workmesh`)" : "the workmesh tools (MCP server `workmesh`, or the `workmesh` CLI)";
   return [
-    `Workmesh: this session is on your team's board${team}, beside your teammates' agents. Coordinate with the workmesh tools (MCP server \`workmesh\`, or the \`workmesh\` CLI):`,
+    `Workmesh: this session is on your team's board${team}, beside your teammates' agents. Coordinate with ${how}:`,
     "- `claim` the Linear issue you work on (e.g. B3-123); `release` it when done.",
     "- `lease` files or globs before larger edits, `unlease` when done. Edits to files another session leased are refused.",
     "- Check `inbox` for teammates' messages; answer with `send`.",
@@ -455,7 +470,7 @@ export function claimsLine(
 /** Inbox items as one context block, within `budget` chars; the items that fit. Workmesh's own notices read as is. */
 export function formatInbox(items: readonly HubSyncInboxItem[], budget: number): { text: string; items: HubSyncInboxItem[] } | undefined {
   if (items.length === 0 || budget < 200) return undefined;
-  const isNotice = (m: HubSyncInboxItem): boolean => m.id.startsWith("wm_");
+  const isNotice = (m: HubSyncInboxItem): boolean => isLocalNotice(m.id);
   const teammates = items.filter((m) => !isNotice(m)).length;
   const head =
     teammates === 0

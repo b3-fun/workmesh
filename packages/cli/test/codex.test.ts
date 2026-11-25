@@ -32,6 +32,7 @@ describe("mapNotifyArg", () => {
       kind: "idle",
       activity: "Done refactoring",
       ts: 500,
+      detail: { hookEvent: "notify" },
     });
   });
 

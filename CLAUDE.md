@@ -224,6 +224,16 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   project-wide `remember` and `notes` lists the brief, on an older hub both work as before. `recall`/`memories` pass a
   hold.
 
+- Codex parity (SPEC §42, 11-25 live run on codex-cli 0.164): MCP tools carry annotations so Codex runs them without
+  a prompt (and `codex exec` at all); a Codex `SessionEnd` waits 10 s and is dropped when Codex reloaded the thread
+  (`daemon/codex-liveness.ts`, writer lock); notify counts only for known threads without hooks, and the rollout watcher is only a heartbeat for them
+  (`codexDaemonEvent`); a main thread's
+  title from `session_index.jsonl`; the daemon's notices are `wmn_` (hub messages are `wm_<ULID>`); `codex queue`
+  wraps the wake in `<workmesh-wake>` and runs in the thread's `CODEX_HOME`; handoffs run `codex exec
+  --approve-for-me` with network; refusals and guidance point Codex at the MCP tools (its sandbox blocks loopback);
+  doctor asks `codex app-server` `hooks/list` for trust (`adapters/codex-doctor.ts`) and follows notify chains.
+  Harness and evidence: `~/Documents/b3/b3os-orch/scratch/team-hub/evidence/codex-parity/`.
+
 - 0.12 Keeping current (SPEC §40, §41): `commands/update.ts` (`workmesh update`: `lib/install-method.ts` reads the
   install from the CLI's own path, table-tested; installs the release the same way; the NEW version's hidden
   `update --finish` re-runs hooks/MCP/service and restarts the daemon, then checks; exit 2 makes the old process roll

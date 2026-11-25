@@ -236,7 +236,7 @@ describe("codex wake (SPEC §31)", () => {
       },
     });
     expect(await wake("019a2139-6c2e-7440-938b-08ccb8b2f894", "hello")).toBe(true);
-    expect(seen[0]).toEqual(["/opt/codex", "queue", "--thread", "019a2139-6c2e-7440-938b-08ccb8b2f894", "--message", "hello"]);
+    expect(seen[0]).toEqual(["/opt/codex", "queue", "--thread", "019a2139-6c2e-7440-938b-08ccb8b2f894", "--message", "<workmesh-wake>\nhello\n</workmesh-wake>"]);
     fail = true;
     expect(await wake("019a2139-6c2e-7440-938b-08ccb8b2f894", "hello")).toBe(false);
     expect(await wake("bad id;", "x")).toBe(false);

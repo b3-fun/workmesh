@@ -245,7 +245,11 @@ export class CheckoutIndex {
 }
 
 /** The prompt a handoff's session starts with. */
-export function handoffPrompt(h: HubHandoffAccepted, where: { repo?: string; branch?: string; base?: string; dir: string }): string {
+export function handoffPrompt(
+  h: HubHandoffAccepted,
+  where: { repo?: string; branch?: string; base?: string; dir: string },
+  agent: HandoffAgent = "claude",
+): string {
   const from = h.from.sessionName ? `${h.from.person} (their agent ${h.from.sessionName})` : h.from.person;
   const lines = [
     `Workmesh handoff from ${from}. The task:`,
@@ -262,6 +266,13 @@ export function handoffPrompt(h: HubHandoffAccepted, where: { repo?: string; bra
     facts.push(`You are in this machine's checkout of ${where.repo}. Someone may be working here too: commit on a new branch, never on theirs.`);
   } else {
     facts.push("You are in an empty scratch directory made for this handoff.");
+  }
+  if (agent === "codex" && where.repo) {
+    // Codex's sandbox keeps the repo's git metadata read-only (a worktree's too): commits and pushes go through its
+    // escalation, which `--approve-for-me` sends to Codex's automatic reviewer. Without the hint a model gave up.
+    facts.push(
+      "Codex's sandbox keeps this repo's git metadata read-only: run `git commit` and `git push` with escalated sandbox permissions and a one-line justification; Codex's automatic reviewer approves routine commits and pushes.",
+    );
   }
   facts.push(
     "You run headless: nobody will answer questions here. Use the workmesh tools to coordinate (lease files before larger edits, `send` to ask a teammate).",
@@ -445,7 +456,7 @@ export class HandoffRunner implements HandoffRunnerLike {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
 
-    const prompt = handoffPrompt(h, { repo: h.repo, branch, base, dir });
+    const prompt = handoffPrompt(h, { repo: h.repo, branch, base, dir }, picked.agent);
     const logFile = path.join(runDir, "agent.log");
     const exitFile = path.join(runDir, "exit-code");
     const resultFile = path.join(runDir, "result.txt");
@@ -461,11 +472,7 @@ export class HandoffRunner implements HandoffRunnerLike {
             picked.bin, "-p", prompt, "--session-id", sessionId!, "--output-format", "json", "--permission-mode", settings.permissionMode, "--name", name,
             ...(settings.model ? ["--model", settings.model] : []),
           ]
-        : [
-            picked.bin, "exec", "--json", "-C", dir, "-s", "workspace-write", "--skip-git-repo-check", "-o", resultFile,
-            ...(settings.model ? ["-m", settings.model] : []),
-            prompt,
-          ];
+        : codexExecArgs(picked.bin, { dir, resultFile, prompt, model: settings.model, approveForMe: await codexHasApproveForMe(picked.bin) });
     const env: NodeJS.ProcessEnv = { ...process.env, PATH: await (this.deps.pathEnv ?? loginPath)(), WORKMESH_HANDOFF: h.id, WM_EXIT_FILE: exitFile };
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_SESSION_ID;
@@ -560,6 +567,44 @@ export class HandoffRunner implements HandoffRunnerLike {
       void coord.handoff({ action: ok ? "done" : "fail", id: r.id, ...(r.sessionKey ? { sessionKey: r.sessionKey } : {}), note });
     }
   }
+}
+
+/**
+ * `codex exec` for a handoff (SPEC §31). Live on codex-cli 0.164 (11-25), `-s workspace-write` with approvals off let
+ * a run edit files but never commit: Codex keeps the repo's git metadata read-only (a worktree's gitdir too, even
+ * with `--add-dir`), and gave it no network to push. `--approve-for-me` keeps that sandbox and sends each escalation
+ * (a commit, a push) to Codex's automatic reviewer, the counterpart of Claude Code's `auto` permission mode that a
+ * Claude handoff runs in; the sandbox gets network access like a Claude run has. A Codex without the flag runs as
+ * before.
+ */
+export function codexExecArgs(
+  bin: string,
+  o: { dir: string; resultFile: string; prompt: string; model?: string; approveForMe?: boolean },
+): string[] {
+  return [
+    bin, "exec", "--json", "-C", o.dir,
+    ...(o.approveForMe ? ["--approve-for-me"] : ["-s", "workspace-write"]),
+    "--skip-git-repo-check", "-o", o.resultFile,
+    "-c", "sandbox_workspace_write.network_access=true",
+    ...(o.model ? ["-m", o.model] : []),
+    o.prompt,
+  ];
+}
+
+const approveForMe = new Map<string, Promise<boolean>>();
+
+/** Whether this codex's `exec` takes `--approve-for-me` (asked once per binary). */
+export function codexHasApproveForMe(bin: string): Promise<boolean> {
+  let p = approveForMe.get(bin);
+  if (!p) {
+    p = new Promise((resolve) => {
+      execFile(bin, ["exec", "--help"], { timeout: 10_000, encoding: "utf8", maxBuffer: 1024 * 1024 }, (err, stdout) =>
+        resolve(!err && String(stdout).includes("--approve-for-me")),
+      );
+    });
+    approveForMe.set(bin, p);
+  }
+  return p;
 }
 
 /** The agent's last words: Claude's `--output-format json` result, or Codex's last message file; redacted. */

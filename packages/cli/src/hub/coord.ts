@@ -124,8 +124,16 @@ export const ASK_TIMEOUT_MS = 90_000;
 const ASK_ABSENT_MS = 10 * 60_000;
 
 const MAX_DELIVERED = 2000;
-/** Ids of notices the daemon writes itself (an approval decided, a handoff finished): never acked to the hub. */
-const LOCAL_ID_PREFIX = "wm_";
+/**
+ * Ids of notices the daemon writes itself (an approval decided, a handoff finished): never acked to the hub. Not
+ * `wm_`: the hub's own message ids are `wm_<ULID>`, and a teammate's message must never read as the daemon's notice.
+ */
+const LOCAL_ID_PREFIX = "wmn_";
+
+/** A notice this daemon wrote itself (SPEC §31), not a message from the hub. */
+export function isLocalNotice(id: string): boolean {
+  return id.startsWith(LOCAL_ID_PREFIX);
+}
 const MAX_LOCAL = 500;
 /** An undelivered message the hub stopped listing is kept this long (its session may come back). */
 const INBOX_KEEP_MS = 24 * 60 * 60_000;

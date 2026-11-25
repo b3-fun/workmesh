@@ -335,6 +335,52 @@ export async function readCodexThreadMeta(file: string): Promise<CodexThreadMeta
   }
 }
 
+/**
+ * The Codex home a rollout lives in (`<home>/sessions/YYYY/MM/DD/rollout-*.jsonl`), so a reader follows the
+ * `CODEX_HOME` the session ran with rather than the daemon's own environment.
+ */
+export function codexHomeOfRollout(file: string | undefined): string | undefined {
+  if (!file || !path.isAbsolute(file)) return undefined;
+  const m = /^(.*)[\\/]sessions[\\/]\d{4}[\\/]\d{2}[\\/]\d{2}[\\/][^\\/]+\.jsonl$/.exec(file);
+  return m?.[1] || undefined;
+}
+
+/**
+ * A Codex thread's name as its TUI shows it (generated after the first prompt, or set with /rename): the last
+ * `{id, thread_name}` line for the thread in `<home>/session_index.jsonl` (append-only; read from its last 256 KB).
+ * Codex 0.164 writes the name nowhere in the rollout. Undefined when there is none.
+ */
+export async function readCodexThreadName(home: string, threadId: string, tailBytes = 256 * 1024): Promise<string | undefined> {
+  let fh: fs.promises.FileHandle | undefined;
+  try {
+    fh = await fs.promises.open(path.join(home, "session_index.jsonl"), "r");
+    const { size } = await fh.stat();
+    const start = Math.max(0, size - tailBytes);
+    const buf = Buffer.alloc(size - start);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+    const lines = buf.subarray(0, bytesRead).toString("utf8").split("\n");
+    if (start > 0) lines.shift(); // a cut first line
+    const needle = `"${threadId}"`;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]!;
+      if (!line.includes(needle)) continue;
+      try {
+        const e = JSON.parse(line) as { id?: unknown; thread_name?: unknown };
+        if (e.id !== threadId) continue;
+        const name = typeof e.thread_name === "string" ? e.thread_name.trim() : "";
+        return name ? name.slice(0, 500) : undefined;
+      } catch {
+        // a torn line: keep looking
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  } finally {
+    await fh?.close().catch(() => {});
+  }
+}
+
 /** "/root/review_auth_flow" → "review auth flow" (the spawn's task name as a title). */
 export function codexTaskTitle(agentPath: string | undefined): string | undefined {
   if (!agentPath) return undefined;

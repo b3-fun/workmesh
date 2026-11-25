@@ -355,6 +355,11 @@ export function installService(
     probe?: SystemdUser;
     retries?: number;
     retryDelayMs?: number;
+    /**
+     * launchd: always unload and load the job, never `kickstart -k` (0.12, `workmesh update`): kickstart blocks while a
+     * job crash-loops (a bad build exits at once and launchd throttles it), so a rollback could never restart it.
+     */
+    reload?: boolean;
   } = {},
 ): InstallResult {
   const kind = opts.kind === undefined ? serviceKind() : opts.kind;
@@ -371,7 +376,7 @@ export function installService(
     const wrote = writeIfChanged(file, text);
     fs.mkdirSync(path.dirname(log), { recursive: true });
     const loaded = launchdLoaded(run);
-    if (loaded && !wrote) {
+    if (loaded && !wrote && !opts.reload) {
       // Same definition already loaded (setup or init run again): restart the job in place.
       run("launchctl", ["kickstart", "-k", launchdTarget()]);
       return { kind, file, wrote };

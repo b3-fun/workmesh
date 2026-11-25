@@ -1141,12 +1141,18 @@ an upgrade went on without the new tools until someone restarted them. From 0.12
   `resume`) records what it started under; `/clear` and compaction keep the process and the record
   (`session-versions.json`, 0600, 14 days). When the daemon runs a newer version with a different fingerprint, the
   session's next hook that carries context (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse; not a subagent's,
-  not a refused call) says once: "Workmesh was updated to 0.12.1 (this session started under 0.12.0), so the Workmesh
-  tools in this session are the older ones." plus what reloads them. With no record (a session from before 0.12.0), a
+  not a refused call) says once: "Workmesh was updated to 0.12.1 (this session started under 0.12.0)." plus what
+  reloads its tools (below). With no record (a session from before 0.12.0), a
   Claude Code process (its `~/.claude/sessions/<pid>.json` `startedAt`) older than the daemon's first run of this
   version counts as started under the previous one. Hook commands themselves run the files on disk, so they're new at
   once; the `workmesh mcp` server a session started is not.
-- **What reloads** (verified on Claude Code 2.1.332 and Codex 0.164, §41 note texts follow it): RELOAD_FINDINGS.
+- **What reloads** (verified live on Claude Code 2.1.332 and Codex 0.164, 11-25; the note's advice follows it). Claude
+  Code: hooks added to settings.json apply to running sessions within seconds; `/clear` keeps the MCP servers (it only
+  fires SessionStart with `clear`); `/mcp reconnect workmesh` (or Reconnect in the `/mcp` menu) starts a new MCP process
+  from the files on disk. Codex: a thread keeps the MCP servers and hooks it started with, a new thread (`/new`, or a
+  new `codex`) gets new ones, and there is no MCP reconnect (restarting Codex's background server reloads every
+  thread). So the note tells a Claude Code session its hooks are current and to run `/mcp reconnect workmesh` or start
+  a new session, and a Codex thread to start a new thread.
 - **Menu bar.** Workmesh.app reads `GET /update`: one "Update available" item that runs `run` in a window with its
   output, and, when the release's menu bar app is newer than itself, downloads the zip, checks its SHA-256 against
   `menubar.sha256`, swaps itself in place and relaunches (apps/menubar/README.md).

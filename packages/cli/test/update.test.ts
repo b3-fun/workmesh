@@ -91,7 +91,7 @@ describe("workmesh update", () => {
     expect(m.calls).toEqual(["backup 0.12.0", "install @b3os/workmesh@0.12.1", "finish-new from 0.12.0"]);
     expect(process.exitCode).toBeUndefined();
     expect(m.text()).toContain("Workmesh 0.12.1 is installed and running.");
-    expect(m.text()).toContain("keep 0.12.0's Workmesh tools until they restart");
+    expect(m.text()).toContain("told so, once");
     expect(readUpdateState().last).toMatchObject({ ok: true, from: "0.12.0", to: "0.12.1" });
   });
 

@@ -181,15 +181,18 @@ export class SessionVersions {
 }
 
 /**
- * What reloads, verified on Claude Code 2.1.332 and Codex 0.164 (SPEC §41): neither restarts a running session's
- * MCP servers on its own.
+ * What reloads, verified live on Claude Code 2.1.332 and Codex 0.164 (SPEC §41; evidence in the 0.12 PR): Claude Code
+ * picks up hooks added to settings.json within seconds, and `/mcp reconnect <server>` (or the /mcp menu's Reconnect)
+ * starts a new MCP process from the files on disk, but `/clear` keeps the old one. A Codex thread keeps the MCP server
+ * and hooks it started with; Codex has no MCP reconnect, and a new thread (`/new`, or a new `codex`) gets new ones.
  */
 export function staleAdvice(source: string): string {
-  if (source === "codex") return "Start a new Codex session for the new tools.";
-  return "Start a new session for the new tools, or run /mcp and reconnect workmesh (/clear doesn't reload MCP servers).";
+  if (source === "codex") {
+    return "This thread keeps the older Workmesh MCP server and hooks (Codex can't reconnect an MCP server): start a new thread (/new, or a new codex) for the new tools.";
+  }
+  return "Its hooks are already current, but this session's Workmesh MCP server is the older one: run `/mcp reconnect workmesh`, or start a new session, for the new tools (/clear doesn't restart it).";
 }
 
 export function staleNote(current: string, from: string | undefined, advice: string): string {
-  const since = from ? `this session started under ${from}` : "after this session started";
-  return `Workmesh was updated to ${current}${from ? ` (${since})` : ` ${since}`}, so the Workmesh tools in this session are the older ones. ${advice}`;
+  return `Workmesh was updated to ${current} ${from ? `(this session started under ${from})` : "after this session started"}. ${advice}`;
 }

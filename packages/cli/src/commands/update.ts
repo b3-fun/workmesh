@@ -289,7 +289,7 @@ export async function finishSetup(version: string, out: (line: string) => void =
     let how = "restarted";
     if (svc?.installed) {
       try {
-        const r = installService();
+        const r = installService({ reload: true });
         how = r.wrote ? `restarted under ${r.kind} (service definition updated)` : `restarted under ${r.kind}`;
       } catch (err) {
         failures.push(`daemon service: ${errorMessage(err)}`);
@@ -492,7 +492,7 @@ export async function runUpdate(opts: UpdateOptions = {}, deps: UpdateDeps = {})
       record({ ok: true, message: `updated ${current} → ${target}` });
       out("");
       out(green(`Workmesh ${target} is installed and running.`));
-      out(dim(`  agent sessions started before now keep ${current}'s Workmesh tools until they restart; each is told once`));
+      out(dim("  agent sessions that need a restart for new tools are told so, once, at their next tool call"));
       return;
     }
 

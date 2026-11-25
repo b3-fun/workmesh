@@ -39,6 +39,11 @@ cp "$cli/package.json" "$H/package.json.orig"
 for v in 0.12.0 0.12.1 0.12.2 0.12.3; do
   node -e 'const f=process.argv[1],p=require(f);p.version=process.argv[2];require("fs").writeFileSync(f,JSON.stringify(p,null,2)+"\n")' "$cli/package.json" "$v"
   (cd "$cli" && npm run build >/dev/null 2>&1) || { echo "build $v failed" >&2; exit 1; }
+  if [ "$v" != 0.12.0 ]; then
+    # Builds of one checkout give sessions the same tools, so the stale-session note would rightly stay quiet: mark
+    # each later release's tool fingerprint as different, the way a release that adds a tool or hook would be.
+    node -e 'const f=process.argv[1],fs=require("fs"),s=fs.readFileSync(f,"utf8");if(!s.includes(""Stop:wake""))process.exit(1);fs.writeFileSync(f,s.replace(""Stop:wake"",""Stop:wake", "smoke:"+process.argv[2]+"""))' "$cli/dist/index.js" "$v" || { echo "surface marker $v failed" >&2; exit 1; }
+  fi
   if [ "$v" = 0.12.2 ]; then
     # A bad release: the daemon exits at once. The CLI itself works, so only its checks can catch it.
     node -e 'const f=process.argv[1],s=require("fs").readFileSync(f,"utf8").split("\n");s.splice(1,0,"if (process.argv[2] === \"start\") { console.error(\"0.12.2: broken build, the daemon exits\"); process.exit(1); }");require("fs").writeFileSync(f,s.join("\n"))' "$cli/dist/index.js"
@@ -105,9 +110,12 @@ grep -q "is up to date" "$out/03-update-noop.log" && ok "update with nothing out
 step "0.12.1 released"
 latest 0.12.1
 # The daemon reads the team view every 60 s (15 s with the menu open); restart is not needed: wait for it.
-for _ in $(seq 1 75); do update_status | grep -q '"available":true' && break; sleep 1; done
+# (Its first look, a minute after start, may already have asked npm: the hub had no latestClient then.)
+for _ in $(seq 1 90); do update_status | grep -q '"source":"hub"' && break; sleep 1; done
 update_status > "$out/04-get-update.json"
-grep -q '"latest":"0.12.1"' "$out/04-get-update.json" && grep -q '"source":"hub"' "$out/04-get-update.json" && ok "GET /update: 0.12.1 available, from the hub" || no "GET /update ($out/04-get-update.json)"
+grep -q '"latest":"0.12.1"' "$out/04-get-update.json" && grep -q '"available":true' "$out/04-get-update.json" && ok "GET /update: 0.12.1 available" || no "GET /update ($out/04-get-update.json)"
+grep -q '"source":"hub"' "$out/04-get-update.json" && ok "…read from the hub's latestClient" || no "source not the hub ($out/04-get-update.json)"
+n=$(grep -c "GET /@b3os" "$out/registry.log"); [ "$n" -le 3 ] && ok "the daemon asked npm at most once ($n registry reads in all, the CLI's included)" || no "registry reads: $n"
 grep -q '"run":\[' "$out/04-get-update.json" && ok "GET /update carries the argv the menu bar runs" || no "run argv"
 run workmesh status > "$out/04-status.log" 2>&1
 grep -q "0.12.1 available: \`workmesh update\`" "$out/04-status.log" && ok "status: 0.12.1 available: \`workmesh update\`" || no "status notice ($out/04-status.log)"

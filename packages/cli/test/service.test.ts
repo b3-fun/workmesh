@@ -78,6 +78,13 @@ describe("launchd (macOS)", () => {
     calls = [];
     expect(installService({ home, run, kind: "launchd", node: "/usr/bin/node", entry: "/x/dist/index.js", env: {} }).wrote).toBe(false);
     expect(calls.filter((c) => c[1] !== "print")).toEqual([["launchctl", "kickstart", "-k", `gui/${uid}/${LAUNCHD_LABEL}`]]);
+    // `workmesh update` (reload): the same file, but unloaded and loaded again (kickstart blocks on a crash-looping job).
+    calls = [];
+    expect(installService({ home, run, kind: "launchd", node: "/usr/bin/node", entry: "/x/dist/index.js", env: {}, reload: true, waitMs: 0 }).wrote).toBe(false);
+    expect(calls.filter((c) => c[1] !== "print")).toEqual([
+      ["launchctl", "bootout", `gui/${uid}/${LAUNCHD_LABEL}`],
+      ["launchctl", "bootstrap", `gui/${uid}`, file],
+    ]);
     // A new program path: the loaded job is replaced (bootout, wait until launchd lets go, bootstrap).
     calls = [];
     expect(installService({ home, run, kind: "launchd", node: "/usr/bin/node", entry: "/y/dist/index.js", env: {} }).wrote).toBe(true);

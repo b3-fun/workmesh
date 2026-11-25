@@ -258,6 +258,7 @@ describe("stale sessions: told once (SPEC §41)", () => {
   it("Codex gets its own advice", () => {
     expect(staleNote("0.12.1", "0.12.0", staleAdvice("codex"))).toContain(staleAdvice("codex"));
     expect(staleAdvice("codex")).not.toContain("/mcp");
+    expect(staleAdvice("claude-code")).toContain("/mcp reconnect workmesh");
   });
 });
 

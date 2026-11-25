@@ -324,6 +324,7 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
     ["shares", [...hub.project.include.remotes, ...hub.project.include.dirs, ...hub.includeDirs].join(", ") || "(nothing)"],
     ["level", `${hubShareLevel(hub)} — ${SHARE_LEVEL_SUMMARY[hubShareLevel(hub)]}`],
   ];
+  if (hub.github) rows.push(["avatar", `github.com/${hub.github}`]);
   if (hub.excludeDirs.length) rows.push(["never shares", hub.excludeDirs.join(", ")]);
   if (!daemon) {
     rows.push(["daemon", daemonError ? red(daemonError) : yellow("not running — `workmesh start --detach`")]);
@@ -343,6 +344,8 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
       ["last send", `${ago(daemon.lastSendAt)}${daemon.lastSendOk === false ? red(" (failed)") : ""}`],
       ["last success", ago(daemon.lastSuccessAt)],
       ["shared sessions", String(daemon.sharedSessions)],
+      // v0.6: subagents go as their own sessions once the hub serves /relay/team.
+      ["subagents", daemon.structured ? `${daemon.subagentSessions ?? 0} live, sent as sessions` : "folded into their sessions (hub has no team view)"],
       ["queued", String(daemon.queued)],
       ["dropped", String(daemon.dropped)],
     );

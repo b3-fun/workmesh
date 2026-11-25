@@ -129,7 +129,8 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   conversation; no terminal keeps the earlier choice or conversation) and `hub share <level>`. Every ingest body
   carries `share`. `hub.stickyShare` (absent = true; `hub sticky off`) decides whether a session outside every shared
   repo stays shared after it touched one, or is shared turn by turn.
-- At `conversation`, only for shared sessions whose cwd is in a shared repo (rule-4 orchestrators stay metadata):
+- At `conversation`, for every shared session, rule-4 orchestrators included (da9fbe1, Sean 11-24: "default max
+  sharing"; the 0.7.0 rule that kept their text home is gone):
   prompt `text` (from UserPromptSubmit), `message` events (assistant text blocks tailed from the transcript),
   `desc` on tool events, `turn` events with `durationMs`. `hub/redact.ts` scrubs every text and desc before it is
   queued; home paths become `~`. Caps: text 4,000 (`truncated`), desc 200.

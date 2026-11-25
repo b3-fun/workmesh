@@ -232,7 +232,9 @@ agent's text updates, grouped tool calls such as "Ran 2 shell commands", turn du
   text, tool descriptions, turn summaries, now lines and waiting reasons from it are cleared, cached digests are
   dropped, and boards get `{type:"purge", deviceId}`.
 - Only shared sessions (§3.3 rules 1–4) send anything. A session that becomes shared mid-way sends conversation text
-  only from that moment on; nothing written before it was shared is ever sent.
+  only from that moment on; nothing written before it was shared is ever sent. At `conversation` this includes a
+  session whose cwd is not shared (§3.3 rule 4): its prompts carry text, and its shell calls go with `desc` and `cmd`
+  even when they name no shared root. Rule 4's "no text" is the `metadata` reading.
 - Sharing is sticky by default: once a session is shared it stays shared for the rest of its life, so a session whose
   cwd is outside every shared repo (an orchestrator in `~/Documents`) that touched a shared repo once also sends its
   later turns, including work on other repos. `hub.stickyShare: false` in the relay's config (`workmesh hub sticky

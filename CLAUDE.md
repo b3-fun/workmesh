@@ -12,7 +12,7 @@
 - **Repo**: github.com/b3-fun/workmesh (open source, MIT; renamed from b3-fun/agentblip, old URLs redirect)
 - **npm**: `@b3os/workmesh` (bins `workmesh` and the `agentblip` alias), published from the npclabs npm account
 - **Status**: building
-- **Last updated**: 2026-11-25 (v2 follow-ups: an approval runs its exact command once, agents' `ask`, a live two-person handoff, coordination fixes from a live test)
+- **Last updated**: 2026-11-25 (v3 Memory relay 0.12.0: the team's accepted memories at session start, `remember`/`recall`/`forget`/`memories`)
 
 ---
 
@@ -212,6 +212,16 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   hold lets `workmesh send|inbox|whoami|claims|leases|notes` and the talk-and-read MCP tools through
   (`passesHold`), and claims/leases patch the cached sync at once. Live harness and evidence:
   `~/Documents/b3/b3os-orch/scratch/team-hub/evidence/delegate-followups/`.
+- v3 Memory (SPEC §35, §36, 0.12.0): `CoordClient` reads the optional `memory.rev` on sync (absent = no memory) and
+  fetches the brief (`GET /relay/memories`: every accepted memory) when it moves, at most every 10 s with backoff; a
+  `404` on a memory endpoint turns off only memory, for 10 min. `daemon/memory.ts` (pure, table-tested) picks a
+  session's start note from the cached brief: rules and conventions that apply, then decisions/gotchas/facts scored by
+  linked issue, repo, path and branch words, ≤ 20 lines with ids, never other repos (~0.3 ms over 500 memories); it
+  replaces the notes block on a memory hub, and a `used` report goes after the hook answered (`memoriesUsed` dep).
+  `daemon/memory-ops.ts`: `remember`/`recall`/`forget`/`memories` for MCP and CLI (redacted, scope = the session's
+  repo by default, absolute paths made repo-relative, proposed vs accepted answers); on a memory hub `note` is a
+  project-wide `remember` and `notes` lists the brief, on an older hub both work as before. `recall`/`memories` pass a
+  hold.
 
 ## The hosted hub (private)
 
@@ -327,6 +337,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - [x] v1 Coordinate relay (0.10.0): sync, hook enforcement, inbox, MCP, setup, menu bar
 - [x] v2 Delegate wire (#22, merged): protocol 79 tests
 - [x] v3 Memory wire (SPEC §35–36, `packages/protocol/src/memory.ts`): protocol 90 tests
+- [ ] v3 Memory relay (branch `memory-relay`, 0.12.0 not published): brief, session-start selection, remember/recall/forget/memories, note→remember — CLI 844 tests (memory 32)
 - [ ] v2 Delegate relay (branch `delegate-v2`, 0.11.0 not published): init, wake, handoffs, gates, knowledge, menu bar — CLI 769 tests
 - [ ] v0.5/v0.6 relay (branch `relay-v06`): subagents, agent messages, links, avatars, `/team`, multiplayer menu bar — CLI 525 tests
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain

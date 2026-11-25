@@ -1,6 +1,6 @@
 import { runDaemon } from "../daemon";
 import { loadConfig } from "../lib/config";
-import { isDaemonUp, spawnDetachedDaemon } from "../lib/daemon-client";
+import { isDaemonUp, startDaemonInBackground } from "../lib/daemon-client";
 import { logFilePath } from "../lib/paths";
 import { dim, green } from "../lib/ui";
 import { runStop } from "./stop";
@@ -16,7 +16,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
     return;
   }
   if (opts.detach) {
-    const up = await spawnDetachedDaemon(config);
+    const up = await startDaemonInBackground(config);
     if (!up) {
       throw new Error(`daemon failed to start — check ${logFilePath()}`);
     }
@@ -28,7 +28,11 @@ export async function runStart(opts: StartOptions): Promise<void> {
   await runDaemon(config);
 }
 
-/** `workmesh restart`: stop (waiting for the process to exit), then start in the background. */
+/**
+ * `workmesh restart`: stop (waiting for the process to exit; it saves its hub
+ * state on the way out), then start in the background, through the daemon's
+ * service when one is installed.
+ */
 export async function runRestart(): Promise<void> {
   if (!(await runStop())) return;
   await runStart({ detach: true });

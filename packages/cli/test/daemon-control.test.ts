@@ -167,7 +167,7 @@ describe("restart", () => {
     vi.doMock("../src/lib/daemon-client", async (importOriginal) => ({
       ...(await importOriginal<typeof import("../src/lib/daemon-client")>()),
       isDaemonUp: async () => false,
-      spawnDetachedDaemon: async () => {
+      startDaemonInBackground: async () => {
         oldAliveAtSpawn = isProcessAlive(daemon.pid);
         return true;
       },

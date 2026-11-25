@@ -121,13 +121,15 @@ struct PersonRow: View {
         .accessibilityLabel("\(person.name), \(Self.summary(person))")
     }
 
-    /// "2 working · 1 waiting", else "idle" or "offline".
+    /// "2 working · 1 waiting", else "idle", "reconnecting", "asleep" or "offline" (the hub's presence).
     static func summary(_ p: TeamPerson) -> String {
         var parts: [String] = []
         if p.counts.working > 0 { parts.append("\(p.counts.working) working") }
         if p.counts.waiting > 0 { parts.append("\(p.counts.waiting) waiting") }
         if !parts.isEmpty { return parts.joined(separator: " · ") }
-        return p.online ? "idle" : "offline"
+        if p.presence == "reconnecting" { return "reconnecting" }
+        if !p.online { return p.presence == "asleep" ? "asleep" : "offline" }
+        return "idle"
     }
 }
 

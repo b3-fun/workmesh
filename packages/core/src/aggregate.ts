@@ -106,6 +106,23 @@ export class SessionStore {
     });
   }
 
+  /**
+   * Puts back sessions a restarted daemon saved (public SPEC §24), only keys it
+   * doesn't already hold: a hook event that arrived first is newer. Timestamps
+   * are kept, so sweep() ages them as if the daemon had never stopped. Returns
+   * how many were restored.
+   */
+  restore(sessions: readonly AgentSession[], now = Date.now()): number {
+    let n = 0;
+    for (const s of sessions) {
+      if (this.sessions.has(s.key) || s.key !== `${s.source}:${s.sessionId}`) continue;
+      if (s.updatedAt > now + TS_SKEW_TOLERANCE_MS || s.updatedAt < TS_MIN_PLAUSIBLE_MS) continue;
+      this.sessions.set(s.key, { ...s, agents: s.agents >= 1 ? s.agents : 1 });
+      n++;
+    }
+    return n;
+  }
+
   /** Drops a session (dismissed by the user, or its process is gone). */
   remove(key: string): boolean {
     this.aliveAt.delete(key);

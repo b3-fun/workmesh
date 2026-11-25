@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  HUB_CLIENT_RE,
   HUB_DEVICE_TOKEN_RE,
   HUB_MAX_LINKS,
   HUB_MAX_REPOS,
   HUB_TITLE_ACCEPT_MAX,
   HUB_TITLE_MAX,
+  hubPresenceSchema,
   hubTeamAcceptSchema,
   hubTeamResponseSchema,
   isSafeLinkUrl,
@@ -375,5 +377,57 @@ describe("hub wire v0.7 (SPEC §19)", () => {
     expect(read([])).toBeUndefined();
     expect(read(null)).toBeNull();
     expect(hubSessionUpsertAcceptSchema.safeParse({ ...orch, repos: "b3-fun/a" }).success).toBe(false);
+  });
+});
+
+describe("hub wire v0.10: liveness (SPEC §24)", () => {
+  const live = { ...session, alive: true, quietSince: 1_795_545_600_900 } as const;
+
+  it("a relay names itself and reports liveness; the hub takes it unchanged", () => {
+    const sent = hubIngestRequestSchema.parse({ ...body, client: "workmesh/0.10.0", sessions: [live] });
+    expect(hubIngestAcceptSchema.parse(sent)).toEqual(sent);
+    expect(sent.client).toBe("workmesh/0.10.0");
+    expect(hubSessionUpsertSchema.parse({ ...session, alive: false }).alive).toBe(false);
+    // Optional: older bodies stay valid both ways.
+    expect(hubIngestRequestSchema.safeParse(body).success).toBe(true);
+    expect(hubIngestAcceptSchema.parse(body).client).toBeUndefined();
+  });
+
+  it("strict: client is name/version, alive a boolean, quietSince epoch ms", () => {
+    for (const c of ["workmesh/0.10.0", "agentblip/0.6.0", "workmesh/0.10.0-rc.1+abc", "my-relay/1"]) {
+      expect(HUB_CLIENT_RE.test(c), c).toBe(true);
+    }
+    for (const c of ["workmesh", "Workmesh/1", "workmesh/", "workmesh/1 beta", "/1.0", `workmesh/${"1".repeat(40)}`]) {
+      expect(hubIngestRequestSchema.safeParse({ ...body, client: c }).success, c).toBe(false);
+    }
+    expect(hubSessionUpsertSchema.safeParse({ ...session, alive: "unknown" }).success).toBe(false);
+    expect(hubSessionUpsertSchema.safeParse({ ...session, quietSince: 1.5 }).success).toBe(false);
+  });
+
+  it("accept: a malformed liveness field reads as unknown, never a 400", () => {
+    const got = hubIngestAcceptSchema.parse({
+      ...body,
+      client: { name: "x" },
+      sessions: [{ ...session, alive: "yes", quietSince: "soon" }],
+    });
+    expect(got.client).toBeUndefined();
+    expect(got.sessions[0]?.alive).toBeUndefined();
+    expect(got.sessions[0]?.quietSince).toBeUndefined();
+    expect(hubIngestAcceptSchema.parse({ ...body, client: " other/2.0 " }).client).toBe("other/2.0");
+    expect(hubSessionUpsertAcceptSchema.parse({ ...session, quietSince: 10.4 }).quietSince).toBe(10);
+  });
+
+  it("team: people carry the hub's presence; an older or newer value reads as absent", () => {
+    expect(hubPresenceSchema.options).toEqual(["online", "reconnecting", "asleep", "offline"]);
+    const team = {
+      me: { name: "Sean" },
+      people: [{ name: "Sean", online: true, presence: "reconnecting", counts: { working: 1, waiting: 0, idle: 0 } }],
+      needsMe: [],
+      sessions: [],
+    };
+    const built = hubTeamResponseSchema.parse(team);
+    expect(hubTeamAcceptSchema.parse(built).people[0]?.presence).toBe("reconnecting");
+    const odd = hubTeamAcceptSchema.parse({ ...team, people: [{ ...team.people[0], presence: "napping" }] });
+    expect(odd.people[0]).toMatchObject({ name: "Sean", online: true, presence: undefined });
   });
 });

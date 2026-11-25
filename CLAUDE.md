@@ -147,8 +147,14 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   while the hub serves `/relay/team` (`setStructured`), else their tool calls stay on the parent. Codex threads read
   `session_meta` for their parent; workflow runs sum their agents' tokens. `agent_message` from SendMessage (hook),
   peer messages and Codex sends (transcript tail). Links per event (Linear ids, gh PR/issue on shared repos, Slack
-  at conversation level). `person.github` from `gh api user` (`lib/github.ts`) on heartbeats. Injected prompts
-  (`<task-notification>`, `<cross-session-message>`) map to `InjectedPrompt`: a turn starts, no prompt is sent.
+  at conversation level). `person.github` from `gh api user` (`lib/github.ts`) on heartbeats.
+- v0.7 (SPEC §19): system-injected markup is read by `stripInjected` (`@workmesh/protocol`, zod-free, also
+  `@workmesh/protocol/injected` for the hub's board). A wholly injected prompt (task notice, wrapped agent message,
+  only provenance markers) maps to `InjectedPrompt` in the Claude Code and Codex hooks: a turn starts, no prompt is
+  sent; the forwarder strips markup from prompt, message and agent_message text before redaction (`textOf`).
+  Subagent sessions send `name` (task title at conversation level, else agent type). A session whose cwd is outside
+  every shared repo sends `repos` (shared repos touched by file tools or by shell commands naming a seen root, most
+  recent first, `Tracked.recent`); its `repo` is the first.
 
 ## The hosted hub (private)
 
@@ -222,6 +228,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 | 2026-11-24 | Hub serves workmesh.b3os.org and bullpen.b3os.org; Worker script stays `bullpen` | Paired relays keep working without re-pairing; a renamed script would orphan the Durable Object |
 | 2026-11-24 | Split (Sean): the hub, board, summaries and B3OS kit move to the private `b3-fun/workmesh-cloud` (with `apps/hub`'s history, same path); this repo keeps the CLI, core, protocol, menu bar app, site, SPEC (protocol + privacy) and the one ROADMAP. workmesh-cloud pins this repo as a submodule for `@workmesh/protocol` | "The platform always remains hosted / by us, while the piece that gets installed on users machine is open source". Public history is not rewritten: the hub's code up to the split stays in it |
 | 2026-11-23 | Menu bar 0.2: grouped live list, SF Symbol template icon (orange only for needs-you), row actions, snooze; all new data via `/state` fields and daemon endpoints | Keeps the thin-client rule; roadmap in apps/menubar/README.md |
+| 2026-11-24 | v0.7 (SPEC §19): one zod-free `stripInjected` in the protocol package for relay, hub and board; subagent `name` = task at conversation, type at metadata; orchestrators send `repos` | Injected markup reached the board as prompts and agent messages (and a tmp path in a task notice); one tested reading keeps relay, hub backstop and board in step. Subagents showed as raw keys. An orchestrator's repo flipped with each file it touched and said nothing about the others |
 | 2026-11-24 | v0.5/v0.6 relay: daemon polls the hub's `/relay/team` and serves `GET /team` for the menu bar; subagents are hub sessions with `parent`/`role`, sent only once the hub answers `/relay/team`; tokens as Claude Code counts an agent | One capability signal keeps an older hub's board from filling with subagents; Claude Code's own `totalTokens` matched the context + output reading exactly on 5 of 6 real subagents, while a billing sum ran 1.1–6× larger |
 
 ## Cloudflare Resources

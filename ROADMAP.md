@@ -23,7 +23,9 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **done** (11-24): relay #5, board in workmesh-cloud #1; polish next |
 | v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **done** (11-24): names, markup, orchestrators, graph fit (relay in the next release, 0.9.1); Linear titles live |
 | Liveness | Presence from the hub, not the browser; a restart never ends sessions; the daemon as a launchd / systemd service; current client versions; quiet and stalled sessions | **done** (11-25): wire #11, relay (in 0.10.0 with v1, not yet on npm), hub in workmesh-cloud #4 |
+| v0.11 Session mirror | The board's session page reads like the person's terminal: title, harness and model; prompts, messages, folded tool runs; background-agent and shell notices; turn lines with what's still running; mode, background tasks and agents in a footer | **done** (11-25): wire #13, relay #14 + #20 (on Sean's Mac, in the next release), hub and board workmesh-cloud #8 (live) |
 | v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub and board live (workmesh-cloud #5) |
+| Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); relay MCP tool `ask` next |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
@@ -124,8 +126,37 @@ Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interru
 - **Versions, quiet, lanes (done):** every ingest names its client; Machines shows each device's current version and
   flags old ones; a working row reads "quiet 7m", then "stalled?" after an hour; ended sessions leave the lanes after
   an hour.
+- **Live 11-25:** hub deployed (presence pushed), Sean's Mac on the new relay under launchd; a `workmesh restart` and a
+  `kill -9` of his daemon each kept him online with every session working (launchd brought the killed one back in
+  1 s, the saved state brought its 9 shared sessions back). The first upgrade from an older relay still starts cold
+  (it had no saved state), so its other sessions show as Unconfirmed until they touch a B3 repo again.
 - **Next:** publish relay 0.10.0 (npm, two key taps) so teammates get the service and the saved state; the menu bar
   build that shows "asleep"/"reconnecting".
+
+### v0.11 Session mirror (Linear B3-7166, done 11-25)
+Sean, 11-25: "better representation of what the users see on their actual codex/claude sessions, ideally synced to
+this". Wire: SPEC §26.
+- **Wire (done, #13):** a `notice` event kind (background agents, shells, monitors, workflows, compaction, plan) with
+  its subject's title in `desc` at the conversation level; `tasks` (running background tasks by kind) on sessions,
+  turns and notices; `mode` on sessions; a main session's `title`; Codex `plan` steps.
+- **Relay (built):** reads Claude Code's own records from the transcript tail (AI or custom title, permission mode,
+  model, compactions, task notices by Claude Code's templates, background launches), the Stop hook's running tasks by
+  id, each subagent's own shells and monitors from its transcript (a subagent that stops with background work stays
+  open as "waiting on 1 shell, 1 monitor" until its finished notice), and Codex turn context, compactions and plan
+  updates. Metadata devices send the counts and states only. Tails are checked every second, so a notice written
+  between hooks arrives in about two seconds.
+- **Board (live, workmesh-cloud #8):** a Terminal view on the session page, the default for conversation-level
+  sessions: Geist Mono on a dark terminal surface, `❯` prompts, `●` messages, folded tool runs, green `●` background
+  agent notices, grey `*` turn lines ("Crunched for 4m 19s · done 9:11 AM · 3 shells, 2 monitors still running",
+  "Waiting for 1 background agent to finish"), compactions, a live spinner line; a head (title · Claude Code · model)
+  and a foot (mode · background tasks · ← agents, then the agent list). Codex reads the Codex way (exec cells, Updated
+  Plan, "Worked for" rules). Summary keeps the turn-summary view.
+- **Checked live (11-25):** Sean's sessions on the board against their transcripts, structure only: messages, tool
+  runs, agent messages, notices and turns line up one for one since the rollout; record-to-board under about 2 s.
+  Notices start at the rollout, so older turns that a task notice began show no notice line.
+- **Next:** publish the relay (with 0.10.0) so teammates' terminals mirror too; Codex `update_plan` is parsed from its
+  documented shape (no recent rollout of Sean's has one); per-subagent background counts come from each agent's own
+  transcript.
 
 ### v1 Coordinate (Linear B3-7167, in progress 11-25)
 - MCP server in every session: `roster`, `send`, `inbox`, `claim`, `lease`, `note`.
@@ -155,6 +186,15 @@ Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interru
 - **Next:** publish 0.10.0 and roll out; Linear agent identities per person (needs An); claims mirrored to Linear (needs
   a key that can write).
 
+### Ask (Linear B3-7165, done on the board 11-25)
+- "Ask ⌘K" on the board: questions in plain words ("What are An's agents working on?", "What's waiting on me?", "Who
+  touched apps/hub today?") answered by a tool-calling model (OpenRouter) from what the board already holds: sessions,
+  turns, activity, claims, leases, notes, Linear tickets. Answers name sessions and people as links.
+- Actions: it can draft a message to an agent or a person, a hold or release, or a project note; each is a card with
+  exactly what will happen and runs only when you confirm it, as you.
+- Agents: `POST /relay/ask` (SPEC §29) answers an agent's question from the same data minus other sessions' prompt and
+  message text, and can't act. **Next:** the relay's `ask` MCP tool.
+
 ### v2 Delegate (Linear B3-7168)
 - Messages delivered into running and idle sessions (Claude Code session inbox, Codex app-server).
 - Handoffs to another person's runner through that person's policy; approval gates at merge, deploy, spend.
@@ -162,6 +202,13 @@ Sean, 11-25: "I see myself as offline at times, maybe when the daemon is interru
 
 ## Decision log
 
+- 11-25 v0.11 mirror: the notices come from Claude Code's own `<task-notification>` templates, read on the machine;
+  only the title a template names (an agent's task, a background command's description, a workflow's name) may
+  leave, at the conversation level, and a monitor event never carries its output. Background tasks travel as counts
+  by kind, never their commands. `title` on a main session reuses the subagent field (conversation text either way).
+
+- 11-25 Ask: answers come only from tool reads of the hub's own data; actions are proposals a person confirms on a
+  card, never run from a model's turn; agents asking get read tools only and no prompt or message text.
 - 11-25 Liveness: presence is computed and pushed by the hub, never derived in a client; a heartbeat can no longer end
   a session (missing for 30 min, SessionEnd or a gone process can); the daemon runs as a launchd / systemd service
   that restarts it unless `workmesh stop` asked it to stop; the forwarder's saved state is local only (0600).

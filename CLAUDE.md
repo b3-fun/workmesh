@@ -164,6 +164,16 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   lasts 30 min without one. A refused call is applied as a heartbeat. `workmesh setup` registers `workmesh mcp` for
   Claude Code (`claude mcp add -s user`, else a `~/.claude.json` merge) and Codex (`[mcp_servers.workmesh]`); tests
   pass `claudeBin: null` so the real `claude` CLI never runs.
+- v0.11 session mirror (SPEC §26, `hub/mirror.ts`): the tail (now kept for metadata-level shared sessions too, which
+  send only states and counts from it) also reads `ai-title`/`custom-title` (main session `title`, conversation),
+  `permission-mode` (`mode`), the model, `compact_boundary`, task notices (Claude Code's `<summary>` templates →
+  `notice` events, the template's quoted title as `desc` at conversation level, never a monitor event's output) and
+  background launches (`toolUseResult.backgroundTaskId`/`taskId`/`async_launched`). Stop's `background_tasks` (ids +
+  kinds, `detail.backgroundTasks`) is the session's `TaskSet`; ending notices remove by id; turns and notices carry
+  `tasks`. Subagents count their own tasks from `agent-<id>.jsonl` (ClaudeUsageReader) and stay open (`bgWait`) after
+  a SubagentStop with tasks running, until their `agent_done` notice. Codex: `turn_context` → model + mode,
+  compactions, `update_plan` → `plan` notice (conversation). Every tick marks live sessions' tails dirty (one stat
+  when unchanged), so lines written between hooks arrive in ~1–2 s. An older hub's 400 holds `notice` like `message`.
 - v0.7 (SPEC §19): system-injected markup is read by `stripInjected` (`@workmesh/protocol`, zod-free, also
   `@workmesh/protocol/injected` for the hub's board). A wholly injected prompt (task notice, wrapped agent message,
   only provenance markers) maps to `InjectedPrompt` in the Claude Code and Codex hooks: a turn starts, no prompt is

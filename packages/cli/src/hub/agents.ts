@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { HubTasks } from "@workmesh/protocol";
+import { TaskSet, applyToTasks, claudeMirrorItems, claudeMirrorLine } from "./mirror";
 
 /**
  * Local readers behind v0.6's session structure (docs/SPEC.md §15): who a
@@ -38,6 +40,8 @@ export interface Usage {
   tokensIn: number;
   tokensOut: number;
   model?: string;
+  /** v0.11 (SPEC §26): a Claude Code agent's own background tasks running now (launches minus ending notices). */
+  tasks?: HubTasks;
 }
 
 const MODEL_RE = /^[\w.:@/-]{1,80}$/;
@@ -156,6 +160,8 @@ export class ClaudeUsageReader {
   /** Context of the latest call. */
   private latestIn = 0;
   private model: string | undefined;
+  /** v0.11: the agent's own background tasks (its transcript is read from the start, so the count is complete). */
+  private readonly tasks = new TaskSet();
 
   constructor(
     readonly file: string,
@@ -171,6 +177,7 @@ export class ClaudeUsageReader {
       this.perMessage.clear();
       this.baseOut = 0;
       this.latestIn = 0;
+      this.tasks.replace([]);
     }
     for (const line of res.lines) this.take(line);
     return { ...this.totals(), more: res.more };
@@ -179,11 +186,26 @@ export class ClaudeUsageReader {
   totals(): Usage {
     let tokensOut = this.baseOut;
     for (const out of this.perMessage.values()) tokensOut += out;
-    return { tokensIn: this.latestIn, tokensOut, model: this.model };
+    return { tokensIn: this.latestIn, tokensOut, model: this.model, tasks: this.tasks.counts() };
+  }
+
+  /** v0.11: background launches (structured tool results) and the notices that end them; counts only. */
+  private takeTasks(line: string): boolean {
+    let e: Record<string, unknown>;
+    try {
+      e = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      return true;
+    }
+    if (!e || typeof e !== "object" || e.type !== "user") return false;
+    for (const item of claudeMirrorItems(e, undefined)) applyToTasks(this.tasks, item);
+    return true;
   }
 
   private take(line: string): void {
-    if (line.length > MAX_LINE_BYTES || !line.includes('"usage"') || !line.includes('"assistant"')) return;
+    if (line.length > MAX_LINE_BYTES) return;
+    if (claudeMirrorLine(line) && this.takeTasks(line)) return;
+    if (!line.includes('"usage"') || !line.includes('"assistant"')) return;
     let e: { type?: unknown; isApiErrorMessage?: unknown; message?: { id?: unknown; model?: unknown; usage?: unknown } };
     try {
       e = JSON.parse(line) as typeof e;

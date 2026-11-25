@@ -20,6 +20,7 @@ import {
 import { OUR_COMMAND_RE } from "../lib/names";
 import { hookNodePath, removeOurHooks, writeBackup } from "../lib/hook-files";
 import { claudeConfigDir } from "../lib/paths";
+import { runningTasks } from "../hub/mirror";
 
 /**
  * Absolute hook invocation: GUI-launched agents don't inherit the login-shell
@@ -650,6 +651,7 @@ function mapClaudeEvent(input: ClaudeHookInput, base: EventBase, opts: MapHookOp
           lastAssistantMessage: clipHead(input.last_assistant_message, DETAIL_LIMITS.lastAssistantMessage),
           backgroundShells: bg.shells,
           backgroundAgents: bg.agents,
+          backgroundTasks: runningTasks(input.background_tasks),
         }),
       };
     }

@@ -2,6 +2,7 @@ import { runDaemon } from "../daemon";
 import { loadConfig } from "../lib/config";
 import { isDaemonUp, startDaemonInBackground } from "../lib/daemon-client";
 import { logFilePath } from "../lib/paths";
+import { serviceLogPath, serviceStatus } from "../lib/service";
 import { dim, green } from "../lib/ui";
 import { runStop } from "./stop";
 
@@ -17,12 +18,13 @@ export async function runStart(opts: StartOptions): Promise<void> {
   }
   if (opts.detach) {
     const up = await startDaemonInBackground(config);
+    // Under the service (SPEC §24) the daemon logs where launchd / systemd sends it, not to the state dir.
+    const svc = serviceStatus();
+    const where = svc.installed && svc.pid ? `${svc.kind}, pid ${svc.pid}, log: ${svc.kind === "launchd" ? serviceLogPath() : "journalctl --user -u workmesh"}` : `log: ${logFilePath()}`;
     if (!up) {
-      throw new Error(`daemon failed to start — check ${logFilePath()}`);
+      throw new Error(`daemon failed to start — check ${svc.installed ? where : logFilePath()}`);
     }
-    console.log(
-      `${green(`daemon started on 127.0.0.1:${config.port}`)}${dim(` (log: ${logFilePath()})`)}`,
-    );
+    console.log(`${green(`daemon started on 127.0.0.1:${config.port}`)}${dim(` (${where})`)}`);
     return;
   }
   await runDaemon(config);

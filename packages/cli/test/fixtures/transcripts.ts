@@ -166,3 +166,92 @@ export const structureLines = {
   codexSend: (name: string, args: Record<string, unknown>, callId: string, ts = 1): string =>
     codex("response_item", { type: "function_call", status: "completed", id: `fc_${callId}`, name, arguments: JSON.stringify(args), call_id: callId }, ts),
 };
+
+/**
+ * v0.11 session mirror shapes (Claude Code 2.1.332, Codex 0.164; keys, enum values and Claude Code's own notice
+ * templates copied from real files, every value made up).
+ */
+const notification = (inner: string): string => `<task-notification>\n${inner}\n</task-notification>`;
+export const mirrorLines = {
+  aiTitle: (title: string): string => JSON.stringify({ type: "ai-title", aiTitle: title, sessionId: "s" }),
+  customTitle: (title: string): string => JSON.stringify({ type: "custom-title", customTitle: title, sessionId: "s" }),
+  permissionMode: (mode: string): string => JSON.stringify({ type: "permission-mode", permissionMode: mode, sessionId: "s" }),
+  mode: (): string => JSON.stringify({ type: "mode", mode: "normal", sessionId: "s" }),
+  compact: (ts: number, durationMs = 41_000): string =>
+    JSON.stringify({
+      ...claudeBase(ts),
+      type: "system",
+      subtype: "compact_boundary",
+      content: "Conversation compacted",
+      uuid: uuid(),
+      level: "info",
+      logicalParentUuid: uuid(),
+      compactMetadata: { trigger: "auto", preTokens: 180_000, postTokens: 12_000, durationMs, preservedMessages: 4 },
+    }),
+  turnDuration: (durationMs: number, ts: number, pendingAgents?: number, pendingWorkflows?: number): string =>
+    JSON.stringify({
+      ...claudeBase(ts),
+      type: "system",
+      subtype: "turn_duration",
+      durationMs,
+      messageCount: 12,
+      pendingBackgroundAgentCount: pendingAgents,
+      pendingWorkflowCount: pendingWorkflows,
+      uuid: uuid(),
+      isMeta: false,
+    }),
+  /** A task notice as Claude Code injects it: a `user` line, origin task-notification. */
+  notice: (fields: { summary: string; taskId?: string; status?: string; durationMs?: number; event?: string; result?: string }, ts = 1): string => {
+    const parts = [
+      fields.taskId ? `<task-id>${fields.taskId}</task-id>` : "",
+      `<tool-use-id>toolu_${n}</tool-use-id>`,
+      `<output-file>/private/tmp/claude-501/tasks/${fields.taskId ?? "x"}.output</output-file>`,
+      fields.status ? `<status>${fields.status}</status>` : "",
+      `<summary>${fields.summary}</summary>`,
+      fields.event ? `<event>${fields.event}</event>` : "",
+      fields.result ? `<result>${fields.result}</result>` : "",
+      fields.durationMs !== undefined ? `<usage><total_tokens>1</total_tokens><tool_uses>2</tool_uses><duration_ms>${fields.durationMs}</duration_ms></usage>` : "",
+    ].filter(Boolean);
+    return JSON.stringify({
+      ...claudeBase(ts),
+      type: "user",
+      uuid: uuid(),
+      isMeta: true,
+      origin: { kind: "task-notification", producer: "session-task", runId: "run_1" },
+      turnOrigin: "task_notification",
+      message: { role: "user", content: notification(parts.join("\n")) },
+    });
+  },
+  bashBackground: (taskId: string, ts = 1): string =>
+    JSON.stringify({
+      ...claudeBase(ts),
+      type: "user",
+      uuid: uuid(),
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: `toolu_${n}`, content: "BG_TOOL_OUTPUT" }] },
+      toolUseResult: { stdout: "", stderr: "", interrupted: false, isImage: false, noOutputExpected: false, backgroundTaskId: taskId },
+    }),
+  monitorStarted: (taskId: string, ts = 1): string =>
+    JSON.stringify({
+      ...claudeBase(ts),
+      type: "user",
+      uuid: uuid(),
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: `toolu_${n}`, content: "MONITOR_TOOL_OUTPUT" }] },
+      toolUseResult: { taskId, persistent: false, timeoutMs: 600_000 },
+    }),
+  agentLaunched: (agentId: string, ts = 1): string =>
+    JSON.stringify({
+      ...claudeBase(ts),
+      type: "user",
+      uuid: uuid(),
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: `toolu_${n}`, content: "AGENT_LAUNCH_OUTPUT" }] },
+      toolUseResult: { status: "async_launched", agentId, description: "AGENT_DESCRIPTION_IN_RESULT", prompt: "AGENT_PROMPT", isAsync: true, outputFile: "/tmp/x", canReadOutputFile: true, canContinueAgent: true, resolvedModel: "claude-opus-5-5" },
+    }),
+  codexTurnContext: (model: string, approval: string, sandbox: string, ts = 1): string =>
+    codex("turn_context", { cwd: "/repo", model, approval_policy: approval, sandbox_policy: { type: sandbox }, effort: "high", summary: "auto" }, ts),
+  codexCompacted: (ts = 1): string =>
+    codex("compacted", { message: "COMPACTION_SUMMARY_TEXT", replacement_history: [], window_number: 2 }, ts),
+  codexCompactionItem: (id: string, ts: number, ms = 3000): string =>
+    codex("event_msg", { type: "item_completed", thread_id: "t", turn_id: "turn_1", item: { type: "ContextCompaction", id }, started_at_ms: ts - ms, completed_at_ms: ts }, ts),
+  codexPlan: (plan: Array<{ step: string; status: string }>, callId: string, ts = 1): string =>
+    codex("response_item", { type: "function_call", status: "completed", id: `fc_${callId}`, name: "update_plan", arguments: JSON.stringify({ explanation: "PLAN_EXPLANATION", plan }), call_id: callId }, ts),
+};

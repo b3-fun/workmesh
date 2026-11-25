@@ -15,7 +15,10 @@ import {
   HUB_TEXT_MAX,
   HUB_WIRE_VERSION,
   HUB_GITHUB_LOGIN_RE,
+  HUB_MAX_REPOS,
   hubActivityEventSchema,
+  isInjectedPrompt,
+  stripInjected,
   hubIngestRequestSchema,
   hubLinkSchema,
   hubSessionUpsertSchema,
@@ -179,6 +182,8 @@ interface Tracked {
   roots: Map<string, Target>;
   /** Most recent shared target touched: the session's repo when its cwd is not shared. */
   lastTarget?: Target;
+  /** v0.7: shared repos touched (files, or shell commands naming their root), most recent first, ≤ HUB_MAX_REPOS. */
+  recent?: string[];
   issues: string[];
   /** Last raw activity label and what the hub may see of it. */
   label?: { raw: string; hub?: string };
@@ -547,6 +552,18 @@ export class HubForwarder {
     }
   }
 
+  /** A shared target this session just worked in: its `repo` when the cwd isn't shared, first of its `repos`. */
+  private touched(t: Tracked, target: Target): void {
+    t.lastTarget = target;
+    if (!target.repo) return;
+    const recent = (t.recent ??= []);
+    const i = recent.indexOf(target.repo);
+    if (i === 0) return;
+    if (i > 0) recent.splice(i, 1);
+    recent.unshift(target.repo);
+    if (recent.length > HUB_MAX_REPOS) recent.length = HUB_MAX_REPOS;
+  }
+
   private addIssues(t: Tracked, ids: readonly string[]): void {
     for (const id of ids) {
       if (t.issues.includes(id)) continue;
@@ -589,10 +606,10 @@ export class HubForwarder {
     const sharedFiles = fileTargets.filter(
       (f): f is { file: string; target: Target } => f.target !== undefined,
     );
-    for (const { target } of sharedFiles) {
+    for (const { target } of [...sharedFiles].reverse()) {
       t.shared = true;
       t.roots.set(target.root, target);
-      t.lastTarget = target;
+      this.touched(t, target);
     }
 
     const keys = this.rule.issueKeys;
@@ -731,8 +748,10 @@ export class HubForwarder {
     t: Tracked,
     m: { key: string; ts: number; from: string; to: string; channel: "claude-session" | "codex-mail"; text?: string },
   ): void {
-    // Text only at the conversation level, redacted; at metadata the event says who wrote to whom.
-    const text = this.conversationShared(t) ? scrubText(m.text, { home: this.home, max: HUB_TEXT_MAX }) : undefined;
+    // Text only at the conversation level, without injected markup (a
+    // wrapper's body is the message), redacted; at metadata the event says
+    // who wrote to whom.
+    const text = this.conversationShared(t) ? this.textOf(m.text) : undefined;
     this.enqueue({
       key: m.key,
       ts: Math.round(m.ts),
@@ -833,9 +852,12 @@ export class HubForwarder {
 
     if (d.hookEvent === "InjectedPrompt") return undefined; // a task notice or another agent's message: no person spoke
     if (d.hookEvent === "UserPromptSubmit" || d.prompt !== undefined) {
+      // Markup the agent tool put there (SPEC §19) is nobody's prompt; a
+      // prompt that only opens with some is sent without it.
+      if (isInjectedPrompt(d.prompt)) return undefined;
       // The person sent a message. Metadata level (and rule-4 sessions): the
       // text never leaves, the ids may. Conversation level: redacted text.
-      const text = this.conversationShared(t) ? scrubText(d.prompt, { home: this.home, max: HUB_TEXT_MAX }) : undefined;
+      const text = this.conversationShared(t) ? this.textOf(d.prompt) : undefined;
       return {
         ...base,
         kind: "prompt",
@@ -882,6 +904,7 @@ export class HubForwarder {
     if (d.command !== undefined) {
       const rootHit = mentionedRoot(d.command, t.roots.keys(), this.home);
       const target = rootHit ? t.roots.get(rootHit) : t.cwdTarget;
+      if (rootHit && target && !cwdShared) this.touched(t, target); // an orchestrator working in that repo
       const extras = {
         cmd: extractCmd(d.command),
         issues: ctx.ids.length ? ctx.ids : undefined,
@@ -945,6 +968,17 @@ export class HubForwarder {
    */
   private conversationShared(t: Tracked): boolean {
     return this.share === "conversation" && t.shared;
+  }
+
+  /**
+   * Conversation text the hub may see (SPEC §9, §19): system-injected markup
+   * removed (a wrapper around another agent's message keeps its body), then
+   * redacted and capped. Undefined when nothing written by a person or an
+   * agent is left.
+   */
+  private textOf(raw: string | undefined): ReturnType<typeof scrubText> {
+    const clean = stripInjected(raw).text;
+    return clean ? scrubText(clean, { home: this.home, max: HUB_TEXT_MAX }) : undefined;
   }
 
   /** A tool description the hub may see: redacted, one line, ≤ 200 chars. */
@@ -1028,7 +1062,7 @@ export class HubForwarder {
   }
 
   private enqueueMessage(t: Tracked, raw: string, ts: number): void {
-    const text = scrubText(raw, { home: this.home, max: HUB_TEXT_MAX });
+    const text = this.textOf(raw);
     if (!text) return;
     this.enqueue({
       key: t.key,
@@ -1187,6 +1221,8 @@ export class HubForwarder {
         orchestrator,
         repo: target?.repo,
         branch: target?.branch,
+        // v0.7: an orchestrator (cwd outside every shared repo) names the repos it works across.
+        repos: !t.cwdTarget && t.recent?.length ? [...t.recent] : undefined,
         issues: t.issues.length ? [...t.issues] : undefined,
         startedAt: s.startedAt,
         updatedAt: ended ?? s.updatedAt,
@@ -1209,11 +1245,14 @@ export class HubForwarder {
     const meta = t.codexMeta?.meta;
     if (s.source === "codex" && meta?.parentThreadId) {
       const parentKey = `codex:${meta.parentThreadId}`;
+      const title = this.conversationShared(t) ? this.titleOf(codexTaskTitle(meta.agentPath)) : undefined;
+      const name = s.name ? undefined : this.subagentName(title, meta.agentRole);
       return {
         role: "subagent",
         parent: this.sessions.get(parentKey)?.shared ? parentKey : undefined,
         agentType: meta.agentRole,
-        title: this.conversationShared(t) ? this.titleOf(codexTaskTitle(meta.agentPath)) : undefined,
+        title,
+        ...(name ? { name } : {}),
         ...usage,
       };
     }
@@ -1239,17 +1278,29 @@ export class HubForwarder {
     return scrubbed.length > HUB_TITLE_MAX ? `${truncateHead(scrubbed, HUB_TITLE_MAX - 1)}…` : scrubbed;
   }
 
+  /**
+   * v0.7 (SPEC §19): a subagent's `name`, so every reader can show something
+   * human instead of its key: its task title where the title may be sent
+   * (conversation level), else its agent type.
+   */
+  private subagentName(title: string | undefined, agentType: string | undefined): string | undefined {
+    if (title) return title.length > 120 ? `${truncateHead(title, 119)}…` : title;
+    return agentType?.slice(0, 120) || undefined;
+  }
+
   /** A subagent's upsert (it has no store session of its own). */
   private buildSubUpsert(t: Tracked, parent: Tracked | undefined): HubSessionUpsert | undefined {
     const sub = t.sub!;
     const ended = sub.ended !== undefined;
     const target = parent?.cwdTarget ?? parent?.lastTarget;
     const source = sub.parentKey.slice(0, sub.parentKey.indexOf(":")) || "claude-code";
+    const title = parent && this.conversationShared(parent) ? this.titleOf(sub.title) : undefined;
     return conform(
       hubSessionUpsertSchema,
       {
         key: t.key,
         source,
+        name: this.subagentName(title, sub.agentType),
         state: ended ? "ended" : sub.state,
         activity: ended ? undefined : sub.label,
         statusLine: ended ? undefined : sub.label?.slice(0, HUB_STATUS_LINE_MAX),
@@ -1261,7 +1312,7 @@ export class HubForwarder {
         parent: sub.parentKey,
         role: "subagent",
         agentType: sub.agentType,
-        title: parent && this.conversationShared(parent) ? this.titleOf(sub.title) : undefined,
+        title,
         model: t.usage?.model,
         tokensIn: t.usage?.tokensIn || undefined,
         tokensOut: t.usage?.tokensOut || undefined,

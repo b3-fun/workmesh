@@ -297,6 +297,48 @@ function commandWrites(argv: readonly string[]): string[] {
   }
 }
 
+/**
+ * The simple commands in `command` (run in `cwd`), each with the directory it runs in (`cd` earlier in the command
+ * moves it). Words are as the shell would see them after quoting; heredoc bodies are skipped. Used by the v2 gate
+ * matcher (daemon/gates.ts).
+ */
+export function shellCommands(command: string, cwd: string | undefined, home = os.homedir()): Array<{ argv: string[]; cwd?: string }> {
+  if (!command || command.length > 64 * 1024) return [];
+  let tokens: Token[];
+  try {
+    tokens = lex(command);
+  } catch {
+    return [];
+  }
+  const out: Array<{ argv: string[]; cwd?: string }> = [];
+  let base = cwd;
+  let argv: string[] = [];
+  const flush = (): void => {
+    if (argv.length === 0) return;
+    if (argv[0] === "cd" || argv[0] === "pushd") {
+      const dir = argv[1];
+      if (dir && dir !== "-") base = resolve(dir, base, home) ?? base;
+    } else {
+      out.push({ argv, ...(base ? { cwd: base } : {}) });
+    }
+    argv = [];
+  };
+  for (let j = 0; j < tokens.length; j++) {
+    const tok = tokens[j]!;
+    if (tok.t === "redir") {
+      if (tokens[j + 1]?.t === "word") j++;
+      continue;
+    }
+    if (tok.t === "op") {
+      if (SEPARATORS.has(tok.v)) flush();
+      continue;
+    }
+    argv.push(tok.v);
+  }
+  flush();
+  return out.slice(0, 200);
+}
+
 /** Absolute paths `command` (run in `cwd`) clearly writes. */
 export function shellWriteTargets(command: string, cwd: string | undefined, home = os.homedir()): string[] {
   if (!command || command.length > 64 * 1024) return [];

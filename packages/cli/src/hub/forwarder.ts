@@ -199,6 +199,33 @@ interface Target {
   branch?: string;
 }
 
+/**
+ * A Slack link's label (SPEC §15): what happened and where, `Sent · DM`, `Read · #eng`, `Searched · 3 channels`;
+ * just one of them when the other is unknown. A place name only, never message or query text.
+ */
+export function slackLabel(action: string | undefined, where: string | undefined): string | undefined {
+  const w = where ? (/^[#]|^(DM|group DM|\d+ channels)$/.test(where) ? where : `#${where.replace(/^#/, "")}`) : undefined;
+  const label = action && w ? `${action} · ${w}` : (action ?? w);
+  return label?.slice(0, 120);
+}
+
+/** Workmesh's own words (its guidance, inbox and heads-ups) start their lines with "Workmesh". */
+const WORKMESH_LINE_RE = /^[ \t>*-]*Workmesh\b.*$/gm;
+/** An id written as an example: "e.g. B3-123", "like B3-123", "for example B3-123". */
+const EXAMPLE_ID_RE = /\b(?:e\.g\.|eg\.|i\.e\.|for example|for instance|such as|like)[ \t,:]*\(?[A-Za-z][A-Za-z0-9]{0,9}-\d{1,6}\b/gi;
+
+/**
+ * The text Linear ids are read from (SPEC §3.3 rule 6): none from a prompt the agent tool injected (a task notice,
+ * another agent's message), and never from Workmesh's own lines or ids written as examples, so the board doesn't
+ * show the guidance's "e.g. B3-123" as a ticket.
+ */
+export function issueText(text: string | undefined): string | undefined {
+  if (!text) return text;
+  if (isInjectedPrompt(text)) return undefined;
+  const plain = text.includes("<") ? stripInjected(text).text : text;
+  return plain.replace(WORKMESH_LINE_RE, " ").replace(EXAMPLE_ID_RE, " ");
+}
+
 interface Tracked {
   key: string;
   cwd?: string;
@@ -235,8 +262,10 @@ interface Tracked {
   /** Transcript text blocks already sent (ids), bounded. */
   sentMessages?: Set<string>;
   // v0.6 structure (SPEC §15)
-  /** Links already sent for this session (type|id|url), bounded. */
+  /** Links already sent for this session (type|id|url; Slack: slack|action|channel|thread), bounded. */
   sentLinks?: Set<string>;
+  /** Where Slack channels are, as this session's Slack calls named them (`C0123` → `#eng`), bounded; memory only. */
+  slackPlaces?: Map<string, string>;
   /** Set when this entry is a Claude Code subagent (not a store session). */
   sub?: SubState;
   /** A main session's subagent keys. */
@@ -737,7 +766,7 @@ export class HubForwarder {
 
     const keys = this.rule.issueKeys;
     const ids = [
-      ...new Set([...extractIssues(d?.prompt, keys), ...extractIssues(d?.command, keys)]),
+      ...new Set([...extractIssues(issueText(d?.prompt), keys), ...extractIssues(issueText(d?.command), keys)]),
     ];
     this.addIssues(t, ids);
 
@@ -934,18 +963,30 @@ export class HubForwarder {
     const gh = extractGithubLink(d.command, d.toolResponseText);
     if (gh && this.repoShared(gh.repo)) add({ type: gh.type, id: `${gh.repo}#${gh.number}`, url: gh.url });
     if (d.slack && this.conversationShared(t)) {
+      const places = (t.slackPlaces ??= new Map());
       for (const ref of d.slack) {
         const host = ref.link ? /^https:\/\/([\w-]+\.slack\.com)\//.exec(ref.link)?.[1] : undefined;
         if (host) this.slackHost = host;
         const url =
           ref.link ??
           (ref.ts && this.slackHost ? `https://${this.slackHost}/archives/${ref.channel}/p${ref.ts.replace(".", "")}` : undefined);
-        add({
-          type: "slack",
-          id: ref.ts ? `${ref.channel}/${ref.ts}` : ref.channel,
-          url,
-          label: ref.name ? `#${ref.name.replace(/^#/, "")}`.slice(0, 120) : undefined,
-        });
+        // Where: what this call's response said, else what an earlier call in this session said about the channel.
+        const counted = ref.name !== undefined && /^\d+ channels$/.test(ref.name);
+        if (ref.name && !counted) {
+          places.set(ref.channel, ref.name);
+          if (places.size > 200) places.delete(places.keys().next().value as string);
+        }
+        const where = ref.name ?? places.get(ref.channel) ?? (/^D/.test(ref.channel) ? "DM" : /^G/.test(ref.channel) ? "group DM" : undefined);
+        const label = slackLabel(ref.action, where);
+        // One link per action and place in a session: a thread's messages, a DM's sends, a channel's reads; a search
+        // per what it found. The first permalink stands for the rest.
+        const thread = ref.link ? /[?&]thread_ts=(\d+\.\d+)/.exec(ref.link)?.[1] : ref.action === "Read" ? ref.ts : undefined;
+        const once = counted ? `slack|${ref.action ?? ""}|${label ?? ""}` : `slack|${ref.action ?? ""}|${ref.channel}|${thread ?? ""}`;
+        if (ref.action) {
+          if (seen.has(once)) continue;
+          seen.add(once);
+        }
+        add({ type: "slack", id: ref.ts ? `${ref.channel}/${ref.ts}` : ref.channel, url, label });
       }
     }
     return out;

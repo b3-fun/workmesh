@@ -391,45 +391,137 @@ const SLACK_CHANNEL_RE = /^[A-Z][A-Z0-9]{5,19}$/;
 const SLACK_TS_RE = /^\d{9,11}\.\d{1,9}$/;
 
 /**
- * Slack messages an MCP Slack tool call touched (shapes read from real
- * transcripts of the Slack plugin: inputs carry `channel_id` and `message_ts`
- * or `thread_ts`; slack_send_message answers `{message_link, message_context:
- * {channel_id, message_ts}}` as JSON text with escaped slashes). Channel ids,
- * message ts and the permalink only; never message text.
+ * What a Slack MCP tool did, from its name's last part: `slack_send_message`
+ * → "Sent", `search_messages` → "Searched". Any Slack MCP server's names.
+ */
+export function slackAction(toolName: string): string {
+  const name = (toolName.split("__").pop() ?? toolName).toLowerCase().replace(/^slack_/, "");
+  if (/draft/.test(name)) return "Drafted";
+  if (/schedule/.test(name)) return "Scheduled";
+  if (/^(send|post|reply)/.test(name)) return "Sent";
+  if (/^search/.test(name)) return "Searched";
+  if (/reaction|^react/.test(name)) return "Reacted";
+  if (/^(read|get|fetch|view|history)/.test(name)) return "Read";
+  if (/^list/.test(name)) return "Listed";
+  if (/^create/.test(name)) return "Created";
+  if (/^(update|edit)/.test(name)) return "Updated";
+  if (/^(upload|complete_file)/.test(name)) return "Uploaded";
+  return "Used";
+}
+
+/** The response's text blocks, and the JSON inside them when there is any. */
+function responseParts(toolResponse: unknown): { texts: string[]; json: Record<string, unknown>[] } {
+  const texts: string[] = [];
+  const json: Record<string, unknown>[] = [];
+  const blocks = Array.isArray(toolResponse) ? toolResponse : [toolResponse];
+  for (const b of blocks.slice(0, 8)) {
+    const t = typeof b === "string" ? b : b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : undefined;
+    if (t === undefined) {
+      if (b && typeof b === "object") json.push(b as Record<string, unknown>);
+      continue;
+    }
+    const text = t.slice(0, 200_000);
+    try {
+      const v: unknown = JSON.parse(text);
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        json.push(v as Record<string, unknown>);
+        for (const k of ["messages", "results"]) {
+          const inner = (v as Record<string, unknown>)[k];
+          if (typeof inner === "string") texts.push(inner.slice(0, 200_000));
+        }
+        continue;
+      }
+    } catch {
+      // markdown, not JSON
+    }
+    texts.push(text);
+  }
+  return { texts, json };
+}
+
+/** "#eng", "DM" or "group DM" for a channel line's place (the Slack plugin's `Channel: #eng (C0123)` lines). */
+function placeOf(raw: string): string | undefined {
+  const v = raw.trim();
+  const name = /^#([a-z0-9][a-z0-9._-]{0,79})\b/i.exec(v);
+  if (name) return `#${name[1]}`;
+  if (/^group dm\b|^mpdm\b/i.test(v)) return "group DM";
+  if (/^dm\b/i.test(v)) return "DM";
+  return undefined;
+}
+
+// The Slack plugin's channel lines: `Channel: #eng (C0123ABCD)` heading a read, `Channel: #eng (ID: C0123ABCD)` on
+// each search hit; a DM reads `Channel: DM (D0123ABCD)`, a group DM `Channel: Group DM (ID: G0123ABCD)`.
+const CHANNEL_LINE_RE = /^[ \t*_]*Channel:[ \t*_]*(.{1,100}?)[ \t]*\((?:ID:[ \t]*)?([CDG][A-Z0-9]{5,19})\)/gm;
+
+/**
+ * Slack messages an MCP Slack tool call touched, read from the call's
+ * response (PostToolUse; a PreToolUse has none, and a link from both would
+ * say the same thing twice): the channel id, the message ts and the
+ * permalink (`slack_send_message` answers `{message_link, message_context:
+ * {channel_id, message_ts}}`, slashes escaped); where it happened, from the
+ * response's channel lines (reads and searches) or `channel_info` (drafts);
+ * and what the tool did. Shapes read from real Slack plugin transcripts. Ids,
+ * channel names and counts only; never message or query text.
  */
 export function slackRefs(
   toolName: string | undefined,
   toolInput: Record<string, unknown> | undefined,
   toolResponse?: unknown,
 ): SlackRef[] | undefined {
-  if (!toolName || !SLACK_TOOL_RE.test(toolName)) return undefined;
+  if (!toolName || !SLACK_TOOL_RE.test(toolName) || toolResponse === undefined) return undefined;
+  const action = slackAction(toolName);
   const out: SlackRef[] = [];
   const add = (ref: SlackRef): void => {
     if (out.some((r) => r.channel === ref.channel && r.ts === ref.ts)) return;
     if (out.length < 5) out.push(ref);
   };
+  const { texts, json } = responseParts(toolResponse);
   let responseText: string | undefined;
-  if (typeof toolResponse === "string") responseText = toolResponse;
-  else if (toolResponse !== undefined) {
-    try {
-      responseText = JSON.stringify(toolResponse);
-    } catch {
-      responseText = undefined;
+  try {
+    responseText = typeof toolResponse === "string" ? toolResponse : JSON.stringify(toolResponse);
+  } catch {
+    responseText = undefined;
+  }
+  // Where: a draft's channel_info, else the response's channel lines (one place, or how many for a search).
+  let where: string | undefined;
+  let whereChannel: string | undefined;
+  for (const j of json) {
+    const info = j.channel_info && typeof j.channel_info === "object" ? (j.channel_info as Record<string, unknown>) : undefined;
+    if (!info) continue;
+    const id = typeof info.channel_id === "string" && SLACK_CHANNEL_RE.test(info.channel_id) ? info.channel_id : undefined;
+    const nm = typeof info.name === "string" ? info.name : undefined;
+    where = info.is_dm === true ? "DM" : nm ? placeOf(`#${nm.replace(/^#/, "")}`) : undefined;
+    whereChannel = id;
+  }
+  if (!where) {
+    const places = new Map<string, string | undefined>();
+    for (const t of texts) for (const m of t.matchAll(CHANNEL_LINE_RE)) if (places.size < 50) places.set(m[2]!, placeOf(m[1]!));
+    if (places.size === 1) [[whereChannel, where]] = [...places];
+    else if (places.size > 1) {
+      whereChannel = places.keys().next().value;
+      where = `${places.size} channels`;
     }
   }
+  if (!where) {
+    const asked = oneLine(toolInput?.channel_name)?.replace(/^#/, "");
+    if (asked) where = placeOf(`#${asked}`);
+  }
+  const name = where?.slice(0, DETAIL_LIMITS.slackName);
   // The Slack MCP server's JSON escapes slashes (`https:\/\/x.slack.com\/archives\/…`), verified on real results.
   const link = responseText ? SLACK_LINK_RE.exec(responseText.slice(0, 200_000).replace(/\\+\//g, "/")) : null;
   if (link) {
     const url = link[0].length <= DETAIL_LIMITS.slackLink ? link[0] : undefined;
-    add({ channel: link[1]!, ts: `${link[2]}.${link[3]}`, link: url });
+    add({ channel: link[1]!, ts: `${link[2]}.${link[3]}`, link: url, name, action });
+    return out;
   }
   const channel = typeof toolInput?.channel_id === "string" ? toolInput.channel_id : undefined;
   if (channel && SLACK_CHANNEL_RE.test(channel)) {
     const rawTs = toolInput?.message_ts ?? toolInput?.thread_ts;
     const ts = typeof rawTs === "string" && SLACK_TS_RE.test(rawTs) ? rawTs : undefined;
-    const name = oneLine(toolInput?.channel_name)?.slice(0, DETAIL_LIMITS.slackName);
-    if (!link || link[1] !== channel) add({ channel, ts, name });
-    else if (name) out[0] = { ...out[0]!, name };
+    add({ channel, ts, name: whereChannel && whereChannel !== channel ? undefined : name, action });
+  } else if (whereChannel && name) {
+    // A search names no channel of its own: the first place it found stands for it.
+    add({ channel: whereChannel, name, action });
   }
   return out.length > 0 ? out : undefined;
 }

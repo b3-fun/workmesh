@@ -378,6 +378,13 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
 
 ## Decision log
 
+- 11-25 0.12.1 (fixes from the docs pass): hooks, MCP, Codex notify and the service run Node by a stable path
+  (`/opt/homebrew/bin/node`, not the Cellar's versioned one), so `brew upgrade node` no longer breaks them, and
+  `doctor` flags a versioned or missing Node (#44); the `agentblip` bin alias is gone, so the install works over an old
+  global agentblip (#45); `memories` and `gates` show a write at once (#43); approval notices say where and by whom
+  (#42; the hub's `via` field still to come). Unfinished, as drafts until the API limit resets 12-01: hub admins and
+  device/person removal (workmesh-cloud #31), menu bar self-update on macOS 15+ (#46).
+
 - 11-25 Private testing, not a launch (Sean: "not ready for public launch, private testing with the team for now"):
   the docs serve B3 teammates installing it now, and B3's hub stays closed to other teams.
 - 11-25 No daily digest (Sean). The board's summaries stay; nothing posts a digest.

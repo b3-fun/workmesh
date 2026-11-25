@@ -50,7 +50,8 @@ What a hub may learn from a machine, and what it does with it. Each rule points 
   scope, links; a reason to retire one; a search query), at either sharing level, redacted first. An agent's memory
   reaches other agents only after a person accepts it (or its own person chose to accept their agents' memories). A
   hub may propose memories from a finished session's shared turn summaries, only for devices at `conversation`; a
-  person accepts each one, and going back to `metadata` deletes the proposals drawn from that device's sessions.
+  person accepts each one, and going back to `metadata` deletes the proposals drawn from that device's sessions. To
+  search by meaning, B3's hub embeds memories and recall questions with Cloudflare Workers AI (its own account).
 - **Redaction on the machine**, before anything is queued (§9): keys, tokens, JWTs, private keys, credentials in URLs
   and secret-valued settings become `[redacted]`, home paths `~/…`. The hub blanks obvious secrets again before it
   stores text (§10).
@@ -1020,9 +1021,12 @@ device token names the person, requests carry ingest keys, answers carry hub key
   once; anyone else's is a proposal), and an agent's `forget` of its own person's proposal withdraws it (`rejected`).
   Only accepted memories reach agents: the brief, recall answers and the notes list below never carry a proposed,
   rejected, superseded or retired one.
-- **Recall** searches titles, bodies, tags and links of accepted memories (B3's hub: SQLite full-text search with
-  bm25). Memories scoped to the asker's `repo` rank first (those whose paths cover one of the asker's `paths` above
-  them), project-wide ones next, other repos' last. Each hit counts as a use for the asking session.
+- **Recall** searches titles, bodies, tags and links of accepted memories, by words and by meaning (B3's hub: SQLite
+  full-text search with bm25, fused with Workers AI embeddings; full text alone when the model doesn't answer).
+  Memories scoped to the asker's `repo` weigh more (those whose paths cover one of the asker's `paths` more still),
+  project-wide ones next, other repos' least, so a much better match from elsewhere can still come first. A memory
+  found only by meaning must be close to the question. Each hit counts as a use for the asking session. The question
+  goes to the hub (and, on B3's hub, to Workers AI to be embedded), redacted first (§9).
 - **The brief** is what a relay needs to pick a new session's memories without a network call in the hook path:
   every accepted memory with its body cut to 600 characters, `scope`, linked `issues`, `tags`, `by.person`,
   `updatedAt`. `GET /relay/sync` (§21) gains `memory: { rev }`, which moves whenever the accepted set changes (an

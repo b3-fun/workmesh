@@ -29,7 +29,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **done** (11-25): wire #22 (SPEC §30), relay #23 + #26 in **0.11.0** (npm, GitHub release v0.11.0), hub and board workmesh-cloud #12; follow-ups (approval → the agent carries on, a live two-person handoff) in 0.11.x |
 | Onboarding hardening | First run solid on macOS and Linux: lingering so an SSH box stays online after logout, no half-installed systemd unit, `init` checks the hub heard from the machine, `doctor` names why a machine shows offline, one pairing per machine (the same hub under two addresses, a re-pair retires the old device), "online, no agents running" and "paired, never connected" on the board; a Docker smoke test (Node 20/22/24, with and without systemd, over SSH) | **in review** (11-25): relay 0.11.1 (not published), hub workmesh-cloud |
 | PR details | PR title, state (open, draft, merged, closed), author, review and checks on the board, from a read-only GitHub App on b3-fun, instead of a bare `repo#n` | **done** (11-25): hub and board workmesh-cloud #24 |
-| v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **in progress** (11-25): wire #32 (SPEC §35–36); relay built (0.12.0, not published) |
+| v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search by words and meaning; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **done** (11-25): wire #32 (SPEC §35–36), relay #35 (0.12.0, not published), hub and board workmesh-cloud #28 (live) |
 | Keeping current | `workmesh update` (install the newest release the way it was installed, refresh hooks, MCP and the daemon, roll back on failed checks), update notices from the hub, opt-in auto-update, a once-per-session note to sessions on older tools, "Update available" in the menu bar, versions on the board | **done** (11-25): wire #33 (SPEC §40), relay #37 (SPEC §41) and menu bar #36 in 0.12.0 (not published), hub and board workmesh-cloud #25–#27 (live) |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
@@ -288,7 +288,7 @@ this". Wire: SPEC §26.
   `repo#n`.
 - **Later:** a webhook instead of polling, if two-minute freshness turns out too slow.
 
-### v3 Memory (Linear B3-7203, in progress 11-25)
+### v3 Memory (Linear B3-7203, done 11-25)
 
 Sean's first ask (11-24) was agents working toward a shared goal "with humans in the loop, and potentially shared
 knowledge base". v1's notes were the start of it (one-word tags, no search, no review). Memory makes it a knowledge
@@ -308,8 +308,23 @@ base people trust. Contract: SPEC §35 (wire) and §36 (relay).
   gotchas and facts that score for its repo, directory, branch and claimed issues, each with its id, and reports which
   it used. `remember`, `recall`, `forget`, `memories` (MCP and CLI); on a hub with memory `note` proposes a memory and
   `notes` lists them; on an older hub nothing changes.
-- **Next:** the hub and board (Memory tab, Needs-you cards, Settings, Ask, proposals from finished sessions, notes
-  migrated).
+- **Hub and board (live 11-25, workmesh-cloud #28):** the hosted hub keeps memories with their history and uses,
+  decides their status as SPEC §35 says, and searches by words and by meaning (full-text search fused with Workers AI
+  embeddings; words alone when the model doesn't answer). On a 20-question eval over 45 team-shaped memories, half of
+  the questions paraphrased: words alone found the answer in the top 3 for 95% (first for 80%), meaning alone 100%
+  (90%), the two fused 100% (95%, MRR 0.97), which is what ships. The board has a Memory tab (search, In use / Waiting
+  / Set aside, kind, repo and person; each memory with where it applies, who wrote and decided it, its links, the
+  sessions that used it and its history; write, edit, replace, retire, restore), memory cards under Needs you (Accept,
+  Edit, Reject; Retire, Keep), and Settings → Memory (accept my agents' memories; suggest memories from finished
+  sessions). Ask searches the memory and can propose one on a confirm card. The team's notes became accepted memories.
+- **Proposed from sessions:** when a conversation-level session ends after at least two summarized turns, the hub's
+  small model may suggest up to two memories (a decision made, a gotcha solved, a convention stated), which wait for
+  the session's person; on by default, off in Settings.
+- **Checked:** the 0.12.0 relay against a local hub (remember proposes, recall finds the CI decision for "how do we
+  ship the hub to production", forget proposes a retire, the brief lists accepted memories); the board at 1440 and 390
+  px, light and dark.
+- **Next:** publish relay 0.12.0 so teammates' agents get memories at session start; watch which proposals people
+  accept and tune the suggestions.
 
 ### Keeping current (Linear B3-7168 follow-up, done 11-25)
 
@@ -342,6 +357,9 @@ an upgrade went on without the new tools until someone restarted them (An's test
 - 11-25 PR details come from a read-only GitHub App on b3-fun (Sean: "GitHub App on b3-fun"), not anyone's personal
   token: the narrowest permissions that answer title, state, review and checks (no code access), polled rather than a
   webhook for now.
+- 11-25 Memory search: words and meaning together. Embeddings stayed because a 20-question eval moved hit@3 from 95%
+  to 100% and MRR from 0.87 to 0.97; the smallest model (bge-small) tied the larger ones, and vectors live in the hub's
+  own storage, so no index service was added.
 - 11-25 Memory: agents propose, people accept; only accepted memories reach agents, and a hub's own proposals from
   finished sessions are never accepted without a person. A person may let their own agents' memories through, never
   someone else's (superseding or retiring a teammate's memory is always a proposal). Session start picks from a brief

@@ -8,9 +8,35 @@ import type { LiveConfigPatch, SafeConfig } from "../lib/config";
 import { pauseRequestSchema, resolvePauseUntil } from "../lib/snooze";
 import type { OwnershipSummary } from "./pusher";
 import type { HubForwarderStatus } from "../hub/forwarder";
+import type { HubShareLevel, HubTeamAccepted } from "@workmesh/protocol";
 
 /** GET /hub: the forwarder's status, or `enabled: false` when not paired. */
 export type HubState = ({ enabled: true } & HubForwarderStatus) | { enabled: false };
+
+/**
+ * GET /team (v0.5, docs/SPEC.md §16): the team as the hub last told it, for the
+ * menu bar, with this machine's hub connection and sharing level. `?open=1`
+ * says the menu is open (the daemon then polls the hub every 15 s).
+ */
+export type TeamState =
+  | { enabled: false }
+  | {
+      enabled: true;
+      hubUrl: string;
+      /** Where "Open board" goes. */
+      boardUrl: string;
+      share: HubShareLevel;
+      /** The last send to the hub succeeded. */
+      connected: boolean;
+      /** The hub rejected this device's token: pair again. */
+      halted: boolean;
+      /** null: not asked yet; false: this hub has no team view (older hub). */
+      available: boolean | null;
+      fetchedAt?: number;
+      error?: string;
+      pollMs: number;
+      team?: HubTeamAccepted;
+    };
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -44,6 +70,8 @@ export interface DaemonServerDeps {
   getHub?(): HubState;
   /** Re-read the hub section from config and restart the forwarder (POST /hub/reload). */
   reloadHub?(): HubState;
+  /** The team view (GET /team); `open` = the menu bar is showing it. */
+  getTeam?(open: boolean): TeamState;
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
@@ -194,6 +222,11 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
       if (method === "POST" && url === "/resume") {
         deps.resume();
         json(res, 200, { ok: true, paused: false });
+        return;
+      }
+      if (method === "GET" && (url === "/team" || url.startsWith("/team?"))) {
+        const open = new URL(url, "http://127.0.0.1").searchParams.get("open") === "1";
+        json(res, 200, deps.getTeam?.(open) ?? { enabled: false });
         return;
       }
       if (method === "GET" && url === "/hub") {

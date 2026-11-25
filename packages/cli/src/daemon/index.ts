@@ -8,6 +8,8 @@ import type { WorkflowWatcher } from "../adapters/workflow";
 import { formatOptionsFromConfig, hubShareLevel, readHubConfig, safeConfig, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
+import { TeamPoller } from "../hub/team";
+import { readGithubLogin } from "../lib/github";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
 import { stateDir } from "../lib/paths";
@@ -62,12 +64,19 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   // Hub forward (team hub, apps/hub): runs beside the pusher, on its own timer; rebuilt
   // when `workmesh hub connect|disconnect|include|exclude` asks for a reload.
   let forwarder: HubForwarder | undefined;
+  // v0.5: the team view for the menu bar (GET /relay/team), beside the forwarder.
+  let teamPoller: TeamPoller | undefined;
+  // v0.6: the GitHub login `gh` reports, read once per start (the config's copy from `hub connect` until then).
+  let githubLogin: string | undefined;
+  let githubRead = false;
   const startForwarder = (hub: HubConfig | undefined): void => {
     const previous = forwarder;
     forwarder = undefined;
     if (previous) void previous.stop().catch(() => {});
+    teamPoller?.stop();
+    teamPoller = undefined;
     if (!hub) return;
-    forwarder = new HubForwarder({
+    const fwd = new HubForwarder({
       url: hub.url,
       token: hub.deviceToken,
       rule: hub.project,
@@ -78,7 +87,28 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       log,
       share: hubShareLevel(hub),
       codexSessionsDir: config.adapters.codex.sessionsDir,
+      github: githubLogin ?? hub.github,
     });
+    forwarder = fwd;
+    teamPoller = new TeamPoller({
+      url: hub.url,
+      token: hub.deviceToken,
+      log,
+      // A hub that serves the team view reads v0.6 structure: subagents go as their own sessions.
+      onAvailability: (available) => {
+        fwd.setStructured(available);
+        log(available ? "hub: team view on; sending subagents as sessions" : "hub: no team view; subagents fold into their sessions");
+      },
+    });
+    teamPoller.start();
+    if (!githubRead) {
+      githubRead = true;
+      void readGithubLogin().then((login) => {
+        if (!login) return;
+        githubLogin = login;
+        forwarder?.setGithub(login);
+      });
+    }
     forwarder.start();
     log(`hub forward on: ${hub.url} (project ${hub.project.name}, sharing ${hubShareLevel(hub)})`);
   };
@@ -134,6 +164,26 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     },
     getConfig: () => safeConfig(liveConfig),
     getHub: () => (forwarder ? { enabled: true, ...forwarder.status() } : { enabled: false }),
+    getTeam: (open) => {
+      const hub = liveConfig.hub;
+      if (!forwarder || !teamPoller || !hub) return { enabled: false };
+      if (open) teamPoller.markOpen();
+      const st = forwarder.status();
+      const view = teamPoller.view();
+      return {
+        enabled: true,
+        hubUrl: hub.url,
+        boardUrl: hub.url,
+        share: st.share,
+        connected: !st.halted && st.lastSendOk === true,
+        halted: st.halted || view.halted,
+        available: view.available,
+        fetchedAt: view.fetchedAt,
+        error: view.error,
+        pollMs: view.pollMs,
+        team: view.team,
+      };
+    },
     reloadHub: () => {
       const hub = readHubConfig();
       if (hub === "unreadable") throw new Error("config file is unreadable — hub settings unchanged");
@@ -229,6 +279,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
           // best effort
         }
         try {
+          teamPoller?.stop();
           await Promise.all([pusher.shutdown(), forwarder?.stop()]);
         } catch {
           // best effort

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { watch } from "chokidar";
 import { z } from "zod";
 import { DETAIL_LIMITS } from "@workmesh/core";
+import { isInjectedPrompt } from "@workmesh/protocol";
 import type { SessionEvent, SessionEventDetail } from "@workmesh/core";
 import {
   absolutePath,
@@ -441,6 +442,10 @@ function mapCodexEvent(
     case "SessionStart":
       return { ...base, kind: "start" };
     case "UserPromptSubmit":
+      if (isInjectedPrompt(input.prompt)) {
+        // Markup Codex put there (a notice, another agent's message): a turn starts, nobody typed it.
+        return { ...base, kind: "working", activity: "thinking", detail: compactDetail({ hookEvent: "InjectedPrompt" }) };
+      }
       return {
         ...base,
         kind: "working",

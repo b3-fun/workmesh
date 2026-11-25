@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { DETAIL_LIMITS } from "@workmesh/core";
+import { isInjectedPrompt as isInjected } from "@workmesh/protocol";
 import type { SessionEvent, SessionEventDetail, SlackRef } from "@workmesh/core";
 import {
   absolutePath,
@@ -357,12 +358,13 @@ export function backgroundCounts(tasks: readonly unknown[] | undefined): { shell
 
 /**
  * A prompt Claude Code injected rather than the person typed: a background
- * task's completion notice or a message from another session or teammate.
- * Its text is not the person's, so it never travels as a prompt.
+ * task's completion notice, a message from another session, agent or
+ * teammate, a local command's output, or nothing but provenance markers
+ * (`@workmesh/protocol`'s `stripInjected`, SPEC §19). Its text is not the
+ * person's, so it never travels as a prompt.
  */
 export function isInjectedPrompt(prompt: string | undefined): boolean {
-  if (!prompt) return false;
-  return /^\s*<(task-notification|cross-session-message|teammate-message|agent-message)\b/.test(prompt);
+  return isInjected(prompt);
 }
 
 const SLACK_TOOL_RE = /^mcp__.*slack.*__/i;

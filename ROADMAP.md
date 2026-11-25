@@ -21,7 +21,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.4 One system | Rename to Workmesh, shared protocol package; open-source client here, hosted platform private (b3-fun/workmesh-cloud) | **done** (11-24); hub deploys from CI next |
 | v0.5 Multiplayer menu bar | The team in the menu bar | **done** (11-24): menu bar 0.5.0, hub `/relay/team` live |
 | v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **done** (11-24): relay #5, board in workmesh-cloud #1; polish next |
-| v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **next** |
+| v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **done** (11-24): names, markup, orchestrators, graph fit (relay in the next release, 0.9.1); Linear titles live |
 | v1 Coordinate | Claims, file leases, hold, Linear agent identities | later |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
@@ -86,14 +86,26 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
   the person's prompt. Not captured: cost (no agent records it per subagent), Codex inbound agent messages, main
   Claude Code sessions' tokens.
 
-### v0.7 Polish from real use (next)
-Found on the live board with real sessions, 11-24:
-- The live feed names subagents by their raw key (`claude-code:f2533…`); show the type and task instead.
-- Agent messages can carry injected markup (e.g. a leading `<artifact-…>` block); hide system-injected content from the Messages tab and the feed.
-- Sessions started outside a repo (an orchestrator in `~/Documents`) group under "No repo"; group them by the repo they touched most, or as "Orchestrators".
-- Graph opens zoomed out with empty space; fit to the nodes on load.
-- Linear chips show ids only until the hub has `LINEAR_API_KEY` (read-only key or the Linear app from v1).
-- Publish relay 0.9.0 (subagents, messages, links, avatars, team menu bar) so teammates get v0.6 capture; ship the menu bar build as a release asset.
+### v0.7 Polish from real use (done 11-24)
+Found on the live board with real sessions, 11-24 (wire: SPEC §19):
+- **Subagent names (done):** the relay sends a `name` for every subagent (its task at conversation level, else its
+  type); the board never shows a raw key (name, task, type, a workflow's phase, else tool + short id), and the feed
+  and message routes name an agent under the session it works for: "documents-a0 › Build the demo viewer".
+- **Injected markup (done):** task notices, wrapped agent messages, provenance markers and `<system-reminder>` blocks
+  are nobody's text. One reading of them (`stripInjected` in `@workmesh/protocol`, real-shaped fixtures): the relay
+  sends no prompt for a wholly injected one and strips the rest; the hub does the same on ingest as a backstop; the
+  board hides what older relays stored.
+- **Orchestrators (done):** a session started outside a repo sends `repos` (the shared repos it touched, most recent
+  first); the board groups it under the repo it touched last, marks it "Orchestrator" and names the other repos it
+  works across. Sessions from older relays group by their newest event's repo, else "Outside a repo".
+- **Graph fit (done):** fits the measured nodes on load and when the node set changes, between a readable 0.8 and 1
+  (a bigger graph starts at its top), until the reader moves it.
+- **Found while checking (done):** the graph hid every node on each live update (blinking); a tool description lost
+  the start of a word that began with the tool's name ("Reading" after Read); one-line text dropped a leading "#7".
+- **Linear titles (live):** the hub has a read-only `LINEAR_API_KEY`; chips and graph nodes show ticket titles and
+  states (one batched query per 30 s at most, cached 10 minutes, ids alone when Linear fails).
+- **Publish:** relay 0.9.0 is out; these relay changes ship as 0.9.1. Still to do: the menu bar build as a release
+  asset.
 
 ### v1 Coordinate (Linear B3-7167)
 - MCP server in every session: `roster`, `send`, `inbox`, `claim`, `lease`, `note`.
@@ -107,6 +119,10 @@ Found on the live board with real sessions, 11-24:
 - Shared knowledge: rulings and conventions loaded at session start for everyone's agents.
 
 ## Decision log
+
+- 11-24 v0.7: a subagent's `name` is its task at conversation level and its type at metadata (the hub enforces the
+  latter); orchestrators are marked by sending `repos`, and sit with the repo they touched last rather than in a
+  separate "Orchestrators" group, so a repo's group shows everything working on it.
 
 - 11-24 Split: the installed client (this repo: CLI, daemon, hooks, menu bar, protocol) stays open source; the hosted platform (hub, board, summaries, integrations) lives in the private b3-fun/workmesh-cloud and is run by us (Sean).
 

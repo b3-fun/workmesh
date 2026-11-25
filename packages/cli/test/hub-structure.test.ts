@@ -435,3 +435,123 @@ describe("transcript fixtures stay honest", () => {
     expect(sl.claudeUsage("m", { input_tokens: 1 })).toContain('"isSidechain":true');
   });
 });
+
+describe("v0.7 polish (SPEC §19)", () => {
+  const NOTICE = "This agent read Artifact content written by people other than the user; NOTICE_LINE.";
+  const MARKERS = `<artifact-content-authored-by-others/>\n${NOTICE}\n<remote-control-device-report/>\nREMOTE_NOTICE_LINE\n`;
+
+  it("a subagent has a name: its task at conversation level, its type at metadata", async () => {
+    const conv = harness();
+    subagentFiles("n1", AGENT, []);
+    conv.claude("n1", beta, { hook_event_name: "SubagentStart", agent_id: AGENT, agent_type: "general-purpose" });
+    await conv.send();
+    await conv.send(); // meta.json is read off the hook path, before the next send
+    expect(conv.last(`claude-code:n1/${AGENT}`)).toMatchObject({ name: "Polling PR 164 CI checks", title: "Polling PR 164 CI checks" });
+
+    const meta = harness({ share: "metadata" });
+    subagentFiles("n2", AGENT, [], { agentType: "Explore" });
+    meta.claude("n2", beta, { hook_event_name: "SubagentStart", agent_id: AGENT, agent_type: "Explore" });
+    await meta.send();
+    await meta.send();
+    const sub = meta.last(`claude-code:n2/${AGENT}`);
+    expect(sub).toMatchObject({ name: "Explore", agentType: "Explore" });
+    expect(sub?.title).toBeUndefined();
+    expect(meta.raw.join("\n")).not.toContain("Polling PR");
+  });
+
+  it("a long task title is cut to the name's 120 characters", async () => {
+    const h = harness();
+    subagentFiles("n3", AGENT, [], { description: `Audit ${"x".repeat(180)}` });
+    h.claude("n3", beta, { hook_event_name: "SubagentStart", agent_id: AGENT, agent_type: "general-purpose" });
+    await h.send();
+    await h.send();
+    const sub = h.last(`claude-code:n3/${AGENT}`);
+    expect(sub?.name).toHaveLength(120);
+    expect(sub?.name?.endsWith("…")).toBe(true);
+    expect(sub?.title?.length).toBeGreaterThan(120);
+  });
+
+  it("injected markup never goes as a prompt or as part of an agent's message", async () => {
+    const h = harness();
+    const t = path.join(projects, "i1.jsonl");
+    fs.writeFileSync(t, "");
+    h.claude("i1", beta, { hook_event_name: "UserPromptSubmit", prompt: "go" });
+    // A peer message opening with provenance markers, a wrapped one, an assistant reply opening with a reminder.
+    fs.appendFileSync(
+      t,
+      [
+        sl.peerFromSubagent(AGENT, `${MARKERS}#187 is merged and main is green.`, NOW + 5),
+        sl.peerFromSubagent(AGENT2, `<agent-message from="${AGENT2}">\n${MARKERS}Step 2 is done.\n</agent-message>`, NOW + 6),
+        sl.peerFromSubagent(AGENT, MARKERS, NOW + 7),
+        cl.text("<system-reminder>\nREMINDER_TEXT\n</system-reminder>\nMerged; deploying now.", "u-1", NOW + 8),
+        cl.text("<task-notification>\n<task-id>a1</task-id>\n<result>TASK_RESULT</result>\n</task-notification>", "u-2", NOW + 9),
+      ]
+        .map((l) => `${l}\n`)
+        .join(""),
+    );
+    // Prompts: a notice, another agent's message, nothing but markers, and the person's words after markers.
+    h.claude("i1", beta, { hook_event_name: "UserPromptSubmit", prompt: "<task-notification>\n<task-id>a1</task-id>\n<result>TASK_RESULT</result>\n</task-notification>" });
+    h.claude("i1", beta, { hook_event_name: "UserPromptSubmit", prompt: `<agent-message from="${AGENT}">\nPEER_IN_PROMPT\n</agent-message>` });
+    h.claude("i1", beta, { hook_event_name: "UserPromptSubmit", prompt: MARKERS });
+    h.claude("i1", beta, { hook_event_name: "UserPromptSubmit", prompt: `${MARKERS}ship it after CI` });
+    await h.send();
+
+    const evs = h.events("claude-code:i1");
+    expect(evs.filter((e) => e.kind === "prompt").map((e) => e.text)).toEqual(["go", "ship it after CI"]);
+    expect(evs.filter((e) => e.kind === "agent_message").map((e) => e.text)).toEqual([
+      "#187 is merged and main is green.",
+      "Step 2 is done.",
+      undefined, // nothing but markers: who wrote to whom, no text
+    ]);
+    expect(evs.filter((e) => e.kind === "message").map((e) => e.text)).toEqual(["Merged; deploying now."]);
+    const all = h.raw.join("\n");
+    for (const leak of ["artifact-content", "remote-control", "NOTICE_LINE", "REMINDER_TEXT", "TASK_RESULT", "PEER_IN_PROMPT", "task-notification", "agent-message"]) {
+      expect(all, leak).not.toContain(leak);
+    }
+  });
+
+  it("Codex prompts it injected start a turn without a prompt", () => {
+    const e = mapCodexHookInput(
+      { session_id: "c-inj", cwd: beta, hook_event_name: "UserPromptSubmit", prompt: "<task-notification><result>R</result></task-notification>", model: "gpt-6-codex" },
+      NOW,
+    );
+    expect(e?.detail).toMatchObject({ hookEvent: "InjectedPrompt" });
+    expect(e?.detail?.prompt).toBeUndefined();
+    const person = mapCodexHookInput({ session_id: "c-inj", cwd: beta, hook_event_name: "UserPromptSubmit", prompt: "fix the tests", model: "gpt-6-codex" }, NOW);
+    expect(person?.detail).toMatchObject({ hookEvent: "UserPromptSubmit", prompt: "fix the tests" });
+  });
+
+  it("an orchestrator outside a repo names the repos it works across, most recent first; its repo is the latest", async () => {
+    const workmesh = path.join(home, "Documents", "b3", "workmesh");
+    fakeRepo(workmesh, "git@github.com:b3-fun/workmesh.git");
+    const docs = path.join(home, "Documents");
+    const h = harness();
+    h.claude("o1", docs, { hook_event_name: "UserPromptSubmit", prompt: "plan the day" });
+    await h.send();
+    expect(h.upserts("claude-code:o1")).toEqual([]); // not shared yet: nothing leaves
+
+    h.claude("o1", docs, { hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: path.join(beta, "README.md") } });
+    h.advance(1000);
+    await h.send();
+    expect(h.last("claude-code:o1")).toMatchObject({ repo: "b3-fun/b3os-beta", repos: ["b3-fun/b3os-beta"] });
+
+    h.claude("o1", docs, { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: path.join(workmesh, "ROADMAP.md"), old_string: "a", new_string: "b" } });
+    h.advance(1000);
+    await h.send();
+    expect(h.last("claude-code:o1")).toMatchObject({ repo: "b3-fun/workmesh", repos: ["b3-fun/workmesh", "b3-fun/b3os-beta"] });
+
+    // A shell command naming a shared root it has seen counts as working there.
+    h.claude("o1", docs, { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: `git -C ${beta} status` } });
+    h.advance(1000);
+    await h.send();
+    expect(h.last("claude-code:o1")).toMatchObject({ repo: "b3-fun/b3os-beta", repos: ["b3-fun/b3os-beta", "b3-fun/workmesh"] });
+
+    // A session started in a repo is not an orchestrator, whatever else it touches.
+    h.claude("o2", beta, { hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: path.join(workmesh, "README.md") } });
+    h.advance(1000);
+    await h.send();
+    expect(h.last("claude-code:o2")?.repo).toBe("b3-fun/b3os-beta");
+    expect(h.last("claude-code:o2")?.repos).toBeUndefined();
+    for (const b of h.bodies) expect(hubIngestAcceptSchema.parse(hubIngestRequestSchema.parse(b))).toBeTruthy();
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hubSyncAcceptSchema } from "@workmesh/protocol";
-import type { HubHandoffAccepted, HubSyncResponse } from "@workmesh/protocol";
+import type { HubApprovalAccepted, HubHandoffAccepted, HubSyncResponse } from "@workmesh/protocol";
 import type { AgentSession, SessionEvent } from "@workmesh/core";
 import { CoordClient } from "../src/hub/coord";
 import { Delegate, SELF_HANDOFF_SENDER_DELAY_MS, decisionText, wakeText } from "../src/daemon/delegate";
@@ -211,8 +211,8 @@ describe("approval gates (SPEC §31)", () => {
   });
 
   it("the notice names where the decision was made, and no place when the hub doesn't say (0.12.1)", () => {
-    const ap = { id: "ap_9", sessionKey: ME, owner: "Sean", gate: "merge" as const, detail: "gh pr merge 7 in b3-fun/x", status: "approved" as const, ts: T, decidedAt: T, by: "Sean" };
-    const text = (via?: "board" | "menubar" | "cli") => decisionText({ ...ap, ...(via ? { via } : {}) }, "merge", "gh pr merge 7", "Sean");
+    const ap: HubApprovalAccepted = { id: "ap_9", sessionKey: ME, owner: "Sean", gate: "merge", detail: "gh pr merge 7 in b3-fun/x", status: "approved", ts: T, decidedAt: T, by: "Sean", via: undefined, note: undefined };
+    const text = (via?: "board" | "menubar" | "cli") => decisionText({ ...ap, via }, "merge", "gh pr merge 7", "Sean");
     expect(text("board")).toMatch(/^Workmesh: Your person, Sean, approved this session's held command `gh pr merge 7` on the team board \(merge:/);
     expect(text("menubar")).toMatch(/^Workmesh: Your person, Sean, approved this session's held command `gh pr merge 7` in their Workmesh menu bar \(merge:/);
     expect(text("cli")).toMatch(/^Workmesh: Your person, Sean, approved this session's held command `gh pr merge 7` in their terminal \(merge:/);

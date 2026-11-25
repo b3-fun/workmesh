@@ -38,6 +38,11 @@ jobs:
       - name: Build CLI
         run: npm run build -w @b3os/workmesh
 
+      # docs/reference/cli.md and mcp-tools.md are generated from the built CLI; config.md must name every config key
+      # and WORKMESH_* variable. Fix a failure with `npm run docs:ref` and commit the result.
+      - name: Reference docs match the code
+        run: npm run docs:ref:check
+
   # First-run onboarding on fresh Linux boxes (scripts/smoke-linux): `workmesh init` with Node 20, 22 and 24 in
   # containers without systemd, against a stand-in hub. The systemd-over-SSH box and a real hub run locally
   # (scripts/smoke-linux/smoke.sh without --fake-hub).

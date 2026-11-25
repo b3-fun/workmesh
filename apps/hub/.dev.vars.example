@@ -1,4 +1,0 @@
-# Copy to .dev.vars for `wrangler dev`. Never set DEV_USER_EMAIL in production:
-# with ENVIRONMENT=production the Worker answers 500 to every /api request.
-ENVIRONMENT=development
-DEV_USER_EMAIL=sean@example.com

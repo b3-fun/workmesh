@@ -24,11 +24,11 @@ jobs:
       - name: Install
         run: npm ci
 
-      # Every workspace: site + relay Worker, CLI, core, protocol, and the hub (its four tsconfigs).
+      # Every workspace: site + relay Worker, CLI, core, protocol. (The hosted hub has its own CI, in workmesh-cloud.)
       - name: Typecheck
         run: npm run typecheck
 
-      # Every workspace's vitest (the hub's run in workerd via @cloudflare/vitest-plugin) + the Worker units.
+      # Every workspace's vitest (CLI, core, protocol) + the Worker units.
       - name: Test
         run: npm test
 
@@ -37,7 +37,3 @@ jobs:
 
       - name: Build CLI
         run: npm run build -w @b3os/workmesh
-
-      # The hub deploys by hand for now (CONTRIBUTING.md); CI only proves the board builds.
-      - name: Build hub board
-        run: npm run build -w @workmesh/hub

@@ -14,6 +14,9 @@ const r = (s: string): string => redactSecrets(s, HOME);
 
 import { PEM, PEM_BODY, SECRETS, SLACK_WEBHOOK_SECRET } from "./fixtures/fake-secrets";
 
+/** `openssl rand -hex 32`-shaped: 64 hex digits. */
+const HEX64 = "4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b";
+
 describe("redactSecrets: true positives (SPEC §9 list)", () => {
   const cases: Array<[string, string, string]> = [
     ["Anthropic key", `export ANTHROPIC_API_KEY=${SECRETS.anthropic}`, SECRETS.anthropic],
@@ -65,6 +68,16 @@ describe("redactSecrets: true positives (SPEC §9 list)", () => {
     ["private key hex by name", `PRIVATE_KEY=0x${SECRETS.evmKey}`, SECRETS.evmKey.slice(0, 16)],
     ["private key prose", `the private key 0x${SECRETS.evmKey} funds it`, SECRETS.evmKey.slice(0, 16)],
     ["PEM block", `here:\n${PEM}\nthen`, PEM_BODY],
+    // bare hex, slash base64 and short labelled values (review of 0.9.1)
+    ["bare hex secret", `the admin token is ${HEX64} for now`, HEX64.slice(0, 20)],
+    ["bare hex alone", HEX64, HEX64.slice(0, 20)],
+    ["hex secret, 48 digits", `export HMAC=x; echo ${HEX64.slice(0, 48)}`, HEX64.slice(0, 48)],
+    ["base64 with a slash", "use q7Hk2+9sLm/Pz3Rt8Vw1Xy4Bn6Cd0Ef5Gh7Jk9Lm2Np4= for it", "q7Hk2+9sLm"],
+    ["base64 with a slash, end of sentence", "secret: q7Hk2+9sLm/Pz3Rt8Vw1Xy4Bn6Cd0Ef5Gh7Jk9Lm2Np4=.", "Pz3Rt8Vw1Xy4"],
+    ["short key=", "key=Xk29fj3Lq", "Xk29fj3Lq"],
+    ["short key:", "license key: Xk29fj3Lq", "Xk29fj3Lq"],
+    ["short sig", "sig=ab12cd34&x=1", "ab12cd34"],
+    ["short pass", "pass: hunter2", "hunter2"],
   ];
   for (const [name, input, secret] of cases) {
     it(name, () => {
@@ -145,6 +158,17 @@ describe("redactSecrets: no mangling of ordinary text", () => {
     "- **Cloudflare zone token: none**\n- **Token:** n/a",
     "Installed; the backup is `.env-backup-b3-T-20261124T153000Z` and we fall back to the basic flow-v2.",
     "Datasheet: https://www.supermicro.com/datasheet/datasheet_SuperServer_SYS421_GPU48.pdf",
+    // digests and public hashes stay (bare hex rule)
+    `commit ${HEX64}`,
+    `docker pull img@sha256:${HEX64}`,
+    `${HEX64}  dist/app.tgz`,
+    `checksum = "${HEX64}"`,
+    `tx 0x${HEX64} confirmed`,
+    `https://github.com/b3-fun/workmesh/blob/${HEX64}/README.md`,
+    // labelled values that are not secrets (short labelled rule)
+    "key: B3-7166, key: arm64-linux, key: v2.1.0, sig=sha256, pass: 12, auth: oauth2, first_pass: 3",
+    '{"key": "claude-code:s1", "key": "Ctrl+K"}',
+    "src/components/Button/index.tsx and packages/cli/src/hub/forwarder.ts",
     'read -rs "K?API key: " K && curl -sS -H "Authorization: Bearer $K" https://api.example.com/v4/zones',
   ];
   for (const text of keep) {

@@ -248,8 +248,12 @@ agent's text updates, grouped tool calls such as "Ran 2 shell commands", turn du
 - **Redaction, on the machine, before anything is queued:** API keys and tokens (Anthropic `sk-ant-…`, OpenAI `sk-…`,
   GitHub `ghp_/gho_/ghu_/ghs_/ghr_` and `github_pat_`, Slack `xox?-`, AWS `AKIA…`, npm `npm_…`, Linear `lin_api_…`,
   hub device tokens `bp_…`), JWTs, PEM private key blocks, `Bearer <token>`, `key|secret|token|password = value` pairs, URLs with
-  embedded credentials, and long high-entropy strings next to those words → `[redacted]`. Absolute home paths →
-  `~/…`. A unit-tested list; a privacy test feeds a corpus of real-looking secrets through the whole pipeline.
+  embedded credentials, and long high-entropy strings next to those words → `[redacted]`. Also context-free: long
+  mixed-case alphanumeric runs with real entropy, base64 runs containing `/`, and 48+ bare hex digits unless a hash
+  word labels them (`sha256:`, `commit`, `checksum`) or they are `0x…`; and short mixed letter-and-digit values after
+  a generic name (`key=`, `sig:`, `pass:`). Absolute home paths → `~/…`. A unit-tested list; a privacy test feeds a
+  corpus of real-looking secrets through the whole pipeline. Redaction targets secrets only: names, email addresses,
+  customer details and other personal data in prompts or agent text are not detected and are sent as written.
 - **Prompts:** from UserPromptSubmit `prompt` (Claude Code) and the Codex equivalent. Cap 4,000 chars (`truncated`).
 - **Agent messages:** tail the session transcript (`transcript_path` from the hook payload; Codex rollout file) from
   a saved byte offset, read on every hook event for a shared session and on Stop, and emit each assistant text block

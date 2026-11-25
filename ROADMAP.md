@@ -243,7 +243,8 @@ this". Wire: SPEC §26.
     `gh`; never a real merge or deploy), 3 runs per model per case. With a plain setup, every run carried on, on
     0.11.0's texts and even on the first draft's (Sonnet and Haiku; a custom gate on `echo deploy-test`, a merge, and
     11-25's sequence of a teammate's wake then a gated merge). The stall came back once the person's own CLAUDE.md
-    said automated messages are never their approval (STRICT_TALLY). The fix: an approval runs the exact
+    said automated messages are never their approval: Haiku then asked to confirm in the terminal in 6 of 6 runs on
+    0.11.0 and 5 of 6 with the new texts; Sonnet carried on in 6 of 6 either way. That rule is the person's to keep. The fix: an approval runs the exact
     command it was asked for, once, within 30 minutes (a rerun asks anew with `renew`); its wake names who decided,
     as whom, and quotes the held command; the session-start note of a person with gates says up front that such an
     approval is their consent for that command; Claude Code shows the wake as "Workmesh", not "Stop hook feedback".

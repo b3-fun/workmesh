@@ -955,10 +955,10 @@ command run; a waiter that can't reach the daemon ends.
   one line each, ≤ 15 lines with the claims) and the person's open claims. When the person gated some actions
   (0.11.x), it also says so up front: which actions wait for whose approval, that the session should end its turn or
   carry on meanwhile, and that an approval, which arrives as a Workmesh wake quoting the command, is the person's
-  consent to run exactly that command once, without asking again in the terminal. (Live, 11-25: with a person's
-  CLAUDE.md saying automated messages are never their approval, Haiku without this note asked to confirm in the
-  terminal; with it, it ran the approved merge, taking the person's own request as the authorization and the gate as
-  the check.)
+  consent to run exactly that command once, without asking again in the terminal. A person's own rule (a CLAUDE.md
+  saying automated messages are never their approval) still wins: live on 11-25, Haiku then mostly asked in the
+  terminal (1 of 6 carried on), Sonnet carried on (6 of 6, taking the person's request as the authorization and the
+  gate as the check).
 - **Menu bar.** `GET /team` adds `delegate: { available, handoffs, approvals }` (handoffs offered to the person or
   running here; pending approvals this machine's agents asked for or the person may decide); Workmesh.app shows
   "Handoffs for you" (Accept / Decline) and "Approvals" (Approve / Deny), answered through `POST /coord/op` as the

@@ -22,6 +22,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.5 Multiplayer menu bar | The team in the menu bar | **done** (11-24): menu bar 0.5.0, hub `/relay/team` live |
 | v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **done** (11-24): relay #5, board in workmesh-cloud #1; polish next |
 | v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **done** (11-24): names, markup, orchestrators, graph fit (relay in the next release, 0.9.1); Linear titles live |
+| v0.11 Session mirror | The board's session page reads like the person's terminal: title, harness and model; prompts, messages, folded tool runs; background-agent and shell notices; turn lines with what's still running; mode, background tasks and agents in a footer | **in progress** (11-25): wire merged (#13, SPEC §26); relay built; board Terminal view in workmesh-cloud |
 | v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub side in workmesh-cloud |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
@@ -107,6 +108,21 @@ Found on the live board with real sessions, 11-24 (wire: SPEC §19):
 - **Publish:** relay 0.9.0 is out; these relay changes ship as 0.9.1. Still to do: the menu bar build as a release
   asset.
 
+### v0.11 Session mirror (Linear B3-7166, in progress 11-25)
+Sean, 11-25: "better representation of what the users see on their actual codex/claude sessions, ideally synced to
+this". Wire: SPEC §26.
+- **Wire (done, #13):** a `notice` event kind (background agents, shells, monitors, workflows, compaction, plan) with
+  its subject's title in `desc` at the conversation level; `tasks` (running background tasks by kind) on sessions,
+  turns and notices; `mode` on sessions; a main session's `title`; Codex `plan` steps.
+- **Relay (built):** reads Claude Code's own records from the transcript tail (AI or custom title, permission mode,
+  model, compactions, task notices by Claude Code's templates, background launches), the Stop hook's running tasks by
+  id, each subagent's own shells and monitors from its transcript (a subagent that stops with background work stays
+  open as "waiting on 1 shell, 1 monitor" until its finished notice), and Codex turn context, compactions and plan
+  updates. Metadata devices send the counts and states only. Tails are checked every second, so a notice written
+  between hooks arrives in about two seconds.
+- **Board (next):** a Terminal view on the session page, default for conversation-level sessions, in Geist Mono with
+  the CLI's glyphs; the turn-summary view stays one click away.
+
 ### v1 Coordinate (Linear B3-7167, in progress 11-25)
 - MCP server in every session: `roster`, `send`, `inbox`, `claim`, `lease`, `note`.
 - File leases enforced by a PreToolUse deny that names the holder; claims mirrored to Linear as agent sessions under
@@ -134,6 +150,11 @@ Found on the live board with real sessions, 11-24 (wire: SPEC §19):
 - Shared knowledge: rulings and conventions loaded at session start for everyone's agents.
 
 ## Decision log
+
+- 11-25 v0.11 mirror: the notices come from Claude Code's own `<task-notification>` templates, read on the machine;
+  only the title a template names (an agent's task, a background command's description, a workflow's name) may
+  leave, at the conversation level, and a monitor event never carries its output. Background tasks travel as counts
+  by kind, never their commands. `title` on a main session reuses the subagent field (conversation text either way).
 
 - 11-25 v1 relay: hooks are answered from the daemon's cached sync, never a network call, and everything fails open
   (a lease counts only while the last sync is under 90 s old; only a hold the daemon already knew about outlives an

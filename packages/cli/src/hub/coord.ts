@@ -1,4 +1,5 @@
 import {
+  HUB_MEMORY_BRIEF_BODY_MAX,
   HUB_RECENT_EDIT_MS,
   hubApprovalRequestSchema,
   hubApprovalResponseAcceptSchema,
@@ -40,6 +41,7 @@ import type {
   HubLeaseAccepted,
   HubLeaseRequest,
   HubLeaseResponseAccepted,
+  HubMemoryAccepted,
   HubMemoryBriefItemAccepted,
   HubMemoryRequest,
   HubMemoryResponseAccepted,
@@ -199,6 +201,14 @@ export class CoordClient {
   private briefFailures = 0;
   private briefRetryAt = 0;
   private briefInFlight: Promise<void> | undefined;
+  /** When the brief fetch in flight was sent (a brief sent before a write can't carry it). */
+  private briefSentAt = 0;
+  /**
+   * 0.12.1: memory writes the hub took, applied to the cached brief at once (as #31 did for claims and leases), so
+   * `memories` shows them before the next sync and brief. Each is applied again to a brief that was asked for before
+   * the hub answered the write, and dropped once a brief asked for after it arrives (that one carries it).
+   */
+  private memWrites: Array<{ at: number; apply: (list: MemoryBriefItem[]) => MemoryBriefItem[] }> = [];
 
   constructor(opts: CoordClientOptions) {
     this.url = opts.url.replace(/\/+$/, "");
@@ -698,6 +708,7 @@ export class CoordClient {
     const now = this.now();
     if (this.halted || now - this.briefAttemptAt < this.briefMinMs || this.briefRetryAt > now) return Promise.resolve();
     this.briefAttemptAt = now;
+    this.briefSentAt = now;
     this.briefInFlight = this.fetchBriefUnsafe(forRev)
       .catch((err: unknown) => this.briefFailed(`brief: ${err instanceof Error ? err.message : String(err)}`))
       .finally(() => {
@@ -763,8 +774,44 @@ export class CoordClient {
     }
     this.briefFailures = 0;
     this.briefRetryAt = 0;
-    const memories = [...parsed.data.memories].sort((a, b) => b.updatedAt - a.updatedAt);
+    // Writes the hub answered after this brief was asked for aren't in it: keep them on top; the rest it carries.
+    const sentAt = this.briefSentAt;
+    this.memWrites = this.memWrites.filter((w) => w.at >= sentAt);
+    let memories = [...parsed.data.memories];
+    for (const w of this.memWrites) memories = w.apply(memories);
+    memories.sort((a, b) => b.updatedAt - a.updatedAt);
     this.memBrief = { rev: parsed.data.rev, forRev, memories, fetchedAt: this.now() };
+  }
+
+  /**
+   * A memory the hub just answered for (remember, forget), applied to the cached brief: accepted → in it (in place of
+   * the one it supersedes); retired, superseded or rejected → out of it; proposed → no change (the brief holds only
+   * accepted memories). The brief's `rev` is left as it was, so the sync that follows still fetches the hub's own.
+   */
+  private applyMemoryWrite(m: HubMemoryAccepted): void {
+    const item: MemoryBriefItem = {
+      id: m.id,
+      kind: m.kind,
+      title: m.title,
+      body: m.body.slice(0, HUB_MEMORY_BRIEF_BODY_MAX),
+      scope: m.scope,
+      issues: m.links?.issues,
+      tags: m.tags,
+      by: { person: m.by.person },
+      updatedAt: m.updatedAt,
+    };
+    const apply = (list: MemoryBriefItem[]): MemoryBriefItem[] => {
+      if (m.status === "proposed") return list;
+      const rest = list.filter((x) => x.id !== m.id && !(m.status === "accepted" && m.supersedes !== undefined && x.id === m.supersedes));
+      return m.status === "accepted" ? [item, ...rest] : rest;
+    };
+    if (m.status === "proposed") return;
+    this.memWrites.push({ at: this.now(), apply });
+    if (this.memWrites.length > 200) this.memWrites.splice(0, this.memWrites.length - 200);
+    if (this.memBrief) {
+      const memories = apply(this.memBrief.memories).sort((a, b) => b.updatedAt - a.updatedAt);
+      this.memBrief = { ...this.memBrief, memories };
+    }
   }
 
   // --- hub calls (from the MCP server and CLI, through the daemon) ----------------
@@ -911,15 +958,28 @@ export class CoordClient {
     return this.post("/relay/approvals", hubApprovalRequestSchema, req, hubApprovalResponseAcceptSchema, "v2");
   }
 
-  setGates(req: HubGatesRequest): Promise<CoordResult<HubGatesResponseAccepted>> {
-    return this.post("/relay/gates", hubGatesRequestSchema, req, hubGatesResponseAcceptSchema, "v2");
+  async setGates(req: HubGatesRequest): Promise<CoordResult<HubGatesResponseAccepted>> {
+    const r = await this.post("/relay/gates", hubGatesRequestSchema, req, hubGatesResponseAcceptSchema, "v2");
+    // 0.12.1: `gates` (and the gate in the hook path) see the new policy at once, not after the next sync.
+    const st = this.state;
+    if (r.ok && r.body.ok && st?.gates !== undefined) {
+      const owner = r.body.gates?.owner ?? this.me();
+      if (owner !== undefined) {
+        const was = st.gates.find((g) => g.owner.toLowerCase() === owner.toLowerCase());
+        const policy = r.body.gates ?? { owner, actions: req.actions, approvers: was?.approvers };
+        this.state = { ...st, gates: [...st.gates.filter((g) => g !== was), policy] };
+      }
+    }
+    return r;
   }
 
   // --- v3 Memory (SPEC §35) ----------------------------------------------------------
 
   /** `POST /relay/memories`: remember, forget, used. A 404 without an answer turns memory off for 10 minutes. */
-  memory(req: HubMemoryRequest): Promise<CoordResult<HubMemoryResponseAccepted>> {
-    return this.post("/relay/memories", hubMemoryRequestSchema, req, hubMemoryResponseAcceptSchema, "memory");
+  async memory(req: HubMemoryRequest): Promise<CoordResult<HubMemoryResponseAccepted>> {
+    const r = await this.post("/relay/memories", hubMemoryRequestSchema, req, hubMemoryResponseAcceptSchema, "memory");
+    if (r.ok && r.body.ok && r.body.memory && req.action !== "used") this.applyMemoryWrite(r.body.memory);
+    return r;
   }
 
   /** `POST /relay/recall`: the team's accepted memories that match, best first. */

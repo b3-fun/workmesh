@@ -626,7 +626,8 @@ read and drops the rest one by one):
   person` narrows it). An agent's reply wakes its recipient (§30 `wake: true`) when it is in a thread a message to the
   sender opened or carried, or goes to the session (or that session's person) that wrote to the sender in the last 30
   minutes; other agent messages keep the hub's default (they don't wake). A claim, release, lease or unlease the hub
-  took is applied to the cached sync at once, so `claims` and `leases` (and the hooks) show it before the next sync.
+  took is applied to the cached sync at once, so `claims` and `leases` (and the hooks) show it before the next sync;
+  so is the person's own gate policy from `gates set` (0.12.1; §31), and memory writes to the brief (§36).
 - **Registration.** `workmesh setup` (and `setup --hooks-only`; `--no-mcp` skips it) registers the server with Claude
   Code at user scope (`claude mcp add -s user workmesh -- <node> <cli> mcp` when the `claude` CLI is on PATH, else a
   merge into `~/.claude.json`, written by rename) and with Codex as `[mcp_servers.workmesh]` in `~/.codex/config.toml`.
@@ -1057,7 +1058,11 @@ device token names the person, requests carry ingest keys, answers carry hub key
   (at most every 10 s; errors back off 10 s doubling to 5 min, a `429` waits out its `Retry-After`) and keeps the brief
   in memory. A brief whose own `rev` is newer than the sync's is kept, and not fetched again for the older one. A `404`
   on any memory endpoint (one with no `{ ok }` answer: a `404` saying "no such memory" is an answer) means "this hub
-  has no memory" for 10 minutes, without touching v1 or v2.
+  has no memory" for 10 minutes, without touching v1 or v2. A `remember` or `forget` the hub answered (0.12.1) is
+  applied to the cached brief at once: an accepted memory goes in (and the one it supersedes out), a retired, superseded
+  or rejected one out, a proposal changes nothing. A brief asked for before the hub answered gets it laid over again;
+  one asked for after is the hub's word. So `memories` and the next session start show a write without waiting for the
+  sync and the brief's 10 s throttle.
 - **Session start** (`daemon/memory.ts`, pure and table-tested; replaces §31's notes block when the hub has memory).
   The note a shared top-level session gets once (§23) carries the accepted memories that matter here, at most 20 lines
   with their heading, each with its id so the agent can cite it:

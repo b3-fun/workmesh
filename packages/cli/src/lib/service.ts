@@ -221,7 +221,18 @@ export interface InstallResult {
  * caller stops a daemon that runs outside the service first (one daemon only).
  */
 export function installService(
-  opts: { home?: string; run?: Runner; kind?: ServiceKind | null; node?: string; entry?: string; env?: NodeJS.ProcessEnv } = {},
+  opts: {
+    home?: string;
+    run?: Runner;
+    kind?: ServiceKind | null;
+    node?: string;
+    entry?: string;
+    env?: NodeJS.ProcessEnv;
+    /** How long to wait for launchd to unload the old job (tests pass 0). */
+    waitMs?: number;
+    retries?: number;
+    retryDelayMs?: number;
+  } = {},
 ): InstallResult {
   const kind = opts.kind === undefined ? serviceKind() : opts.kind;
   if (!kind) throw new Error(`no service manager support on ${process.platform}`);
@@ -236,13 +247,23 @@ export function installService(
     const text = renderPlist({ node, entry, env, log });
     const wrote = writeIfChanged(file, text);
     fs.mkdirSync(path.dirname(log), { recursive: true });
-    // bootout first: a loaded job keeps its old definition until it is unloaded.
-    try {
-      run("launchctl", ["bootout", launchdTarget()]);
-    } catch {
-      // wasn't loaded
+    const loaded = launchdLoaded(run);
+    if (loaded && !wrote) {
+      // Same definition already loaded (setup or init run again): restart the job in place.
+      run("launchctl", ["kickstart", "-k", launchdTarget()]);
+      return { kind, file, wrote };
     }
-    run("launchctl", ["bootstrap", `gui/${uid()}`, file]);
+    if (loaded) {
+      // A loaded job keeps its old definition until it is unloaded. bootout returns before launchd has
+      // finished, and a bootstrap that comes too early fails with "5: Input/output error".
+      try {
+        run("launchctl", ["bootout", launchdTarget()]);
+      } catch {
+        // already going
+      }
+      waitFor(() => !launchdLoaded(run), opts.waitMs ?? 5_000);
+    }
+    retry(() => run("launchctl", ["bootstrap", `gui/${uid()}`, file]), opts.retries ?? 3, opts.retryDelayMs ?? 500);
     return { kind, file, wrote };
   }
   const file = systemdUnitPath(home);
@@ -305,6 +326,36 @@ export function startService(opts: { home?: string; run?: Runner; kind?: Service
     return true;
   } catch {
     return false;
+  }
+}
+
+function launchdLoaded(run: Runner): boolean {
+  try {
+    run("launchctl", ["print", launchdTarget()]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sleepSync(ms: number): void {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Polls until `done()` or `ms` has passed (returns either way: the bootstrap after it retries). */
+function waitFor(done: () => boolean, ms: number): void {
+  const until = Date.now() + ms;
+  while (!done() && Date.now() < until) sleepSync(100);
+}
+
+function retry<T>(fn: () => T, attempts: number, delayMs: number): T {
+  for (let i = 1; ; i++) {
+    try {
+      return fn();
+    } catch (err) {
+      if (i >= attempts) throw err;
+      sleepSync(delayMs);
+    }
   }
 }
 

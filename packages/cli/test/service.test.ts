@@ -22,9 +22,16 @@ import {
 
 let home: string;
 let calls: string[][];
+/** Whether the mock launchd has the job loaded (bootstrap loads it, bootout unloads it). */
+let jobLoaded: boolean;
 const run = (cmd: string, args: string[]): string => {
   calls.push([cmd, ...args]);
-  if (cmd === "launchctl" && args[0] === "print") return "state = running\n\tpid = 4242\n";
+  if (cmd === "launchctl" && args[0] === "bootstrap") jobLoaded = true;
+  if (cmd === "launchctl" && args[0] === "bootout") jobLoaded = false;
+  if (cmd === "launchctl" && args[0] === "print") {
+    if (!jobLoaded) throw new Error("Could not find service");
+    return "state = running\n\tpid = 4242\n";
+  }
   if (cmd === "systemctl" && args.includes("show")) return "ActiveState=active\nMainPID=777\n";
   return "";
 };
@@ -33,6 +40,7 @@ const uid = typeof process.getuid === "function" ? process.getuid() : 0;
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-service-"));
   calls = [];
+  jobLoaded = false;
 });
 
 afterEach(() => {
@@ -63,12 +71,20 @@ describe("launchd (macOS)", () => {
     expect(res).toEqual({ kind: "launchd", file, wrote: true });
     expect(fs.readFileSync(file, "utf8")).toContain("<string>/x/dist/index.js</string>");
     expect(fs.existsSync(path.join(home, "Library", "Logs"))).toBe(true);
-    expect(calls).toEqual([
+    // Nothing loaded yet: one bootstrap, no bootout.
+    expect(calls.filter((c) => c[1] !== "print")).toEqual([["launchctl", "bootstrap", `gui/${uid}`, file]]);
+    // Again with the same program: the file is unchanged, the loaded job restarts in place (no unload race).
+    calls = [];
+    expect(installService({ home, run, kind: "launchd", node: "/usr/bin/node", entry: "/x/dist/index.js", env: {} }).wrote).toBe(false);
+    expect(calls.filter((c) => c[1] !== "print")).toEqual([["launchctl", "kickstart", "-k", `gui/${uid}/${LAUNCHD_LABEL}`]]);
+    // A new program path: the loaded job is replaced (bootout, wait until launchd lets go, bootstrap).
+    calls = [];
+    expect(installService({ home, run, kind: "launchd", node: "/usr/bin/node", entry: "/y/dist/index.js", env: {} }).wrote).toBe(true);
+    expect(calls.filter((c) => c[1] !== "print")).toEqual([
       ["launchctl", "bootout", `gui/${uid}/${LAUNCHD_LABEL}`],
       ["launchctl", "bootstrap", `gui/${uid}`, file],
     ]);
-    // Again with the same program: the file is unchanged, the job reloaded.
-    expect(installService({ home, run, kind: "launchd", node: "/usr/bin/node", entry: "/x/dist/index.js", env: {} }).wrote).toBe(false);
+    installService({ home, run, kind: "launchd", node: "/usr/bin/node", entry: "/x/dist/index.js", env: {} });
 
     expect(serviceStatus({ home, run, kind: "launchd" })).toEqual({
       kind: "launchd",
@@ -89,6 +105,37 @@ describe("launchd (macOS)", () => {
     expect(calls).toEqual([["launchctl", "bootout", `gui/${uid}/${LAUNCHD_LABEL}`]]);
     expect(serviceStatus({ home, run, kind: "launchd" })).toMatchObject({ installed: false, loaded: false });
     expect(startService({ home, run, kind: "launchd" })).toBe(false);
+  });
+
+  it("waits for launchd to finish unloading, and retries a bootstrap that comes too early", () => {
+    // launchd still lists the job for two polls after bootout, then the first bootstrap fails with error 5.
+    let printsAfterBootout = -1;
+    let bootstraps = 0;
+    const racy = (cmd: string, args: string[]): string => {
+      calls.push([cmd, ...args]);
+      if (args[0] === "bootout") printsAfterBootout = 0;
+      if (args[0] === "print") {
+        if (printsAfterBootout < 0) return "state = running\n";
+        if (printsAfterBootout++ < 2) return "state = running\n";
+        throw new Error("Could not find service");
+      }
+      if (args[0] === "bootstrap" && ++bootstraps === 1) throw new Error("Bootstrap failed: 5: Input/output error");
+      return "";
+    };
+    const res = installService({ home, run: racy, kind: "launchd", node: "/usr/bin/node", entry: "/x/dist/index.js", env: {}, waitMs: 1_000, retryDelayMs: 0 });
+    expect(res.wrote).toBe(true);
+    expect(calls.filter((c) => c[1] === "print").length).toBeGreaterThanOrEqual(4);
+    expect(calls.filter((c) => c[1] === "bootstrap")).toHaveLength(2);
+  });
+
+  it("a fresh install (nothing loaded) bootstraps once, without bootout", () => {
+    const fresh = (cmd: string, args: string[]): string => {
+      calls.push([cmd, ...args]);
+      if (args[0] === "print") throw new Error("Could not find service");
+      return "";
+    };
+    installService({ home, run: fresh, kind: "launchd", node: "/usr/bin/node", entry: "/x/dist/index.js", env: {}, waitMs: 0 });
+    expect(calls.filter((c) => c[1] !== "print")).toEqual([["launchctl", "bootstrap", `gui/${uid}`, launchAgentPath(home)]]);
   });
 
   it("an installed job launchd doesn't know is bootstrapped, not kickstarted", () => {

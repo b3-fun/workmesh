@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { claudeSettingsPath, removeClaudeHooks } from "../adapters/claude-code";
 import { codexConfigPath, removeCodexHooks, removeCodexNotify } from "../adapters/codex";
 import { claudeJsonPath, removeClaudeMcp, removeCodexMcp } from "../adapters/mcp-install";
+import { uninstallService } from "../lib/service";
 import { bold, dim, errorMessage, green, red } from "../lib/ui";
 import { resolveClaudeDir } from "./setup";
 
@@ -10,13 +11,17 @@ export interface UninstallOptions {
   claudeDir?: string;
   /** `--no-codex` leaves Codex's files alone; otherwise our entries come out of them when present. */
   codex?: boolean;
+  /** `--no-service` keeps the daemon service (launchd / systemd) that setup installed; otherwise it is removed. */
+  service?: boolean;
 }
 
 /**
  * `workmesh uninstall`: takes Workmesh's hooks and MCP server out of Claude Code
- * (settings.json, .claude.json) and Codex (hooks.json, config.toml). Every other hook, server and setting stays; each
- * file it changes is backed up first. Config, daemon and hub pairing are left
- * for `workmesh stop` and `workmesh hub disconnect`.
+ * (settings.json, .claude.json) and Codex (hooks.json, config.toml), and removes the daemon service setup installed
+ * (only Workmesh's own launchd job or systemd unit; it stops the daemon it ran). Every other hook, server and setting
+ * stays; each file it changes is backed up first. Config and hub pairing are left for `workmesh hub disconnect` and
+ * `workmesh unlink`. Left in place, the service would start the daemon again at the next login, and would restart it
+ * every few seconds once the package is gone.
  */
 export function runUninstall(opts: UninstallOptions = {}): Promise<void> {
   console.log(bold("workmesh uninstall"));
@@ -74,8 +79,21 @@ export function runUninstall(opts: UninstallOptions = {}): Promise<void> {
       console.log(`  codex mcp: ${red(`could not update config.toml: ${errorMessage(err)}`)}`);
     }
   }
+  if (opts.service === false) {
+    console.log(`  daemon service: ${dim("kept (--no-service)")}`);
+  } else {
+    try {
+      console.log(
+        uninstallService()
+          ? `  daemon service: ${green("removed (the daemon it ran is stopped)")}`
+          : `  daemon service: ${dim("none installed")}`,
+      );
+    } catch (err) {
+      console.log(`  daemon service: ${red(`could not remove: ${errorMessage(err)}`)}`);
+    }
+  }
   console.log("\nstill on this machine:");
-  console.log(`  ${bold("workmesh stop")}             stop the daemon (clears your Slack status)`);
+  console.log(`  ${bold("workmesh stop")}             stop a daemon running outside the service (clears your Slack status)`);
   console.log(`  ${bold("workmesh hub disconnect")}   remove the hub token`);
   console.log(`  ${bold("workmesh unlink")}           revoke the Slack relay device`);
   return Promise.resolve();

@@ -414,8 +414,8 @@ export function gateNote(me: string, actions: readonly string[], approvers?: rea
   const who = others.length > 0 ? `${me} (or ${others.join(" or ")}, whom ${me} named)` : me;
   return (
     `Approval gates, set by your person ${me}: when this session tries to ${list}, Workmesh holds the command and ` +
-    `asks ${who} on the team board; end your turn or carry on with other work. When ${who} approves on the board or in ` +
-    "the menu bar, Workmesh wakes this session quoting the command: that approval is " +
+    `asks ${who} on the team board; end your turn or carry on with other work. When ${who} approves on the board, in ` +
+    "the menu bar or in their terminal, Workmesh wakes this session quoting the command: that approval is " +
     `${me}'s consent to run exactly that command, once, so run it then without asking again in the terminal. ` +
     "If it is denied, don't run it."
   );

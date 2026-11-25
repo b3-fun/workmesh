@@ -119,6 +119,15 @@ export type HubGatesResponseAccepted = z.infer<typeof hubGatesResponseAcceptSche
 export const hubApprovalStatusSchema = z.enum(["pending", "approved", "denied"]);
 export type HubApprovalStatus = z.infer<typeof hubApprovalStatusSchema>;
 
+/**
+ * Where a person decided an approval (0.12.1, SPEC §30): on the team board, in their menu bar app, or in their terminal
+ * (`workmesh approvals approve|deny`). The relay says which of its own two it was; the hub records `board` for the
+ * board's. Absent on a decision from an older hub or relay: the notice then names no place.
+ */
+export const HUB_DECISION_VIAS = ["board", "menubar", "cli"] as const;
+export const hubDecisionViaSchema = z.enum(HUB_DECISION_VIAS);
+export type HubDecisionVia = z.infer<typeof hubDecisionViaSchema>;
+
 /** An agent's request to take a gated action, and its decision. */
 export const hubApprovalSchema = z.object({
   id: recordId,
@@ -134,6 +143,8 @@ export const hubApprovalSchema = z.object({
   decidedAt: epochMs.optional(),
   /** Who decided. */
   by: personName.optional(),
+  /** Where they decided it (0.12.1). */
+  via: hubDecisionViaSchema.optional(),
   note: note.optional(),
 });
 export type HubApproval = z.infer<typeof hubApprovalSchema>;
@@ -147,6 +158,7 @@ const approvalAccept = z.object({
   ts: epochMsAccept.catch(0),
   decidedAt: soft(epochMsAccept),
   by: soft(cut(120)),
+  via: soft(hubDecisionViaSchema),
   note: soft(cut(HUB_DELEGATE_NOTE_MAX)),
 });
 export type HubApprovalAccepted = z.infer<typeof approvalAccept>;
@@ -170,6 +182,8 @@ export const hubApprovalRequestSchema = z.union([
     action: z.enum(["approve", "deny"]),
     id: recordId,
     note: note.optional(),
+    /** 0.12.1: where on this machine the person decided (a relay never says `board`). */
+    via: z.enum(["menubar", "cli"]).optional(),
   }),
 ]);
 export type HubApprovalRequest = z.infer<typeof hubApprovalRequestSchema>;
@@ -185,6 +199,8 @@ export const hubApprovalRequestAcceptSchema = z.union([
     action: z.enum(["approve", "deny"]),
     id: recordId,
     note: opt(cut(HUB_DELEGATE_NOTE_MAX)),
+    /** Anything else (an older relay sends none) reads as absent; the hub then records no place. */
+    via: soft(z.enum(["menubar", "cli"])),
   }),
 ]);
 export type HubApprovalRequestAccepted = z.infer<typeof hubApprovalRequestAcceptSchema>;

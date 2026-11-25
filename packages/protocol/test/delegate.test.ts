@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   HUB_APPROVAL_DETAIL_MAX,
+  HUB_DECISION_VIAS,
   HUB_GATE_ACTIONS,
   HUB_HANDOFF_TEXT_MAX,
   hubApprovalRequestAcceptSchema,
@@ -134,10 +135,27 @@ describe("approvals and gates (SPEC §30)", () => {
 
   it("an approval round-trips; a decided one carries who and why", () => {
     const decided = { ...approval, status: "denied", decidedAt: T + 60_000, by: "Sean", note: "not during the freeze" };
-    for (const a of [approval, decided]) {
+    for (const a of [approval, decided, { ...decided, status: "approved", via: "menubar" }]) {
       const body = hubApprovalResponseSchema.parse({ ok: true, approval: a });
       expect(hubApprovalResponseAcceptSchema.parse(body)).toEqual(body);
     }
+  });
+
+  it("where a decision was made (0.12.1): the relay names its own place, the reader drops one it doesn't know", () => {
+    expect(HUB_DECISION_VIAS).toEqual(["board", "menubar", "cli"]);
+    for (const via of ["menubar", "cli"] as const) {
+      const strict = hubApprovalRequestSchema.parse({ action: "approve", id: "ap_1", via });
+      expect(hubApprovalRequestAcceptSchema.parse(strict)).toEqual(strict);
+    }
+    // A relay never claims the board; an unknown place from a newer relay reads as none.
+    expect(hubApprovalRequestSchema.safeParse({ action: "approve", id: "ap_1", via: "board" }).success).toBe(false);
+    expect(hubApprovalRequestAcceptSchema.parse({ action: "deny", id: "ap_1", via: "watch" })).toEqual({ action: "deny", id: "ap_1" });
+    const read = hubApprovalResponseAcceptSchema.parse({
+      ok: true,
+      approval: { ...approval, status: "approved", decidedAt: T + 1, by: "Sean", via: "smoke-signal" },
+    });
+    expect(read.ok && read.approval.via).toBeUndefined();
+    expect(read.ok && read.approval.status).toBe("approved");
   });
 
   it("gates: every action is known, the relay drops one it doesn't know", () => {

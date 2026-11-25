@@ -548,7 +548,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
           text:
             actions.length === 0
               ? "Approval gates off: your agents merge, deploy and publish without asking."
-              : `Your agents now ask before they ${actions.map((x) => x.replace("_", "-")).join(", ")} (approve on the board or in the menu bar).`,
+              : `Your agents now ask before they ${actions.map((x) => x.replace("_", "-")).join(", ")} (approve on the board, in the menu bar or with workmesh approvals approve <id>).`,
           data: { gates: r.body.gates ?? { owner: me, actions } },
         };
       }
@@ -573,7 +573,9 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         const id = str(a.id, 64);
         if (!id) return fail(`\`approvals ${action}\` needs an id (\`workmesh approvals\` lists them).`);
         const note = str(a.note, 500);
-        const r = await coord.approval({ action, id, ...(note ? { note } : {}) });
+        // Where the person decided (SPEC §30, 0.12.1): the menu bar says so; anything else at a terminal is the CLI.
+        const via = req.caller.client === "menubar" ? "menubar" : "cli";
+        const r = await coord.approval({ action, id, ...(note ? { note } : {}), via });
         if (!r.ok) return delegateError(r);
         if (!r.body.ok) return fail(`Workmesh: ${r.body.error || `the hub didn't ${action} it`}`);
         return { ok: true, text: `${action === "approve" ? "Approved" : "Denied"}: ${r.body.approval.detail}.`, data: { approval: r.body.approval } };

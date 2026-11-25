@@ -26,7 +26,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0.11 Session mirror | The board's session page reads like the person's terminal: title, harness and model; prompts, messages, folded tool runs; background-agent and shell notices; turn lines with what's still running; mode, background tasks and agents in a footer | **done** (11-25): wire #13, relay #14 + #20 (on Sean's Mac, in the next release), hub and board workmesh-cloud #8 (live) |
 | v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub and board live (workmesh-cloud #5) |
 | Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); relay MCP tool `ask` next |
-| v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | later |
+| v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge | **in progress** (11-25): wire (SPEC §30); relay and hub building |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -195,12 +195,20 @@ this". Wire: SPEC §26.
 - Agents: `POST /relay/ask` (SPEC §29) answers an agent's question from the same data minus other sessions' prompt and
   message text, and can't act. **Next:** the relay's `ask` MCP tool.
 
-### v2 Delegate (Linear B3-7168)
+### v2 Delegate (Linear B3-7168, in progress 11-25)
 - Messages delivered into running and idle sessions (Claude Code session inbox, Codex app-server).
 - Handoffs to another person's runner through that person's policy; approval gates at merge, deploy, spend.
 - Shared knowledge: rulings and conventions loaded at session start for everyone's agents.
+- **Wire (SPEC §30):** `POST /relay/handoffs` (create, accept, decline, start, done, fail; the first `start` wins
+  when no device accepted), `POST /relay/approvals` (request, approve, deny), `POST /relay/gates` (a person's own
+  gates), `wake` on messages and inbox items, and optional `handoffs`, `gates`, `approvals` lists on `/relay/sync`.
 
 ## Decision log
+
+- 11-25 v2 wire: a handoff runs only after its recipient accepts it (a self-handoff by the sender's own policy);
+  an accept from a relay names the runner, one from the board lets the first relay to `start` win. Gates are a
+  person's choice for their own agents, enforced only by their own relay; absent lists on sync mean "no v2", so an
+  older hub gates nothing. A message wakes an idle session when a person wrote it, unless the sender says otherwise.
 
 - 11-25 v0.11 mirror: the notices come from Claude Code's own `<task-notification>` templates, read on the machine;
   only the title a template names (an agent's task, a background command's description, a workflow's name) may

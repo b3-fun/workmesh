@@ -42,6 +42,10 @@ What a hub may learn from a machine, and what it does with it. Each rule points 
   claimed issue ids and notes, and the text of messages and project notes they write on purpose (at either level,
   redacted first). Holds, leases and messages are read back by the relay; nothing about local files beyond a lease's
   own paths leaves the machine.
+- **Delegation (v2, §30)** sends what a person or agent writes on purpose (a handoff's task and context), and, only
+  for an action the person gated for their own agents, a few words naming it (`gh pr merge 212 --merge in
+  b3-fun/b3os-beta`), redacted first. A relay starts an agent for a handoff only once its person accepted it, or by
+  their own policy for one they sent themselves (§31).
 - **Redaction on the machine**, before anything is queued (§9): keys, tokens, JWTs, private keys, credentials in URLs
   and secret-valued settings become `[redacted]`, home paths `~/…`. The hub blanks obvious secrets again before it
   stores text (§10).
@@ -742,3 +746,66 @@ tool the relay will add. Still `v: 1`; an older hub answers `404`, which a relay
 - **The relay side (to come):** an `ask { question }` tool in `workmesh mcp` (§23), answered by the daemon calling this
   endpoint with the device token (the agent never holds it): text only, no streaming, one question in flight per
   session, `404` remembered for 10 minutes like the other v1 endpoints.
+
+---
+
+# v2 Delegate: handoffs, approval gates, waking idle sessions (Sean, 2026-11-25)
+
+"Proceed with next v2 delegate." An agent hands a task to a person (another teammate, or yourself on another of your
+machines), and that person's relay starts an agent for it; a person gates their own agents' risky actions (merge,
+deploy, publish, force-push, spend) behind an approval; and a message wakes a session that sits idle. Linear B3-7168.
+All of it is new endpoints and optional fields beside v1 (§21): an older hub answers `404` and sends none of the new
+sync lists, and a relay then carries on as before (nothing is gated, nothing is handed off, messages wait for the
+next turn). Nothing here can stop an agent unless its own person opted in (§31).
+
+## 30. Delegate endpoints
+
+Code form: `packages/protocol/src/delegate.ts` (two readings per body, §14). Auth, keys and status codes as in §21:
+the device token names the person, requests carry ingest keys, answers carry hub keys.
+
+| Endpoint | Body | Answer |
+|---|---|---|
+| `POST /relay/handoffs` | `{ action: "create", from?: sessionKey, to: { person }, task: 1..4000, repo?: owner/name, issue?: id, context?: 1..4000 }` | `{ ok: true, handoff }`; `404` `{ ok: false, error }` for no such person |
+| `POST /relay/handoffs` | `{ action: "accept" \| "decline" \| "start" \| "done" \| "fail", id, sessionKey?, note?: ≤ 500 }` | `{ ok: true, handoff }`; `404` no such handoff; `409` `{ ok: false, error, handoff? }` a move its state doesn't allow |
+| `POST /relay/approvals` | `{ action: "request", sessionKey, gate: GateAction, detail: 1..500 }` | `{ ok: true, approval }` |
+| `POST /relay/approvals` | `{ action: "approve" \| "deny", id, note?: ≤ 500 }` | `{ ok: true, approval }`; `403` not yours to decide, `404`, `409` already decided |
+| `POST /relay/gates` | `{ actions: GateAction[] }` (the device's person's own gates; `[]` turns them off) | `{ ok: true, gates: GatePolicy }` |
+| `POST /relay/messages` | (§21) gains `wake?: boolean` | as §21 |
+
+- **Handoff** = `{ id, from: { person, sessionKey?, sessionName? }, to: { person }, task, repo?, issue?, context?,
+  status, createdAt, updatedAt?, device?, sessionKey?, note? }`. `status`: `offered` → `accepted` → `started` →
+  `done` | `failed`, or `offered` → `declined`. Only the recipient accepts or declines (on the board, in their menu
+  bar, from one of their agents, or by their relay's policy for a handoff they sent themselves, §31). An `accept`
+  from a relay makes that device the runner (`device`); one accepted on the board has no `device` until a relay
+  starts it, and then the first `start` wins (the hub answers the others `409`). `start`, `done` and `fail` come from
+  the runner; `start` may carry the session it started (`sessionKey`), and a second `start` from the same device only
+  adds it. The hub shows the handoff on the board linked to that session. `from` absent = the person wrote it
+  themselves. Task and context are written on purpose by an agent or a person, so they go at either sharing level,
+  redacted on the machine first (§9), like messages.
+- **GateAction**: `merge` (a PR), `deploy`, `publish` (a package or a release), `force_push`, `spend` (paid API or
+  infra), `custom`. **GatePolicy** = `{ owner, actions, approvers? }`: the owner's agents need an approval before an
+  action in `actions`, from the owner (or one of `approvers` when set). A relay only ever enforces its own person's
+  policy; the board may set it too.
+- **Approval** = `{ id, sessionKey, owner?, gate, detail, status: "pending" | "approved" | "denied", ts, decidedAt?,
+  by?, note? }`. `detail` names the action in a few words, as the relay's matcher reads it from the command
+  (`gh pr merge 212 --merge in b3-fun/b3os-beta`), redacted; it is the one piece of a command beyond §3.3's
+  program + subcommand that leaves a machine, and only when the person gated that action. A second `request` for
+  the same session, gate and detail while one is pending answers the pending one.
+- **Wake**: an inbox item (§21) may carry `wake: true`, meaning "start a turn in this session if it is idle". Absent,
+  a relay wakes for a message a person wrote (no `from.sessionKey`) and not for one an agent sent; a sender sets
+  `wake` on the request to choose. The hub copies it onto the inbox item.
+
+`GET /relay/sync` (§21) gains three optional lists. A hub without v2 sends none; a relay reads their absence as "no
+v2 on this hub", and an empty list as "v2, nothing now".
+
+```jsonc
+{
+  // … §21 …
+  "handoffs":  [Handoff],     // offered to this device's person, sent by them, and recently finished; newest first, ≤ 200
+  "gates":     [GatePolicy],  // the project's policies (a relay enforces its own person's)
+  "approvals": [Approval]     // asked by this device's sessions, and pending ones its person may decide; newest first, ≤ 500
+}
+```
+
+A relay keeps every item it can read and drops the rest one by one (an unknown handoff status or gate action drops
+that item, so a relay never acts on a state it can't read).

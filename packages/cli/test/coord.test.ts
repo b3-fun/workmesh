@@ -370,7 +370,7 @@ describe("hook decisions", () => {
   });
 
   it("formats messages within the context budget", () => {
-    const items = Array.from({ length: 3 }, (_, i) => ({ id: `m${i}`, to: ME, from: { person: "An", sessionName: undefined, sessionKey: undefined }, text: "x".repeat(3000), ts: T + i, thread: undefined }));
+    const items = Array.from({ length: 3 }, (_, i) => ({ id: `m${i}`, to: ME, from: { person: "An", sessionName: undefined, sessionKey: undefined }, text: "x".repeat(3000), ts: T + i, thread: undefined, wake: undefined }));
     const block = formatInbox(items, 4000)!;
     expect(block.text.length).toBeLessThanOrEqual(4000);
     expect(block.items.length).toBeGreaterThanOrEqual(1);

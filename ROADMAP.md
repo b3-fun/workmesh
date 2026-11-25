@@ -31,6 +31,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | PR details | PR title, state (open, draft, merged, closed), author, review and checks on the board, from a read-only GitHub App on b3-fun, instead of a bare `repo#n` | **done** (11-25): hub and board workmesh-cloud #24 |
 | v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **in progress** (11-25): wire #32 (SPEC §35–36); relay built (0.12.0, not published) |
 | Keeping current | `workmesh update` (install the newest release the way it was installed, refresh hooks, MCP and the daemon, roll back on failed checks), update notices from the hub, opt-in auto-update, a once-per-session note to sessions on older tools, "Update available" in the menu bar, versions on the board | **done** (11-25): wire #33 (SPEC §40), relay #37 (SPEC §41) and menu bar #36 in 0.12.0 (not published), hub and board workmesh-cloud #25–#27 (live) |
+| Codex parity | Everything a Claude Code session gets on the team hub, for Codex, proven live: board session and mirror, MCP tools, lease and hold refusals, wake, gates, handoffs run with `codex exec`, a truthful `doctor` | **in review** (11-25): relay (SPEC §42), 0.12.x not published |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -333,7 +334,39 @@ an upgrade went on without the new tools until someone restarted them (An's test
   install, notice, update, stale note, a broken release rolled back, the daemon updating itself.
 - **Next:** 0.12.0 is the last release that needs a message: `npm i -g @b3os/workmesh@latest && workmesh update`.
 
+### Codex parity (Linear B3-7168, in review 11-25)
+
+Sean: teammates use Codex too, and the 11-25 two-person test was all Claude Code. Live run: codex-cli 0.164 (its
+background app server auto-updated to 0.172) in temp `CODEX_HOME`s, two relays paired with a local hub as Sean and An,
+a throwaway repo; evidence in the orchestrator's scratch dir (`team-hub/evidence/codex-parity/`). SPEC §42.
+
+| Check | Before | After |
+|---|---|---|
+| Session on the board with model and mode | pass | pass |
+| Title | fail (none) | pass (the TUI's thread name) |
+| Ghost sessions | fail (one per titled thread, from notify) | pass |
+| Mirror: prompts, messages, tool runs, compactions | pass | pass |
+| Mirror: plan updates | n/a: no plan tool in Codex 0.164+ | n/a |
+| MCP tools from Codex (roster, send, inbox, claim, lease, handoff, ask) | fail: a prompt per tool in the TUI, refused in `codex exec` | pass, no prompts |
+| A teammate's lease refuses `apply_patch` and a shell write | pass | pass (asks through the MCP tool) |
+| A hold refuses the next call with clear text | pass (pointed at a CLI the sandbox blocks) | pass |
+| A message wakes an idle thread | partial: woke, framed as Workmesh's own news, shown as a typed prompt, reply stalled on a prompt | pass |
+| A message reaches a working thread at its next tool call | pass | pass |
+| Codex's app server restarts or updates | fail: session ended, no wakes until the person typed | pass: kept, woken |
+| Handoff accepted by a Codex person: `codex exec` in a new worktree, done, exits | partial: ran and exited, couldn't commit, push or use Workmesh's tools | pass: commit, push, tools, done in 47 s |
+| Approval gate on a gated shell command | pass (the wake could wait minutes: a rollout write after Stop marked the thread working) | pass (woken 2 s after the approval) |
+| `workmesh doctor`: hooks trusted, notify chain, MCP | fail: "installed" said nothing about trust | pass: Codex's own trust answer, notify followed to its target |
+
+Also fixed: uninstall left `[mcp_servers.workmesh.tools.*]` tables that stop Codex from loading its config; `codex
+queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Codex makes its sessions dir.
+
 ## Decision log
+
+- 11-25 Codex parity: Workmesh's MCP tools declare themselves read-only or non-destructive and closed-world, so Codex
+  runs them without a prompt (Claude Code ignores the hints). A Codex handoff runs under `--approve-for-me` (Codex's
+  automatic reviewer approves escalations such as commits and pushes) with network, the counterpart of the `auto`
+  permission mode a Claude handoff runs in, rather than without a sandbox. A Codex `SessionEnd` is believed only once
+  Codex has let go of the thread.
 
 - 11-25 Keeping current (Sean: upgrades stop needing Slack DMs): `init` stays the one-liner for new machines, `update`
   is for existing ones. Auto-update is opt-in and patch-only by default; the daemon never retries a version that

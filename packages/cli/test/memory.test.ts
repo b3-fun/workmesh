@@ -690,6 +690,13 @@ describe("memory ops (SPEC §36)", () => {
     expect(h.posted("/relay/recall")).toHaveLength(0);
   });
 
+  it("notes on a memory hub whose brief can't be fetched yet: the sync's notes stand in", async () => {
+    const h = await opsHarness({ routes: { "GET /relay/memories": [{ status: 500 }, { status: 500 }] } });
+    expect(h.c.memoryAvailable()).toBe(true);
+    expect(h.c.brief()).toBeUndefined();
+    expect((await h.op("notes")).text).toMatch(/^- Sean, 48 h ago \[rule\]: Never edit a live checkout$/);
+  });
+
   it("a note whose hub turns out to have no memory (404) goes as a v1 note", async () => {
     const h = await opsHarness({ routes: { "POST /relay/memories": [{ status: 404, body: "Not Found" }] } });
     const r = await h.op("note", { text: "deploys freeze at 5pm" });

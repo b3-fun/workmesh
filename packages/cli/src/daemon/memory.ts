@@ -104,14 +104,26 @@ export function branchWords(branch: string | undefined): string[] {
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Matchers are built once per word (selection runs in the hook path, over up to 500 memories). */
+const matchers = new Map<string, RegExp>();
+function matcher(key: string, source: string): RegExp {
+  let re = matchers.get(key);
+  if (!re) {
+    if (matchers.size > 200) matchers.clear();
+    re = new RegExp(source, "i");
+    matchers.set(key, re);
+  }
+  return re;
+}
+
 /** A word at a word start in the text (`relay` finds `relay`, `relays`, `Relay's`), case-insensitively. */
 function mentions(text: string, word: string): boolean {
-  return new RegExp(`(?:^|[^A-Za-z0-9])${escapeRe(word)}`, "i").test(text);
+  return matcher(`w:${word}`, `(?:^|[^A-Za-z0-9])${escapeRe(word)}`).test(text);
 }
 
 /** An issue id as a whole token in the text. */
 function mentionsIssue(text: string, issue: string): boolean {
-  return new RegExp(`(?:^|[^A-Za-z0-9])${escapeRe(issue)}(?![0-9])`, "i").test(text);
+  return matcher(`i:${issue}`, `(?:^|[^A-Za-z0-9])${escapeRe(issue)}(?![0-9])`).test(text);
 }
 
 /** The first sentence of a body's first line of prose: whitespace made one, list and heading marks dropped. */

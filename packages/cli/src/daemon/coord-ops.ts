@@ -441,8 +441,12 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
     case "notes": {
       if (unavailable) return unavailable;
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
-      // v3 (SPEC §36): on a hub with memory, the notes are the accepted memories (`tag` matches a kind or a tag).
-      if (coord.memoryAvailable(now)) return memoriesOp(a, ctx);
+      // v3 (SPEC §36): on a hub with memory, the notes are the accepted memories (`tag` matches a kind or a tag); until
+      // the brief arrives, the sync's notes (which list them too).
+      if (coord.memoryAvailable(now)) {
+        await coord.memoryReady();
+        if (coord.brief()) return memoriesOp(a, ctx);
+      }
       const tag = str(a.tag, 32);
       const notes = st.notes.filter((n) => !tag || n.tags?.includes(tag));
       if (notes.length === 0) return { ok: true, text: tag ? `No team notes tagged ${tag}.` : "No team notes yet.", data: { notes: [] } };

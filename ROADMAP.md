@@ -18,15 +18,15 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v0 See | Every B3 session on one live board; metadata only; Access login; pairing | **done** (11-24) |
 | v0.2 Conversation + summaries | Prompts, agent messages, tool descriptions, turn durations; now lines, turn summaries, waiting reasons, digest (OpenRouter) | **done** (11-24); `@b3os/workmesh` 0.8.0 on npm |
 | v0.3 B3OS look | Board rebuilt from the B3OS console component library, exactly | **done** (11-24) |
-| v0.4 One system | Rename to Workmesh, shared protocol package; open-source client here, hosted platform private (b3-fun/workmesh-cloud) | **done** (11-24); hub deploys from CI next |
+| v0.4 One system | Rename to Workmesh, shared protocol package; open-source client here, hosted platform private (b3-fun/workmesh-cloud) | **done** (11-24); hub deploys from CI on every merge to main (workmesh-cloud #10, 11-25) |
 | v0.5 Multiplayer menu bar | The team in the menu bar | **done** (11-24): menu bar 0.5.0, hub `/relay/team` live |
 | v0.6 Structure + tabs | Subagent trees, cross-agent messages, graph canvas, Linear + Slack context | **done** (11-24): relay #5, board in workmesh-cloud #1; polish next |
 | v0.7 Polish from real use | Subagent names in the feed, hide injected markup, a better home for sessions started outside a repo, graph fit-to-view, Linear titles (needs a key), publish relay 0.9.0 | **done** (11-24): names, markup, orchestrators, graph fit (relay in the next release, 0.9.1); Linear titles live |
-| Liveness | Presence from the hub, not the browser; a restart never ends sessions; the daemon as a launchd / systemd service; current client versions; quiet and stalled sessions | **done** (11-25): wire #11, relay (in 0.10.0 with v1, not yet on npm), hub in workmesh-cloud #4 |
-| v0.11 Session mirror | The board's session page reads like the person's terminal: title, harness and model; prompts, messages, folded tool runs; background-agent and shell notices; turn lines with what's still running; mode, background tasks and agents in a footer | **done** (11-25): wire #13, relay #14 + #20 (on Sean's Mac, in the next release), hub and board workmesh-cloud #8 (live) |
-| v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **in progress** (11-25): wire merged (#10, SPEC §21); relay side built (sync, enforcement in hooks, inbox, MCP, menu bar, SPEC §23), not published; hub and board live (workmesh-cloud #5); the Workmesh agent in Linear live (workmesh-cloud #11, #13, #14) |
+| Liveness | Presence from the hub, not the browser; a restart never ends sessions; the daemon as a launchd / systemd service; current client versions; quiet and stalled sessions | **done** (11-25): wire #11, relay in 0.10.0 (npm), hub workmesh-cloud #4 |
+| v0.11 Session mirror | The board's session page reads like the person's terminal: title, harness and model; prompts, messages, folded tool runs; background-agent and shell notices; turn lines with what's still running; mode, background tasks and agents in a footer | **done** (11-25): wire #13, relay #14 + #20 (0.10.0), hub and board workmesh-cloud #8 |
+| v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **done** (11-25): wire #10 (SPEC §21), relay #12 in 0.10.0 (npm), hub and board workmesh-cloud #5; the Workmesh agent in Linear (claims as agent sessions, replies and stop from Linear) workmesh-cloud #11, #13, #14 |
 | Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); relay MCP tool `ask` next |
-| v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **in progress** (11-25): wire merged (#22, SPEC §30); relay built (SPEC §31, 0.11.0 not published); hub and board in workmesh-cloud |
+| v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **done** (11-25): wire #22 (SPEC §30), relay #23 + #26 in **0.11.0** (npm, GitHub release v0.11.0), hub and board workmesh-cloud #12; follow-ups below |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -158,7 +158,7 @@ this". Wire: SPEC §26.
   documented shape (no recent rollout of Sean's has one); per-subagent background counts come from each agent's own
   transcript.
 
-### v1 Coordinate (Linear B3-7167, in progress 11-25)
+### v1 Coordinate (Linear B3-7167, done 11-25)
 - MCP server in every session: `roster`, `send`, `inbox`, `claim`, `lease`, `note`.
 - File leases enforced by a PreToolUse deny that names the holder; claims mirrored to Linear as agent sessions, each
   agent named on the issue as its person's agent.
@@ -201,7 +201,7 @@ this". Wire: SPEC §26.
 - Agents: `POST /relay/ask` (SPEC §29) answers an agent's question from the same data minus other sessions' prompt and
   message text, and can't act. **Next:** the relay's `ask` MCP tool.
 
-### v2 Delegate (Linear B3-7168, in progress 11-25)
+### v2 Delegate (Linear B3-7168, done 11-25)
 - Messages delivered into running and idle sessions (Claude Code session inbox, Codex app-server).
 - Handoffs to another person's runner through that person's policy; approval gates at merge, deploy, spend.
 - Shared knowledge: rulings and conventions loaded at session start for everyone's agents.
@@ -229,10 +229,14 @@ this". Wire: SPEC §26.
   feedback", which a model won't take as consent), so the texts now say the gate re-checks the approval on the retry;
   that wording isn't re-run live yet (the test account hit its spend limit). Handoff runs, Codex wake and `init` are
   checked with fixtures: a stand-in `claude` binary, `codex queue` per a live probe of codex-cli 0.164, a temp HOME.
-- **Next:** the hub and board side (workmesh-cloud); publish 0.11.0; a live handoff between two people's machines;
-  whether the approval retry needs the person's word in the terminal in practice.
+- **Shipped 11-25:** hub and board (workmesh-cloud #12: Needs-you cards, Handoffs pane, Settings → Approvals, Ask
+  `hand_off`); 0.11.0 on npm; #26 stops a re-run of `setup`/`init` from racing launchd ("Bootstrap failed: 5").
+- **Next:** a live handoff between two people's machines; the approval retry checked live (does the agent carry on
+  without its person's word in the terminal); the team onboarded (Mitch, An, David, Gio) on 0.11.0.
 
 ## Decision log
+
+- 11-25 Teammates set up with one command: `npm i -g @b3os/workmesh@latest && workmesh init https://workmesh.b3os.org`.
 
 - 11-25 Linear identities: one Workmesh app for the team, not one per person. Linear gives an app one identity, so the
   hub names each agent on its comments (`createAsUser`, the person's avatar) and the agent session stays Workmesh's.

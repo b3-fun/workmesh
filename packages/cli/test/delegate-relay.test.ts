@@ -429,6 +429,23 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     expect(hub.calls[1]!.body).toEqual({ action: "approve", id: "ap_1" });
   });
 
+  it("gates shows a change at once, before the next sync (0.12.1)", async () => {
+    const hub = fakeHub([
+      { status: 200, body: { ok: true, gates: { owner: "Sean", actions: ["merge", "deploy"], approvers: ["An"] } } },
+      { status: 200, body: { ok: true } }, // an answer without the policy
+    ]);
+    sync(hub.coord, { gates: [{ owner: "Sean", actions: ["publish"], approvers: ["An"] }, { owner: "An", actions: ["merge"] }] });
+    const list = async () => (await runCoordOp({ op: "gates", args: {}, caller: {} }, deps(hub.coord))).text;
+    expect(await list()).toBe("Your agents ask before they: publish (approved by An).\nAn: merge");
+    await runCoordOp({ op: "gates", args: { set: "merge,deploy" }, caller: {} }, deps(hub.coord));
+    expect(await list()).toBe("Your agents ask before they: merge, deploy (approved by An).\nAn: merge");
+    // Without the policy in the answer: the actions asked for, the approvers as they were.
+    await runCoordOp({ op: "gates", args: { set: "off" }, caller: {} }, deps(hub.coord));
+    expect(await list()).toBe("No approval gates on your agents (`workmesh gates set merge,deploy` turns some on).\nAn: merge");
+    expect(hub.coord.view().state?.gates?.find((g) => g.owner === "Sean")).toEqual({ owner: "Sean", actions: [], approvers: ["An"] });
+    expect(hub.calls.map((c) => c.url)).toEqual(["https://hub.test/relay/gates", "https://hub.test/relay/gates"]);
+  });
+
   it("handoffs accept starts it here; list reads the sync", async () => {
     const hub = fakeHub([{ status: 200, body: { ok: true, handoff: { ...HANDOFF } } }]);
     sync(hub.coord, { handoffs: [{ ...HANDOFF, status: "offered" }] as never });

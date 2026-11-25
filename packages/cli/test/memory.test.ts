@@ -663,6 +663,71 @@ describe("memory ops (SPEC §36)", () => {
     expect((await h.op("memories", { tag: "nothing" })).text).toBe("No team memories tagged nothing.");
   });
 
+  it("memories shows a write at once, before the next sync and brief (0.12.1)", async () => {
+    // The hub took each write; its sync and brief still say r7 (no new brief until the throttle and rev allow).
+    const h = await opsHarness({
+      routes: {
+        "POST /relay/memories": [
+          { status: 200, body: { ok: true, memory: accepted({ id: "m30", kind: "rule", title: "Deploys freeze at 5pm ET.", updatedAt: T + 1 }) } },
+          { status: 200, body: { ok: true, memory: accepted({ id: "m31", kind: "convention", title: "Replaces m14", supersedes: "m14", updatedAt: T + 2 }) } },
+          { status: 200, body: { ok: true, memory: accepted({ id: "m15", title: "Gone", status: "retired" }) } },
+          { status: 200, body: { ok: true, memory: accepted({ id: "m32", title: "An agent's idea", status: "proposed" }) } },
+          { status: 200, body: { ok: true, memory: accepted({ id: "m16", title: "Pending retire", retire: { by: { person: "An" }, ts: T }, updatedAt: T - 4 * DAY }) } },
+        ],
+      },
+    });
+    const ids = async () => (await h.op("memories", {}, h.person)).text.split("\n").map((l) => l.slice(3, 6));
+    expect(await ids()).toEqual(["m15", "m14", "m17", "m21", "m19", "m16", "m18"]);
+    await h.op("remember", { kind: "rule", title: "Deploys freeze at 5pm ET." }, h.person);
+    expect((await ids())[0]).toBe("m30");
+    expect((await h.op("memories", { kind: "rule" }, h.person)).text.split("\n").map((l) => l.slice(0, 7))).toEqual(["- [m30]", "- [m14]", "- [m21]"]);
+    // Accepted with supersedes: the old one leaves the list.
+    await h.op("remember", { kind: "convention", title: "Replaces m14", supersedes: "m14" }, h.person);
+    expect(await ids()).toEqual(["m31", "m30", "m15", "m17", "m21", "m19", "m16", "m18"]);
+    // Retired at once: gone. A proposal (an agent's) and a pending retire change nothing an agent sees.
+    await h.op("forget", { id: "m15" }, h.person);
+    await h.op("remember", { kind: "fact", title: "An agent's idea" });
+    await h.op("forget", { id: "m16" });
+    expect(await ids()).toEqual(["m31", "m30", "m17", "m21", "m19", "m16", "m18"]);
+    expect(h.hub.calls.filter((k) => k.method === "GET" && k.path === "/relay/memories")).toHaveLength(1);
+  });
+
+  it("a brief asked for before a write keeps the write; one asked for after it is the hub's word", async () => {
+    let now = T;
+    let releaseBrief: (() => void) | undefined;
+    const gate = new Promise<void>((r) => (releaseBrief = r));
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const key = `${init?.method ?? "GET"} ${u.pathname}`;
+      calls.push(key);
+      if (key === "GET /relay/sync") return Response.json({ ...SYNC, memory: { rev: now > T ? "r8" : "r7" } });
+      if (key === "POST /relay/memories") return Response.json({ ok: true, memory: accepted({ id: "m40", title: "New", updatedAt: T + 50 }) });
+      if (key === "GET /relay/memories") {
+        // The first brief (r7) is slow: it was asked for before the write and comes back after it.
+        if (calls.filter((c) => c === key).length === 1) {
+          await gate;
+          return Response.json(BRIEF);
+        }
+        return Response.json({ ...BRIEF, rev: "r8", memories: [{ id: "m40", kind: "gotcha", title: "New (hub)", body: "", by: { person: "Sean" }, updatedAt: T + 50 }] });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    const c = new CoordClient({ url: "https://hub.test", token: TOKEN, deviceId: DEV, person: "Sean", fetchImpl, now: () => now });
+    await c.sync(); // r7: brief fetch in flight
+    await new Promise((r) => setImmediate(r));
+    now = T + 1;
+    await c.memory({ action: "remember", kind: "gotcha", title: "New" });
+    releaseBrief!();
+    await settle(c);
+    expect(c.brief()?.map((m) => m.id)).toEqual(["m40", "m15", "m14", "m17", "m21", "m19", "m16", "m18"]);
+    // The next brief (asked for after the write) carries the hub's own copy; nothing local is laid over it.
+    now = T + 20_000;
+    await c.sync();
+    await settle(c);
+    expect(c.brief()?.map((m) => [m.id, m.title])).toEqual([["m40", "New (hub)"]]);
+  });
+
   it("note on a memory hub is a remember (project-wide; kind from a tag; first line the title); notes lists the brief", async () => {
     const h = await opsHarness({ routes: { "POST /relay/memories": [{ status: 200, body: { ok: true, memory: accepted({ kind: "rule", title: "Deploys freeze at 5pm ET", status: "proposed" }) } }] } });
     const r = await h.op("note", { text: "Deploys freeze at 5pm ET\nAsk in #eng before.", tags: ["Rules", "deploy"] });

@@ -610,6 +610,9 @@ export const hubPairApproveRequestSchema = z.object({ code: hubPairCodeSchema })
  * which keeps what it can use (a malformed person or session is dropped on its own, unknown keys are ignored), so a
  * hub newer or older than the relay never blanks the menu bar.
  */
+/** A published release version, `0.12.1` (a prerelease or build suffix allowed). */
+export const RELEASE_VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]*)?$/;
+
 export const hubTeamSessionStateSchema = z.enum(["working", "waiting", "idle", "ended", "offline"]);
 export type HubTeamSessionState = z.infer<typeof hubTeamSessionStateSchema>;
 
@@ -674,6 +677,11 @@ export const hubTeamResponseSchema = z.object({
   sessions: z.array(hubTeamSessionSchema).max(5000),
   /** The hub's clock, so a client can age `since` without trusting its own. */
   serverNow: epochMs.optional(),
+  /**
+   * SPEC §40 (relay 0.12.0): the newest published relay (`@b3os/workmesh` on npm, as the hub last read it, `0.12.1`).
+   * The relay tells its person when it is behind; absent while the hub hasn't read it.
+   */
+  latestClient: z.string().max(32).regex(RELEASE_VERSION_RE).optional(),
 });
 export type HubTeamResponse = z.infer<typeof hubTeamResponseSchema>;
 
@@ -754,6 +762,7 @@ export const hubTeamAcceptSchema = z.object({
     5000,
   ),
   serverNow: epochMsAccept.nullish().catch(undefined).transform((v) => v ?? undefined),
+  latestClient: z.string().max(32).regex(RELEASE_VERSION_RE).nullish().catch(undefined).transform((v) => v ?? undefined),
 });
 export type HubTeamAccepted = z.infer<typeof hubTeamAcceptSchema>;
 

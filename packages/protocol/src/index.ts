@@ -764,3 +764,6 @@ export * from "./injected.js";
 // importable alone as `@workmesh/protocol/lease-paths`).
 export * from "./coord.js";
 export * from "./lease-paths.js";
+
+// v2 Delegate (SPEC §30): handoffs, approval gates, waking idle sessions; sync gains optional lists.
+export * from "./delegate.js";

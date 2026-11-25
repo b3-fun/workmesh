@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { HUB_ISSUE_RE, HUB_REPO_RE } from "./fields.js";
 import { isLeasePath, LEASE_PATH_MAX } from "./lease-paths.js";
+import { hubSyncDelegateAcceptSchema, hubSyncDelegateSchema } from "./delegate.js";
 
 /**
  * v1 Coordinate (docs/SPEC.md §21): leases, claims, messages, notes, holds, and the one read that carries them all
@@ -286,6 +287,8 @@ export const hubMessageRequestSchema = z.strictObject({
   to: hubMessageToSchema,
   text: coordText,
   thread: thread.optional(),
+  /** v2 (§30): wake the recipient if it is idle. Absent: the hub's default (wake for a person's message). */
+  wake: z.boolean().optional(),
 });
 export type HubMessageRequest = z.infer<typeof hubMessageRequestSchema>;
 export const hubMessageRequestAcceptSchema = z.object({
@@ -304,6 +307,7 @@ export const hubMessageRequestAcceptSchema = z.object({
     .max(4 * HUB_COORD_TEXT_MAX)
     .transform((s) => s.slice(0, HUB_COORD_TEXT_MAX)),
   thread: opt(thread),
+  wake: opt(z.boolean()).catch(undefined),
 });
 export type HubMessageRequestAccepted = z.infer<typeof hubMessageRequestAcceptSchema>;
 
@@ -369,6 +373,11 @@ export const hubInboxItemSchema = z.object({
   text: coordText,
   ts: epochMs,
   thread: thread.optional(),
+  /**
+   * v2 (§30): wake the recipient session if it is idle (a relay starts a turn with the message). Absent: wake when a
+   * person wrote it (no `from.sessionKey`), not when an agent did.
+   */
+  wake: z.boolean().optional(),
 });
 export type HubInboxItem = z.infer<typeof hubInboxItemSchema>;
 
@@ -416,7 +425,7 @@ export const hubSyncResponseSchema = z.object({
   notes: z.array(hubNoteSchema).max(HUB_SYNC_MAX_NOTES).optional(),
   /** Files sessions edited in the last 10 minutes (one row per session and path, newest). */
   edits: z.array(hubRecentEditSchema).max(2000).optional(),
-});
+}).extend(hubSyncDelegateSchema.shape);
 export type HubSyncResponse = z.infer<typeof hubSyncResponseSchema>;
 
 const rosterStateAccept = z.enum(["working", "waiting", "idle", "ended", "offline"]).catch("idle");
@@ -451,6 +460,7 @@ export const hubSyncAcceptSchema = z.object({
         .transform((s) => s.slice(0, HUB_COORD_TEXT_MAX)),
       ts: epochMsAccept.catch(0),
       thread: soft(thread),
+      wake: soft(z.boolean()),
     }),
     500,
   ),
@@ -483,7 +493,7 @@ export const hubSyncAcceptSchema = z.object({
     }),
     2000,
   ),
-});
+}).extend(hubSyncDelegateAcceptSchema.shape);
 export type HubSyncAccepted = z.infer<typeof hubSyncAcceptSchema>;
 
 /** `POST /relay/inbox/ack` → 200 `{ ok: true }`. */

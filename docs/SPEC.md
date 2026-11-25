@@ -12,7 +12,7 @@ https://workmesh.b3os.org; the hosted hub's code and internals are private (§14
 | Hub | hosted by B3 (private) | Pairs machines, keeps what they share, writes summaries, serves the board. |
 
 If this file and the code disagree, fix one of them in the same change. Section numbers are stable because code cites
-them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20) covered the hub's internals, which moved to the
+them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22) covered the hub's internals, which moved to the
 hosted hub's own docs. Sections 1–13 were written while the hub was Bullpen and the relay was agentblip; where they say
 agentblip, read the Workmesh CLI.
 
@@ -38,6 +38,10 @@ What a hub may learn from a machine, and what it does with it. Each rule points 
   environment variables, absolute paths, the agent's thinking, a subagent's own prompt and transcript text, Slack
   message text, or anything from a repo outside the rule (§3.3, §9, §15).
   The relay builds every request from strict schemas, so a field outside this contract can't be sent (§14).
+- **Coordination (v1, §21)** sends only what an agent or person asks for: lease paths (repo-relative) and reasons,
+  claimed issue ids and notes, and the text of messages and project notes they write on purpose (at either level,
+  redacted first). Holds, leases and messages are read back by the relay; nothing about local files beyond a lease's
+  own paths leaves the machine.
 - **Redaction on the machine**, before anything is queued (§9): keys, tokens, JWTs, private keys, credentials in URLs
   and secret-valued settings become `[redacted]`, home paths `~/…`. The hub blanks obvious secrets again before it
   stores text (§10).
@@ -443,3 +447,105 @@ that isn't `owner/name` is dropped on its own, repeats once, past 10 the first t
 groups an orchestrator under its `repo` (the repo it touched most recently), marks it as an orchestrator, and names
 the repos it works across.
 
+---
+
+# v1 Coordinate: leases, claims, messages, notes, holds (Sean, 2026-11-25)
+
+Agents on one team stop colliding: a session leases the files it is about to rework, claims the Linear issue it works
+on, messages another person's agent instead of editing under it, and a person can hold any agent from the board.
+Linear B3-7167. All of it is new endpoints beside ingest: an older hub answers `404`, and the relay then carries on
+as before (nothing is ever blocked because a hub can't coordinate).
+
+## 21. Coordination endpoints
+
+Code form: `packages/protocol/src/coord.ts` (two readings per body, as in §14) and `lease-paths.ts` (zod-free, also
+`@workmesh/protocol/lease-paths`). Every endpoint takes the device token (`Authorization: Bearer bp_…`) under the
+`/relay/*` Access bypass, and the hub takes the person from it, never from a body. Status codes as for ingest
+(§3.2): `400` schema error, `401` unknown or revoked token, `404` an older hub, `429` with `Retry-After`.
+
+**Keys.** In a request, `sessionKey` (and a message's `from`) is the session's ingest `key` (`<source>:<sessionId>`,
+§3.2); the hub prefixes the device id. Everything a hub sends back names sessions by hub key
+(`<deviceId>:<source>:<sessionId>`, §2). A hub reads a request key that already carries this device's id the same way.
+
+**Lease paths.** Repo-relative paths or globs (`lease-paths.ts`): `*` within a segment, `?` one character, `**` any
+number of whole segments; every other character is literal (`app/[id]/page.tsx`). An entry covers what it matches and
+everything under it (`packages/cli` covers `packages/cli/src/index.ts`; `**` is the whole repo). No leading `/`, `~`,
+drive letter or `..`, no empty or `.` segments, no trailing `/`, ≤ 400 chars. Two entries overlap when some file is
+covered by both (`leasePathsOverlap`, exact for plain paths).
+
+| Endpoint | Body | Answer |
+|---|---|---|
+| `POST /relay/leases` | `{ action: "acquire" \| "release" \| "renew", sessionKey, repo, paths: string[] ≤ 50, ttlSec?: 60..14400 (default 1800), reason?: ≤ 200, leaseId? }` | `{ ok: true, lease }` (acquire, renew), `{ ok: true, released }` (release); `409` (or `200`) `{ ok: false, conflicts: [{ leaseId, holder: { person, sessionKey, sessionName? }, paths, expiresAt, reason? }] }` |
+| `POST /relay/claims` | `{ action: "claim" \| "release", sessionKey, issue: "B3-123", note?: ≤ 500 }` | `{ ok: true, claim? }`; `409` (or `200`) `{ ok: false, holder, since? }` |
+| `POST /relay/messages` | `{ from?: sessionKey, to: { person } \| { session: hubKey } \| { agent: sessionName }, text: 1..4000, thread?: ≤ 64 }` | `{ ok: true, id }`; `404` `{ ok: false, error }` for no such recipient |
+| `POST /relay/notes` | `{ sessionKey?, text: 1..4000, tags?: ≤ 10 words }` | `{ ok: true, id }` |
+| `GET /relay/sync?cursor=<opaque>` | | the state below |
+| `POST /relay/inbox/ack` | `{ ids: string[] 1..200 }` | `{ ok: true }` |
+
+- **Leases.** `acquire` takes 1–50 paths in one repo (`owner/name`). A lease is exclusive: an acquire whose paths
+  overlap an active lease of another session in the same repo fails with that lease as a conflict, and the same
+  person's other sessions conflict too (leases are about agents colliding). A session's own leases never conflict
+  with it; its subagents (`<key>/<agentId>`) count as the session. `renew` and `release` name the session's leases
+  in `repo` by `leaseId`, else by `paths` (its leases with any of them), else all of them in that repo; `renew`
+  restarts the ttl (`ttlSec` or the lease's own). A lease ends at `expiresAt`, at `release`, or when its session ends.
+- **Claims.** One active claimant per issue id (read case-insensitively, `b3-7167` is `B3-7167`); claiming an issue
+  this session already holds refreshes its note. A claim ends at `release` or when its session ends. The hub may
+  mirror claims to Linear.
+- **Messages** go to a person (display name, email or GitHub login as the roster shows them; the hub picks which of
+  their sessions gets it, else holds it for their next one), one session, or an agent by its session name. `from`
+  absent = the person wrote it themselves (the CLI outside any agent session). Text is written on purpose by an agent
+  or a person, so it is sent at either sharing level, redacted on the machine first (§9).
+- **Notes** are the project's shared notes, written by a session or a person, read by everyone's agents. Text as for
+  messages.
+- **Holds** are set by people on the hub (the board, a Linear comment); relays only read them.
+
+`GET /relay/sync` → (`hubSyncResponseSchema`; relays read it with `hubSyncAcceptSchema`, which keeps every item it can
+read and drops the rest one by one):
+
+```jsonc
+{
+  "cursor": "c_42",                 // opaque: sent back on the next sync
+  "serverNow": 1795545605000,       // optional: the hub's clock
+  "me": { "person": "Sean" },       // optional: this device's person, as the lists name people
+  "leases": [Lease],                // every active lease in the project
+  "holds": [{ "sessionKey": "<hubKey>", "by": "An", "reason": "reworking the cell layout", "since": 1795545600000 }],
+  "inbox": [{ "id": "m_1", "to": "<hubKey of one of this device's sessions>", "from": { "person": "An", "sessionName": "b3iq-strategy", "sessionKey": "<hubKey>" },
+              "text": "…", "ts": 1795545600000, "thread": "t_1" }],   // oldest first, until acked
+  "claims": [{ "issue": "B3-7167", "holder": Holder, "since": 1795545600000, "note": "relay side" }],
+  "roster": [{ "person": "An", "github": "an-b3", "sessions": [{ "hubKey": "<hubKey>", "name": "b3iq-strategy", "state": "working", "repo": "b3-fun/workmesh" }] }],
+  "notes": [Note],                  // optional: the newest 50
+  "edits": [{ "repo": "b3-fun/workmesh", "path": "packages/cli/src/index.ts", "person": "An", "sessionKey": "<hubKey>", "sessionName": "b3iq-strategy", "ts": 1795545600000 }]
+}
+```
+
+- `Lease` = `{ id, repo, paths, holder: { person, sessionKey, sessionName? }, since?, expiresAt, reason? }`;
+  `Note` = `{ id, by: { person, sessionKey?, sessionName? }, text, tags?, ts }`.
+- `inbox` holds this device's undelivered messages until the relay acks them; a relay may see an item again before
+  its ack lands and delivers it once (by `id`). The cursor lets a hub send only what changed; leases, holds, claims
+  and roster are always complete lists.
+- `edits` (optional): files sessions edited in the last 10 minutes (one row per session and path, the newest),
+  from the `path` the hub already has (§3.2). A relay warns its agent before it edits a file another person's
+  session touched there.
+
+## 23. The relay side (`packages/cli`)
+
+- **Sync.** The daemon polls `/relay/sync` every 5 s while any shared session is live, every 60 s otherwise, backing
+  off on errors (to 5 min) and waiting out a `429`'s `Retry-After`; `404` turns coordination off and asks again in 10
+  minutes; `401` stops it, as for ingest. It keeps the last good answer in memory.
+- **Fail-open.** Nothing is ever blocked because the hub or the daemon is unreachable. A hook gets no decision when the
+  daemon doesn't answer within its usual timeout. The one exception is a hold the daemon already knew about: it stays
+  in force until a sync answers without it, or for 30 minutes after the last sync that carried it.
+- **Enforcement** (Claude Code and Codex `PreToolUse`, answered by the daemon from its cached state; no network call
+  in the hook path): a hold on the session (or its parent) refuses every tool call, naming who held it and why; an
+  edit (Edit, Write, MultiEdit, NotebookEdit, apply_patch, and shell commands that clearly write a path) to a file
+  another session's lease covers is refused, naming the holder, the entries, when the lease expires, and how to ask
+  them; an edit to a file another person's session edited in the last 10 minutes goes ahead, with a note to the agent
+  saying who is working there.
+- **Inbox.** A session's messages reach its agent at its next tool boundary (`additionalContext` on Claude Code's
+  PostToolUse and UserPromptSubmit, Codex's equivalents), as "Message from An (b3iq-strategy): …", and are then
+  acked. Nothing about them leaves the machine beyond the ack.
+- **MCP.** `workmesh mcp` (stdio) gives every agent `whoami`, `roster`, `send`, `inbox`, `claim`, `release`, `lease`,
+  `unlease`, `leases`, `note` and `notes`. It talks to the local daemon only and never holds the device token; the
+  daemon makes the hub calls.
+- **Guidance.** A shared session gets a short note at its start (or when it first becomes shared): it is on Workmesh
+  with its team, and how to claim, lease, read its inbox and message instead of editing leased files.

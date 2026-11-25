@@ -10,7 +10,7 @@ import type { RunnerSettings } from "../src/daemon/handoff-runner";
 import { runCoordOp } from "../src/daemon/coord-ops";
 import type { CoordOpsDeps } from "../src/daemon/coord-ops";
 import { codexWaker } from "../src/daemon/codex-wake";
-import { transcriptVersion, versionAtLeast, wakeWaitOnce } from "../src/commands/wake";
+import { isHeadless, transcriptVersion, versionAtLeast, wakeWaitOnce } from "../src/commands/wake";
 import { runInit } from "../src/commands/init";
 import { claudeWakeCommand } from "../src/adapters/claude-code";
 
@@ -22,7 +22,7 @@ const T = 1_795_545_600_000;
 
 let home: string;
 const saved: Record<string, string | undefined> = {};
-const ENV = ["HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"];
+const ENV = ["HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_ENTRYPOINT", "WORKMESH_HANDOFF"];
 
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-delegate-"));
@@ -32,6 +32,9 @@ beforeEach(() => {
   process.env.XDG_STATE_HOME = path.join(home, ".local", "state");
   delete process.env.CODEX_HOME;
   delete process.env.CLAUDE_CONFIG_DIR;
+  // Tests may run inside an agent session (`claude -p` says sdk-cli): the wake hook reads these.
+  delete process.env.CLAUDE_CODE_ENTRYPOINT;
+  delete process.env.WORKMESH_HANDOFF;
 });
 afterEach(() => {
   for (const k of ENV) {
@@ -140,7 +143,7 @@ describe("handoff runner (SPEC §31)", () => {
     const gitCalls: string[][] = [];
     const runner = new HandoffRunner({
       coord: () => hub.coord,
-      settings: () => settings({ roots: [path.join(home, "code")] }),
+      settings: () => settings({ roots: [path.join(home, "code")], model: "haiku" }),
       checkouts: new CheckoutIndex(path.join(home, "checkouts.json")),
       dir: path.join(home, "handoffs"),
       which: (b) => (b === "claude" ? path.join(bin, "claude") : undefined),
@@ -169,6 +172,7 @@ describe("handoff runner (SPEC §31)", () => {
     expect(args).toContain("--session-id");
     expect(args[args.indexOf("--session-id") + 1]).toBe(start.sessionKey.slice("claude-code:".length));
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("auto");
+    expect(args[args.indexOf("--model") + 1]).toBe("haiku");
     expect(args).toContain(fs.realpathSync(wt));
     expect(args).toContain(`WORKMESH_HANDOFF=${HANDOFF.id}`);
     runner.poll();
@@ -255,6 +259,7 @@ describe("wake-wait, the asyncRewake Stop hook (SPEC §31)", () => {
     const asked: Array<[string, number]> = [];
     const code = await wakeWaitOnce("claude-code", {
       stdin: stdin(),
+      env: { CLAUDE_CODE_ENTRYPOINT: "cli" },
       daemonUp: async () => true,
       wait: async (_port, key, ms) => {
         asked.push([key, ms]);
@@ -280,10 +285,22 @@ describe("wake-wait, the asyncRewake Stop hook (SPEC §31)", () => {
     expect(await wakeWaitOnce("claude-code", { stdin: stdin({ hook_event_name: "SubagentStop" }), wait: never })).toBe(0);
     expect(await wakeWaitOnce("claude-code", { stdin: async () => "not json", wait: never })).toBe(0);
     expect(await wakeWaitOnce("codex", { stdin: stdin(), wait: never })).toBe(0);
+    // Headless: a handoff's agent, `claude -p`, an SDK session. Nobody to wake, and a waiter would hold the run open.
+    expect(await wakeWaitOnce("claude-code", { stdin: stdin(), env: { CLAUDE_CODE_ENTRYPOINT: "cli", WORKMESH_HANDOFF: "ho_1" }, wait: never })).toBe(0);
+    expect(await wakeWaitOnce("claude-code", { stdin: stdin(), env: { CLAUDE_CODE_ENTRYPOINT: "sdk-cli" }, wait: never })).toBe(0);
+    expect(await wakeWaitOnce("claude-code", { stdin: stdin(), env: { CLAUDE_CODE_ENTRYPOINT: "sdk-ts" }, wait: never })).toBe(0);
     writeConfig({ wake: false });
     expect(await wakeWaitOnce("claude-code", { stdin: stdin(), wait: never })).toBe(0);
     writeConfig({}, false);
     expect(await wakeWaitOnce("claude-code", { stdin: stdin(), wait: never })).toBe(0);
+  });
+
+  it("tells interactive sessions from headless ones", () => {
+    expect(isHeadless({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe(false);
+    expect(isHeadless({ CLAUDE_CODE_ENTRYPOINT: "claude-vscode" })).toBe(false);
+    expect(isHeadless({})).toBe(false);
+    expect(isHeadless({ CLAUDE_CODE_ENTRYPOINT: "sdk-py" })).toBe(true);
+    expect(isHeadless({ WORKMESH_HANDOFF: "ho_1" })).toBe(true);
   });
 
   it("exits 0 when the daemon ends the wait, when its parent goes, and after its window (daemon errors retried)", async () => {
@@ -421,6 +438,25 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     const r = await runCoordOp({ op: "handoffs", args: { action: "accept", id: "h_abc12345" }, caller: {} }, deps(hub.coord, { onAccepted: (h) => accepted.push(h.id) }));
     expect(r.text).toBe("Accepted h_abc12345: this machine starts an agent for it.");
     expect(accepted).toEqual(["h_abc12345"]);
+  });
+
+  it("a sync older than 5 s is refreshed first (a person at the terminal while no shared session is live)", async () => {
+    let now = T;
+    const calls: string[] = [];
+    const offered = { ...HANDOFF, status: "offered" };
+    const fetchImpl = (async (url: string | URL) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify({ cursor: "c2", serverNow: now, me: { person: "Sean" }, leases: [], holds: [], inbox: [], claims: [], roster: [], notes: [], edits: [], handoffs: [offered], gates: [], approvals: [] }), { status: 200 });
+    }) as typeof fetch;
+    const coord = new CoordClient({ url: "https://hub.test", token: TOKEN, deviceId: DEV, person: "Sean", fetchImpl, now: () => now });
+    sync(coord);
+    expect((await runCoordOp({ op: "handoffs", args: {}, caller: {} }, deps(coord))).text).toBe("No handoffs.");
+    expect(calls).toEqual([]);
+    now += 30_000;
+    const list = await runCoordOp({ op: "handoffs", args: {}, caller: {} }, deps(coord));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatch(/^https:\/\/hub.test\/relay\/sync/);
+    expect(list.text).toMatch(/^- h_abc12345 · offered · from An/);
   });
 });
 

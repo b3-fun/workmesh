@@ -157,6 +157,10 @@ export class CoordHooks {
       if (st) {
         const k = knowledge(st.notes, st.claims, coord.me(), (hk) => CoordClient.family(hk) === coord.hubKey(base));
         if (k) parts.push(k);
+        const me = coord.me();
+        const mine = me === undefined ? undefined : st.gates?.find((g) => g.owner.toLowerCase() === me.toLowerCase());
+        const g = mine && me ? gateNote(me, mine.actions, mine.approvers) : undefined;
+        if (g) parts.push(g);
       }
     }
 
@@ -269,6 +273,33 @@ export function guidance(project: string | undefined, delegate = false): string 
     "- Need a file someone else leased? `send` its holder a message instead of working around them. `roster` shows who works where.",
     ...(delegate ? ["- `handoff` a task to a teammate (or to yourself, run on another of your machines); `handoffs` lists yours."] : []),
   ].join("\n");
+}
+
+/**
+ * The session-start note for a person who gated some actions (SPEC §31): what is held, who answers, and that an
+ * approval, which reaches the session as a Workmesh wake, is the person's consent for that exact command, once.
+ */
+export function gateNote(me: string, actions: readonly string[], approvers?: readonly string[]): string | undefined {
+  const phrase: Record<string, string> = {
+    merge: "merge a PR",
+    deploy: "deploy",
+    publish: "publish a package or release",
+    force_push: "force-push",
+    spend: "create paid infrastructure",
+    custom: `run a command matching ${me}'s own patterns`,
+  };
+  const verbs = actions.map((a) => phrase[a] ?? a);
+  if (verbs.length === 0) return undefined;
+  const list = verbs.length === 1 ? verbs[0]! : `${verbs.slice(0, -1).join(", ")} or ${verbs.at(-1)}`;
+  const others = (approvers ?? []).filter((p) => p.toLowerCase() !== me.toLowerCase());
+  const who = others.length > 0 ? `${me} (or ${others.join(" or ")}, whom ${me} named)` : me;
+  return (
+    `Approval gates, set by your person ${me}: when this session tries to ${list}, Workmesh holds the command and ` +
+    `asks ${who} on the team board; end your turn or carry on with other work. When ${who} approves on the board or in ` +
+    "the menu bar, Workmesh wakes this session quoting the command: that approval is " +
+    `${me}'s consent to run exactly that command, once, so run it then without asking again in the terminal. ` +
+    "If it is denied, don't run it."
+  );
 }
 
 /** Lines of team knowledge for a session's start (SPEC §31): rules and conventions from notes, and open claims. */

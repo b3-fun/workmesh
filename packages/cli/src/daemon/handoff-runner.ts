@@ -36,6 +36,8 @@ export interface RunnerSettings {
   maxRunning: number;
   /** Claude Code's permission mode for the headless session (default `auto`). */
   permissionMode: string;
+  /** The model the agent runs on (`--model` for Claude Code, `-m` for Codex); absent: the agent's default. */
+  model?: string;
   /** A run is stopped after this long (default 120 min). */
   maxMinutes: number;
   /** This machine's sharing level: the done note carries the agent's last words only at `conversation`. */
@@ -455,8 +457,15 @@ export class HandoffRunner implements HandoffRunnerLike {
     const name = `handoff: ${h.task.replace(/\s+/g, " ").slice(0, 60)}`;
     const argv =
       picked.agent === "claude"
-        ? [picked.bin, "-p", prompt, "--session-id", sessionId!, "--output-format", "json", "--permission-mode", settings.permissionMode, "--name", name]
-        : [picked.bin, "exec", "--json", "-C", dir, "-s", "workspace-write", "--skip-git-repo-check", "-o", resultFile, prompt];
+        ? [
+            picked.bin, "-p", prompt, "--session-id", sessionId!, "--output-format", "json", "--permission-mode", settings.permissionMode, "--name", name,
+            ...(settings.model ? ["--model", settings.model] : []),
+          ]
+        : [
+            picked.bin, "exec", "--json", "-C", dir, "-s", "workspace-write", "--skip-git-repo-check", "-o", resultFile,
+            ...(settings.model ? ["-m", settings.model] : []),
+            prompt,
+          ];
     const env: NodeJS.ProcessEnv = { ...process.env, PATH: await (this.deps.pathEnv ?? loginPath)(), WORKMESH_HANDOFF: h.id, WM_EXIT_FILE: exitFile };
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_SESSION_ID;

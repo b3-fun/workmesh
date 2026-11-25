@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import {
+  HUB_ASK_QUESTION_MAX,
   HUB_GATE_ACTIONS,
   HUB_LEASE_TTL_DEFAULT_SEC,
   HUB_LEASE_TTL_MAX_SEC,
@@ -39,6 +40,8 @@ export const COORD_OPS = [
   "handoffs",
   "gates",
   "approvals",
+  // Ask (SPEC §29)
+  "ask",
 ] as const;
 export type CoordOp = (typeof COORD_OPS)[number];
 
@@ -86,6 +89,8 @@ export interface CoordOpsDeps {
   onAccepted?: (h: HubHandoffAccepted) => void;
   /** v2: handoff ids running on this machine. */
   runningHandoffs?: () => ReadonlySet<string>;
+  /** Ask: this machine's IANA time zone, for "today" and clock times (default: the process's). */
+  timeZone?: () => string | undefined;
   now?: () => number;
   home?: string;
 }
@@ -482,6 +487,8 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         };
       }
       if (action !== "list") return fail("`handoffs` takes action list, accept or decline.");
+      await coord.refreshed();
+      const st = coord.view().state;
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
       if (st.handoffs === undefined) return fail("This team's hub has no handoffs yet (it predates Workmesh v2).");
       const me = coord.me()?.toLowerCase();
@@ -545,6 +552,8 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         return { ok: true, text: `${action === "approve" ? "Approved" : "Denied"}: ${r.body.approval.detail}.`, data: { approval: r.body.approval } };
       }
       if (action !== "list") return fail("`approvals` takes action list, approve or deny.");
+      await coord.refreshed();
+      const st = coord.view().state;
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
       if (st.approvals === undefined) return fail("This team's hub has no approvals yet (it predates Workmesh v2).");
       if (st.approvals.length === 0) return { ok: true, text: "No approvals.", data: { approvals: [] } };
@@ -557,6 +566,47 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       });
       return { ok: true, text: lines.join("\n"), data: { approvals: st.approvals } };
     }
+
+    // --- Ask (SPEC §29) -----------------------------------------------------------------
+
+    case "ask": {
+      const question = scrubText(str(a.question, 16_000), { home, max: HUB_ASK_QUESTION_MAX })?.text;
+      if (!question) return fail("`ask` needs `question`: what you want to know about the team's agents, in plain words.");
+      const zone = (deps.timeZone ?? localTimeZone)();
+      const r = await coord.ask({ question, ...(zone ? { zone } : {}) }, key ? CoordClient.family(key) : "person");
+      if (!r.ok) return askNoAnswer(r);
+      const named = r.body.sessions
+        .slice(0, 12)
+        .map((x) => `- ${x.name || x.hubKey} (${x.person}${x.state ? `, ${x.state}` : ""}) [${x.hubKey}]`);
+      const text = named.length > 0 ? `${r.body.answer}\n\nSessions it names (\`send\` takes the key):\n${named.join("\n")}` : r.body.answer;
+      return { ok: true, text, data: r.body };
+    }
+  }
+}
+
+/**
+ * Ask's no, softly (SPEC §29): the hub has no Ask, is rate-limiting, or its model failed. Not a tool error: the agent
+ * reads why and carries on without the answer.
+ */
+function askNoAnswer(r: Extract<CoordResult<unknown>, { ok: false }>): CoordOpResult {
+  const wait = r.retryAfterMs !== undefined ? Math.max(1, Math.ceil(r.retryAfterMs / 60_000)) : undefined;
+  const again = wait === undefined ? "" : wait >= 60 ? " Don't ask again for an hour or so." : ` Don't ask again for ${wait} min.`;
+  // 400 (a question the hub won't read) and 401 (pair again) are the caller's to fix; the rest is the hub saying no.
+  const soft = r.status !== 400 && r.status !== 401;
+  return {
+    ok: soft,
+    text: soft ? `No answer from the team board: ${r.error}.${again} Carry on without it, or ask your person.` : `Workmesh: ${r.error}`,
+    data: { answered: false, status: r.status, error: r.error, ...(r.retryAfterMs !== undefined ? { retryAfterMs: r.retryAfterMs } : {}) },
+  };
+}
+
+/** This machine's IANA time zone, if the runtime knows it. */
+function localTimeZone(): string | undefined {
+  try {
+    const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return z && /^[A-Za-z][\w+./-]{0,63}$/.test(z) ? z : undefined;
+  } catch {
+    return undefined;
   }
 }
 

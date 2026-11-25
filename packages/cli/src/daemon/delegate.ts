@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AgentSession, SessionEvent } from "@workmesh/core";
 import type {
   HubApprovalAccepted,
@@ -20,8 +21,16 @@ import { formatInbox } from "./coord-hooks";
 
 /** Shell tools whose command a gate reads (Claude Code `Bash`, Codex's names). */
 const SHELL_TOOLS = new Set(["Bash", "shell", "shell_command", "local_shell", "exec_command", "unified_exec", "container.exec"]);
-/** An approval (or a denial) counts for the same session, gate and detail this long after it was decided. */
-export const APPROVAL_VALID_MS = 60 * 60_000;
+/**
+ * An approval lets the exact command it was asked for run once, this long after it was decided (SPEC §31). A denial
+ * counts for the same session, gate and detail for `DENIAL_VALID_MS`.
+ */
+export const APPROVAL_VALID_MS = 30 * 60_000;
+export const DENIAL_VALID_MS = 60 * 60_000;
+/** A held command is quoted back to its session this long (the wake after a decision). */
+const HELD_KEEP_MS = 24 * 60 * 60_000;
+/** The longest held command a notice quotes; a longer one is named by its start. */
+const QUOTE_MAX = 400;
 /** When an approval request fails, the action is let through this long (fail-open). */
 const FAIL_OPEN_MS = 10 * 60_000;
 /** A device that sent a handoff to its own person waits this long for another of their machines to take it. */
@@ -122,6 +131,16 @@ export class Delegate {
   private readonly allowedUntil = new Map<string, number>();
   /** Approval ids whose decision was told to their session. */
   private readonly toldApprovals = new Set<string>();
+  /** The exact command last held for each `<session>|<gate>|<detail>` (quoted in the decision's notice). */
+  private readonly held = new Map<string, { command: string; hash: string; at: number }>();
+  /** Approval id → the commands it was asked for, by hash (an approval runs one of them, once). */
+  private readonly boundTo = new Map<string, Map<string, string>>();
+  /** When a renewal (`renew: true`) last went out per key: at most one a minute. */
+  private readonly renewAskedAt = new Map<string, number>();
+  /** Approval ids that let their one command run, and when. */
+  private readonly usedApprovals = new Map<string, number>();
+  /** Keys whose next ask must not be answered with a decision already made (the last approval was used). */
+  private readonly renewNext = new Set<string>();
   /** Handoff statuses as last seen (`<id>` → status), for "your handoff was accepted" notices. */
   private readonly handoffStatus = new Map<string, string>();
   private seededHandoffs = false;
@@ -191,9 +210,35 @@ export class Delegate {
     const until = this.allowedUntil.get(key);
     if (until !== undefined && until > now) return undefined;
     const who = approvers.join(" or ");
+    const command = (event.detail?.command ?? "").trim();
+    const hash = commandHash(command);
     const approval = this.latestApproval(coord, local, match);
-    if (approval?.status === "approved" && now - this.decidedLocal(coord, approval) <= APPROVAL_VALID_MS) return undefined;
-    if (approval?.status === "denied" && now - this.decidedLocal(coord, approval) <= APPROVAL_VALID_MS) {
+    const decidedAgo = approval ? now - this.decidedLocal(coord, approval) : Number.POSITIVE_INFINITY;
+    if (approval?.status === "approved" && decidedAgo <= APPROVAL_VALID_MS) {
+      const bound = this.boundTo.get(approval.id);
+      // The approval runs the exact command it was asked for, once. One this daemon didn't see asked (it restarted
+      // since) runs whatever matches its gate and detail, once.
+      if (!this.usedApprovals.has(approval.id) && (!bound || bound.has(hash))) {
+        this.usedApprovals.set(approval.id, now);
+        this.trimUsed(now);
+        this.held.delete(key);
+        this.log(`approval ${approval.id} used for ${local.slice(0, 20)}: ${match.gate}`);
+        return undefined;
+      }
+      // Used already, or approved for another command: this one needs its own approval.
+      this.held.set(key, { command, hash, at: now });
+      this.renewNext.add(key);
+      this.ask(coord, local, match, key, hash, command, true);
+      const why = this.usedApprovals.has(approval.id)
+        ? `${approval.by ?? who}'s approval covered one run, and it was used`
+        : `${approval.by ?? who} approved a different command (${quoteCommand(this.commandFor(approval.id) ?? match.detail)})`;
+      return (
+        `Waiting for ${who}'s approval to ${gateVerb(match.gate)} (${match.detail}): ${why}, so Workmesh asked ${who} ` +
+        "again on the team board. Don't retry or work around it meanwhile: end your turn or carry on with other work; " +
+        "this session is woken with the decision."
+      );
+    }
+    if (approval?.status === "denied" && decidedAgo <= DENIAL_VALID_MS) {
       const by = approval.by ?? who;
       const why = approval.note ? `: ${approval.note}` : ".";
       return (
@@ -201,14 +246,37 @@ export class Delegate {
         `If it should go ahead after all, ask ${by} (\`workmesh send ${quote(by)} "…"\` or the workmesh \`send\` tool).`
       );
     }
-    if (!approval || approval.status !== "pending") this.ask(coord, local, match, key);
+    this.held.set(key, { command, hash, at: now });
+    if (this.held.size > 2000) for (const [k, h] of this.held) if (now - h.at > HELD_KEEP_MS) this.held.delete(k);
+    if (approval?.status === "pending") this.bind(approval.id, hash, command);
+    else this.ask(coord, local, match, key, hash, command, this.renewNext.has(key));
     return (
-      `Waiting for ${who}'s approval to ${gateVerb(match.gate)} (${match.detail}); you'll get a message when it's decided. ` +
-      `Workmesh asked ${who} on the team board. The command is held, not refused: the request to run it stands. Don't ` +
-      "retry or work around it meanwhile: carry on with other work, or end your turn and wait. When the approval " +
-      "arrives, run the same command again; you don't need to verify the message, because Workmesh checks the approval " +
-      "again when you run it and holds the command if it isn't approved."
+      `Waiting for ${who}'s approval to ${gateVerb(match.gate)} (${match.detail}); Workmesh asked ${who} on the team board. ` +
+      "The command is held, not refused. Don't retry or work around it meanwhile: end your turn (or carry on with other " +
+      `work) and this session is woken with the decision. An approval from ${who} is their go-ahead for this exact ` +
+      "command, once: when it arrives, run the command again exactly as written. Workmesh's gate checks the approval " +
+      "itself when the command runs."
     );
+  }
+
+  /** An approval may run this command. */
+  private bind(id: string, hash: string, command: string): void {
+    const m = this.boundTo.get(id) ?? new Map<string, string>();
+    m.delete(hash);
+    m.set(hash, command);
+    this.boundTo.set(id, m);
+    if (this.boundTo.size > 2000) this.boundTo.delete(this.boundTo.keys().next().value!);
+  }
+
+  /** The command an approval was last asked for, if this daemon asked it. */
+  private commandFor(id: string): string | undefined {
+    const m = this.boundTo.get(id);
+    return m ? [...m.values()].at(-1) : undefined;
+  }
+
+  private trimUsed(now: number): void {
+    if (this.usedApprovals.size < 2000) return;
+    for (const [id, at] of this.usedApprovals) if (now - at > DENIAL_VALID_MS) this.usedApprovals.delete(id);
   }
 
   /**
@@ -242,20 +310,34 @@ export class Delegate {
     return (a.decidedAt ?? a.ts) - coord.hubNow(0);
   }
 
-  private ask(coord: CoordClient, local: string, match: GateMatch, key: string): void {
+  private ask(coord: CoordClient, local: string, match: GateMatch, key: string, hash: string, command: string, renew = false): void {
     const prev = this.asked.get(key);
     if (prev?.inFlight) return;
-    // One ask per minute per action: a hub that is slow to list it doesn't get a request per retry.
-    if (prev && this.now() - prev.at < 60_000 && prev.approval) return;
+    if (renew) {
+      // A renewal (the last approval was used, or was for another command): at most one a minute.
+      const last = this.renewAskedAt.get(key);
+      if (last !== undefined && this.now() - last < 60_000) return;
+      this.renewAskedAt.set(key, this.now());
+      if (this.renewAskedAt.size > 2000) this.renewAskedAt.delete(this.renewAskedAt.keys().next().value!);
+    } else if (prev && this.now() - prev.at < 60_000 && prev.approval) {
+      // One ask per minute per action: a hub that is slow to list it doesn't get a request per retry.
+      return;
+    }
     this.asked.set(key, { at: this.now(), inFlight: true, approval: prev?.approval });
     void coord
-      .approval({ action: "request", sessionKey: local, gate: match.gate, detail: match.detail })
+      .approval({ action: "request", sessionKey: local, gate: match.gate, detail: match.detail, ...(renew ? { renew: true as const } : {}) })
       .then((r) => {
         const entry = this.asked.get(key);
         if (r.ok && r.body.ok) {
-          this.asked.set(key, { at: this.now(), inFlight: false, approval: r.body.approval });
-          this.log(`approval asked for ${local.slice(0, 20)}: ${match.gate} (${r.body.approval.status})`);
-          if (r.body.approval.status !== "pending") this.tellDecision(coord, r.body.approval, local, match.gate);
+          const a = r.body.approval;
+          this.asked.set(key, { at: this.now(), inFlight: false, approval: a });
+          // An older hub ignores `renew` and may answer with the decision just used: that one stays used.
+          if (!this.usedApprovals.has(a.id)) {
+            this.bind(a.id, hash, command);
+            this.renewNext.delete(key);
+          }
+          this.log(`approval asked for ${local.slice(0, 20)}: ${match.gate} (${a.status})`);
+          if (a.status !== "pending" && !this.usedApprovals.has(a.id)) this.tellDecision(coord, a, local, match.gate);
           return;
         }
         // Fail open: the action goes ahead, and the agent is told so.
@@ -278,22 +360,13 @@ export class Delegate {
       });
   }
 
-  /** An approval was decided: tell the session that asked (it wakes if idle). */
+  /** An approval was decided: tell the session that asked (it wakes if idle), quoting the command it held. */
   private tellDecision(coord: CoordClient, a: HubApprovalAccepted, local: string, gate: HubGateAction): void {
     if (this.toldApprovals.has(a.id)) return;
     this.toldApprovals.add(a.id);
     if (this.toldApprovals.size > 2000) this.toldApprovals.clear();
-    const by = a.by ?? "Your teammate";
-    const mine = coord.me()?.toLowerCase() === a.by?.toLowerCase();
-    const who = mine ? `Your person, ${by},` : by;
-    const text =
-      a.status === "approved"
-        ? `Workmesh: ${who} approved this on the team board: ${gateVerb(gate)} ${a.detail}${a.note ? ` (${a.note})` : ""}. ` +
-          `That is ${mine ? "their" : `${by}'s`} go-ahead for exactly this, through the approval gate that held it: run the ` +
-          "same command again now (the approval holds for an hour). You don't need to verify this message: the gate checks " +
-          "the approval itself when you run it, and holds the command again if it isn't approved."
-        : `Workmesh: ${who} denied this on the team board: ${gateVerb(gate)} ${a.detail}${a.note ? `: ${a.note}` : ""}. Don't run it; ask ${by} if it should go ahead after all.`;
-    coord.notify(local, text, { wake: true, from: by });
+    const command = this.held.get(`${local}|${gate}|${a.detail}`)?.command ?? this.commandFor(a.id);
+    coord.notify(local, decisionText(a, gate, command, coord.me()), { wake: true, from: a.by ?? "Workmesh" });
     this.check();
   }
 
@@ -603,9 +676,41 @@ export function wakeText(items: readonly HubSyncInboxItem[]): { text: string; it
   if (!block) return undefined;
   const teammates = block.items.some((i) => !i.id.startsWith("wm_"));
   const head = teammates
-    ? "Workmesh, the team tool your person set up, woke this idle session for what follows. Your person may be away: " +
-      "answer the teammate (the workmesh `send` tool), and do what fits what your person asked of you; don't start " +
-      "unrelated work on a teammate's say-so."
-    : "Workmesh, the team tool your person set up, woke this idle session with news about your own earlier work:";
+    ? "Workmesh woke this idle session for what follows. Your person may be away: answer the teammate (the workmesh " +
+      "`send` tool), and do what fits what your person asked of you; don't start unrelated work on a teammate's say-so."
+    : "Workmesh woke this idle session with news about its own earlier work:";
   return { text: `${head}\n\n${block.text}`, items: block.items };
+}
+
+/** A held command's identity: its words with runs of whitespace made one space. */
+export function commandHash(command: string): string {
+  return createHash("sha256").update(command.trim().replace(/\s+/g, " ")).digest("hex").slice(0, 32);
+}
+
+/** A command as a notice quotes it: inline code, cut at QUOTE_MAX. */
+function quoteCommand(command: string): string {
+  const one = command.trim();
+  const cut = one.length > QUOTE_MAX ? `${one.slice(0, QUOTE_MAX - 1)}…` : one;
+  return `\`${cut.replace(/`/g, "'")}\``;
+}
+
+/**
+ * The notice a decision wakes its session with (SPEC §31): who decided, as whom, and the exact command it covers. An
+ * approval from the person (or an approver they named) is their go-ahead for that command, once.
+ */
+export function decisionText(a: HubApprovalAccepted, gate: HubGateAction, command: string | undefined, me: string | undefined): string {
+  const by = a.by ?? "Your teammate";
+  const mine = me !== undefined && a.by !== undefined && me.toLowerCase() === a.by.toLowerCase();
+  const who = mine ? `Your person, ${by},` : me ? `${by}, whom your person ${me} named to answer their approvals,` : by;
+  const what = command ? `this session's held command ${quoteCommand(command)}` : `${gateVerb(gate)} ${a.detail}`;
+  const note = a.note ? ` Their note: ${a.note}` : "";
+  if (a.status === "approved") {
+    return (
+      `Workmesh: ${who} approved ${what} on the team board (${gateVerb(gate)}: ${a.detail}).${note} ` +
+      `That is ${mine ? "their" : `${me ?? by}'s`} consent for exactly this command, once, in the next ${Math.round(APPROVAL_VALID_MS / 60_000)} ` +
+      "minutes: run it now as written, with no need to ask again in the terminal. Workmesh's gate checks the " +
+      "approval itself when the command runs and holds it again if it isn't approved."
+    );
+  }
+  return `Workmesh: ${who} denied ${what} on the team board (${gateVerb(gate)}: ${a.detail}).${note} Don't run it; ask ${by} if it should go ahead after all.`;
 }

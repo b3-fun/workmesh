@@ -118,9 +118,11 @@ export function postEvent(
 
 /** Hub calls go through the daemon (it holds the device token); they may take a network round trip. */
 export const COORD_TIMEOUT_MS = 12_000;
+/** `ask` waits for the hub's model (ASK_TIMEOUT_MS in hub/coord.ts, plus room). */
+export const ASK_OP_TIMEOUT_MS = 100_000;
 
 export function coordOp(port: number, req: CoordOpRequest): Promise<CoordOpResult> {
-  return daemonFetch(port, "/coord/op", "POST", req, { timeoutMs: COORD_TIMEOUT_MS });
+  return daemonFetch(port, "/coord/op", "POST", req, { timeoutMs: req.op === "ask" ? ASK_OP_TIMEOUT_MS : COORD_TIMEOUT_MS });
 }
 
 /** v2 (SPEC §31): one long-poll for an idle session's next waking message. */

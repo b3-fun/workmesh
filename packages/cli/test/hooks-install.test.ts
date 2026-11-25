@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CLAUDE_HOOK_EVENTS,
   WAKE_WINDOW_SEC,
+  WAKE_REWAKE_MESSAGE,
+  WAKE_REWAKE_SUMMARY,
   areClaudeHooksInstalled,
   claudeHookCommand,
   claudeWakeCommand,
@@ -45,7 +47,7 @@ describe("installClaudeHooks", () => {
       expect(entries).toHaveLength(event === "Stop" ? 2 : 1);
       expect(entries?.[0]?.hooks[0]?.command).toBe(claudeHookCommand());
     }
-    expect(settings.hooks.Stop?.[1]?.hooks[0]).toEqual({ type: "command", command: claudeWakeCommand(), asyncRewake: true, timeout: WAKE_WINDOW_SEC });
+    expect(settings.hooks.Stop?.[1]?.hooks[0]).toEqual({ type: "command", command: claudeWakeCommand(), asyncRewake: true, timeout: WAKE_WINDOW_SEC, rewakeMessage: WAKE_REWAKE_MESSAGE, rewakeSummary: WAKE_REWAKE_SUMMARY });
     expect(isClaudeWakeInstalled(settingsPath)).toBe(true);
     // only tool events take a matcher
     expect(settings.hooks.PreToolUse?.[0]?.matcher).toBe("*");
@@ -65,7 +67,7 @@ describe("installClaudeHooks", () => {
     expect(installClaudeHooks(settingsPath).changed).toBe(true);
     const after = readSettings();
     expect(after.hooks.Stop).toHaveLength(2);
-    expect(after.hooks.Stop?.[1]?.hooks[0]).toEqual({ type: "command", command: claudeWakeCommand(), asyncRewake: true, timeout: WAKE_WINDOW_SEC });
+    expect(after.hooks.Stop?.[1]?.hooks[0]).toEqual({ type: "command", command: claudeWakeCommand(), asyncRewake: true, timeout: WAKE_WINDOW_SEC, rewakeMessage: WAKE_REWAKE_MESSAGE, rewakeSummary: WAKE_REWAKE_SUMMARY });
     // The main hook's refresh never touches the wake hook (different subcommand).
     expect(after.hooks.Stop?.[0]?.hooks[0]?.command).toBe(claudeHookCommand());
     expect(installClaudeHooks(settingsPath, { wake: false }).changed).toBe(true);

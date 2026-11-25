@@ -151,12 +151,25 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       additionalProperties: false,
     },
   },
+  // Ask (SPEC §29): read-only questions to the board's Ask.
+  {
+    name: "ask",
+    description:
+      "Ask the team board about teammates' agents and work, in plain words (\"what is An's agent doing on B3-7167?\", \"who touched apps/hub today?\"). Answered from what the board shows (states, summaries, files, claims, leases, notes), never other sessions' prompts or messages. Read-only; a few questions a minute.",
+    inputSchema: {
+      type: "object",
+      properties: { question: s("The question (up to 2,000 characters).") },
+      required: ["question"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 export const MCP_INSTRUCTIONS =
   "Workmesh connects this session to your team's agents. Claim the Linear issue you work on, lease files before larger " +
   "edits (edits to another session's leased files are refused), read your inbox, and message a file's holder with " +
-  "`send` instead of editing around them. `handoff` gives a task to a teammate's (or your other machine's) agent.";
+  "`send` instead of editing around them. `handoff` gives a task to a teammate's (or your other machine's) agent; " +
+  "`ask` asks the team board what teammates' agents are doing.";
 
 export interface McpServerOptions {
   input: NodeJS.ReadableStream;

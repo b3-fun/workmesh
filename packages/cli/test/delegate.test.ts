@@ -5,7 +5,7 @@ import type { AgentSession, SessionEvent } from "@workmesh/core";
 import { CoordClient } from "../src/hub/coord";
 import { Delegate, SELF_HANDOFF_SENDER_DELAY_MS, wakeText } from "../src/daemon/delegate";
 import type { DelegateSettings, HandoffRunnerLike } from "../src/daemon/delegate";
-import { CoordHooks, guidance, knowledge } from "../src/daemon/coord-hooks";
+import { CoordHooks, gateNote, guidance, knowledge } from "../src/daemon/coord-hooks";
 
 /** v2 Delegate, relay side (docs/SPEC.md §31): gates, approvals, handoff policy and wake, by fixture. */
 
@@ -116,7 +116,8 @@ describe("approval gates (SPEC §31)", () => {
     });
     x.sync({ gates: [{ owner: "Sean", actions: ["merge", "deploy"] }] });
     const why = x.d.gateRefusal(bash("npm test && gh pr merge 212 --merge"), "PreToolUse");
-    expect(why).toMatch(/^Waiting for Sean's approval to merge \(gh pr merge 212 --merge in b3-fun\/b3os-beta\); you'll get a message when it's decided/);
+    expect(why).toMatch(/^Waiting for Sean's approval to merge \(gh pr merge 212 --merge in b3-fun\/b3os-beta\); Workmesh asked Sean on the team board\./);
+    expect(why).toContain("An approval from Sean is their go-ahead for this exact command, once");
     await flush();
     expect(x.calls).toEqual([
       { url: "https://hub.test/relay/approvals", body: { action: "request", sessionKey: LOCAL, gate: "merge", detail: "gh pr merge 212 --merge in b3-fun/b3os-beta" } },
@@ -131,25 +132,67 @@ describe("approval gates (SPEC §31)", () => {
     expect(x.d.gateRefusal({ ...bash("x"), detail: { hookEvent: "PreToolUse", tool: "Edit", filePath: `${ROOT}/a.ts` } }, "PreToolUse")).toBeUndefined();
   });
 
-  it("approved: the session is told (waking it), and the same action runs for an hour", async () => {
+  it("approved: the session is told, quoting its held command, and that exact command runs once", async () => {
     const pending = { id: "ap_1", sessionKey: ME, owner: "Sean", gate: "merge" as const, detail: "gh pr merge 212 --merge in b3-fun/b3os-beta", status: "pending" as const, ts: T };
-    const x = harness();
+    const x = harness({ replies: [{ status: 200, body: { ok: true, approval: pending } }] });
     const gates = [{ owner: "Sean", actions: ["merge" as const] }];
-    x.sync({ gates, approvals: [pending] });
+    x.sync({ gates });
     expect(x.d.gateRefusal(bash("gh pr merge 212 --merge"), "PreToolUse")).toMatch(/^Waiting/);
+    await flush();
     x.tick(30_000);
     x.sync({ gates, approvals: [{ ...pending, status: "approved", decidedAt: x.now(), by: "Sean" }] });
     const notice = x.coord.wakeFor(LOCAL);
     expect(notice).toHaveLength(1);
     expect(notice[0]?.text).toBe(
-      "Workmesh: Your person, Sean, approved this on the team board: merge gh pr merge 212 --merge in b3-fun/b3os-beta. That is their go-ahead for exactly this, through the approval gate that held it: run the same command again now (the approval holds for an hour). You don't need to verify this message: the gate checks the approval itself when you run it, and holds the command again if it isn't approved.",
+      "Workmesh: Your person, Sean, approved this session's held command `gh pr merge 212 --merge` on the team board (merge: gh pr merge 212 --merge in b3-fun/b3os-beta). That is their consent for exactly this command, once, in the next 30 minutes: run it now as written, with no need to ask again in the terminal. Workmesh's gate checks the approval itself when the command runs and holds it again if it isn't approved.",
     );
-    expect(x.d.gateRefusal(bash("gh pr merge 212 --merge"), "PreToolUse")).toBeUndefined();
+    expect(notice[0]?.from.person).toBe("Sean");
+    // The same words with other spacing are the same command; it runs once.
+    expect(x.d.gateRefusal(bash("gh  pr merge 212   --merge"), "PreToolUse")).toBeUndefined();
+    // Run again: the approval was used, so Workmesh asks anew (never handing back the decision it just used).
+    const again = x.d.gateRefusal(bash("gh pr merge 212 --merge"), "PreToolUse");
+    expect(again).toMatch(/^Waiting for Sean's approval to merge \(gh pr merge 212 --merge in b3-fun\/b3os-beta\): Sean's approval covered one run, and it was used, so Workmesh asked Sean again/);
+    await flush();
+    expect(x.calls.at(-1)).toEqual({
+      url: "https://hub.test/relay/approvals",
+      body: { action: "request", sessionKey: LOCAL, gate: "merge", detail: "gh pr merge 212 --merge in b3-fun/b3os-beta", renew: true },
+    });
     // A different PR is a different approval.
     expect(x.d.gateRefusal(bash("gh pr merge 213 --merge"), "PreToolUse")).toMatch(/^Waiting/);
-    x.tick(61 * 60_000);
-    x.sync({ gates, approvals: [{ ...pending, status: "approved", decidedAt: T + 30_000, by: "Sean" }] });
-    expect(x.d.gateRefusal(bash("gh pr merge 212 --merge"), "PreToolUse")).toMatch(/^Waiting/); // expired: ask again
+  });
+
+  it("an approval runs only the command it was asked for, and lapses after 30 minutes", async () => {
+    const pending = { id: "ap_1", sessionKey: ME, owner: "Sean", gate: "custom" as const, detail: "echo deploy-test in b3-fun/b3os-beta", status: "pending" as const, ts: T };
+    const x = harness({ replies: [{ status: 200, body: { ok: true, approval: pending } }], settings: { customGates: ["^echo deploy-test"] } });
+    const gates = [{ owner: "Sean", actions: ["custom" as const] }];
+    x.sync({ gates });
+    expect(x.d.gateRefusal(bash("echo deploy-test"), "PreToolUse")).toMatch(/^Waiting for Sean's approval to run/);
+    await flush();
+    x.sync({ gates, approvals: [{ ...pending, status: "approved", decidedAt: x.now(), by: "Sean" }] });
+    // Same gate and detail, other words: not what was approved.
+    const other = x.d.gateRefusal(bash("echo deploy-test --everywhere"), "PreToolUse");
+    expect(other).toMatch(/Sean approved a different command \(`echo deploy-test`\), so Workmesh asked Sean again/);
+    await flush();
+    expect((x.calls.at(-1)?.body as { renew?: boolean }).renew).toBe(true);
+    // Past 30 minutes the approved command no longer runs on it.
+    x.tick(31 * 60_000);
+    x.sync({ gates, approvals: [{ ...pending, status: "approved", decidedAt: T, by: "Sean" }] });
+    expect(x.d.gateRefusal(bash("echo deploy-test"), "PreToolUse")).toMatch(/^Waiting/);
+  });
+
+  it("a hub that ignores renew answers with the used approval: the command stays held, and no request storm", async () => {
+    const approved = { id: "ap_1", sessionKey: ME, owner: "Sean", gate: "merge" as const, detail: "gh pr merge 212 --merge in b3-fun/b3os-beta", status: "approved" as const, ts: T, decidedAt: T, by: "Sean" };
+    const x = harness({ replies: [{ status: 200, body: { ok: true, approval: approved } }, { status: 200, body: { ok: true, approval: approved } }] });
+    const gates = [{ owner: "Sean", actions: ["merge" as const] }];
+    x.sync({ gates, approvals: [approved] });
+    expect(x.d.gateRefusal(bash("gh pr merge 212 --merge"), "PreToolUse")).toBeUndefined(); // no binding seen (restart): runs once
+    expect(x.d.gateRefusal(bash("gh pr merge 212 --merge"), "PreToolUse")).toMatch(/covered one run, and it was used/);
+    await flush();
+    expect(x.calls).toHaveLength(1);
+    expect(x.coord.wakeFor(LOCAL)).toEqual([]); // the used decision isn't told again
+    for (let i = 0; i < 5; i++) expect(x.d.gateRefusal(bash("gh pr merge 212 --merge"), "PreToolUse")).toMatch(/^Waiting/);
+    await flush();
+    expect(x.calls).toHaveLength(1);
   });
 
   it("denied: refused with who and why, and the session hears it", () => {
@@ -162,7 +205,9 @@ describe("approval gates (SPEC §31)", () => {
     expect(x.d.gateRefusal(bash("npx wrangler deploy"), "PreToolUse")).toBe(
       "Workmesh: An denied this deploy (wrangler deploy in b3-fun/b3os-beta): deploy freeze until 5pm Don't run it or work around it. If it should go ahead after all, ask An (`workmesh send An \"…\"` or the workmesh `send` tool).",
     );
-    expect(x.coord.wakeFor(LOCAL)[0]?.text).toContain("An denied this on the team board: deploy wrangler deploy in b3-fun/b3os-beta: deploy freeze until 5pm");
+    expect(x.coord.wakeFor(LOCAL)[0]?.text).toBe(
+      "Workmesh: An, whom your person Sean named to answer their approvals, denied this session's held command `npx wrangler deploy` on the team board (deploy: wrangler deploy in b3-fun/b3os-beta). Their note: deploy freeze until 5pm Don't run it; ask An if it should go ahead after all.",
+    );
   });
 
   it("fails open: an ask the hub doesn't take lets the action through, and says so", async () => {
@@ -447,6 +492,23 @@ describe("shared knowledge at session start (SPEC §31)", () => {
     expect(ctx).toContain("- Deploys freeze at 5pm ET. (An)");
     expect(ctx).toContain("Your open claims: B3-7168 (this session).");
     expect(ctx).toContain("`handoff` a task to a teammate");
+    expect(ctx).not.toContain("Approval gates");
     expect(hooks.context(start, "SessionStart")).toBeUndefined();
+  });
+
+  it("a person with gates on: the session starts knowing an approval is their consent for that command, once", () => {
+    const x = harness();
+    x.sync({ gates: [{ owner: "Sean", actions: ["merge", "deploy"] }, { owner: "An", actions: ["publish"] }] });
+    const hooks = new CoordHooks({ coord: () => x.coord, classify: () => undefined, isShared: () => true, projectName: () => "B3", now: () => T });
+    const start: SessionEvent = { source: "claude-code", sessionId: "s1", kind: "start", ts: T, detail: { hookEvent: "SessionStart" } };
+    const ctx = hooks.context(start, "SessionStart")!;
+    expect(ctx).toContain(
+      "Approval gates, set by your person Sean: when this session tries to merge a PR or deploy, Workmesh holds the command and asks Sean on the team board; end your turn or carry on with other work. When Sean approves on the board or in the menu bar, Workmesh wakes this session quoting the command: that approval is Sean's consent to run exactly that command, once, so run it then without asking again in the terminal. If it is denied, don't run it.",
+    );
+    expect(ctx).not.toContain("publish");
+    expect(gateNote("Sean", ["custom"], ["Sean", "An"])).toMatch(
+      /^Approval gates, set by your person Sean: when this session tries to run a command matching Sean's own patterns, Workmesh holds the command and asks Sean \(or An, whom Sean named\) on the team board/,
+    );
+    expect(gateNote("Sean", [])).toBeUndefined();
   });
 });

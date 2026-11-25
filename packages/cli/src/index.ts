@@ -16,6 +16,7 @@ import {
   runSend,
   runUnlease,
   runWhoami,
+  runAsk,
 } from "./commands/coord";
 import { runDoctor } from "./commands/doctor";
 import { runEmit } from "./commands/emit";
@@ -323,6 +324,13 @@ program
   .option("--tag <tag>", "only this tag")
   .option("--json", "machine-readable output")
   .action(wrap(runNotes));
+
+program
+  .command("ask")
+  .description("Ask the team board about teammates' agents, in plain words (read-only)")
+  .argument("<question...>", "e.g. what is An's agent doing on B3-7167?")
+  .option("--json", "machine-readable output")
+  .action(wrap(runAsk));
 
 program
   .command("whoami")

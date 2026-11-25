@@ -489,6 +489,19 @@ export class HubForwarder {
     };
   }
 
+  /** v1 (SPEC §23): this session (`<source>:<id>`) is shared with the hub. */
+  isShared(key: string): boolean {
+    return this.sessions.get(key)?.shared === true;
+  }
+
+  /** v1: some shared top-level session is live (the coordination sync then polls fast). */
+  hasLiveShared(): boolean {
+    for (const t of this.sessions.values()) {
+      if (t.shared && !t.sub && t.current?.state !== "ended" && this.getSession(t.key) !== undefined) return true;
+    }
+    return false;
+  }
+
   // --- inclusion (§3.3 rules 1-2) --------------------------------------------
 
   private excluded(p: string): boolean {

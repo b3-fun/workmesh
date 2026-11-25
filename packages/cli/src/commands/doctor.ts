@@ -9,9 +9,10 @@ import {
   codexHooksPath,
   isCodexNotifyInstalled,
 } from "../adapters/codex";
+import { claudeJsonPath, isClaudeMcpInstalled, isCodexMcpInstalled } from "../adapters/mcp-install";
 import { hubShareLevel, loadConfig, loadConfigSafe } from "../lib/config";
 import type { Config } from "../lib/config";
-import { getHealth, getHubState, sinkConfigured } from "../lib/daemon-client";
+import { getHealth, getHubState, getTeamState, sinkConfigured } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
 import { createSink } from "../sinks";
 import {
@@ -184,6 +185,21 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     } catch {
       // daemon down: already reported above; an old daemon has no /hub
     }
+    try {
+      const team = await getTeamState(cfg.port);
+      const c = team.coord;
+      if (team.enabled && c === undefined) {
+        checks.push(warn("coordination", "the running daemon predates leases and holds — restart it: `workmesh restart`"));
+      } else if (c?.available === true) {
+        checks.push(ok("coordination", `on (leases, holds, messages)${c.holds.length ? `; ${c.holds.length} of your agents held` : ""}${c.unread.length ? `; ${c.unread.length} unread message(s)` : ""}`));
+      } else if (c?.available === false) {
+        checks.push(warn("coordination", "this hub has no leases or messages yet (it predates Workmesh v1); agents work as before"));
+      } else if (c) {
+        checks.push(warn("coordination", "not synced with the hub yet"));
+      }
+    } catch {
+      // daemon down or older: reported above
+    }
   }
 
   checks.push(
@@ -196,6 +212,18 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
       ? ok("codex hooks", `${codexHooksPath()} (trust them in Codex with /hooks)`)
       : warn("codex hooks", "not installed — run `workmesh setup`"),
   );
+  checks.push(
+    isClaudeMcpInstalled()
+      ? ok("claude code mcp", `workmesh in ${claudeJsonPath()} (user scope)`)
+      : warn("claude code mcp", "not registered — run `workmesh setup --hooks-only`"),
+  );
+  if (fs.existsSync(codexConfigPath())) {
+    checks.push(
+      isCodexMcpInstalled()
+        ? ok("codex mcp", `[mcp_servers.workmesh] in ${codexConfigPath()}`)
+        : warn("codex mcp", "not registered — run `workmesh setup --hooks-only`"),
+    );
+  }
   checks.push(
     isCodexNotifyInstalled()
       ? ok("codex notify", codexConfigPath())

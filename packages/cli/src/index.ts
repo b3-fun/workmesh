@@ -1,5 +1,18 @@
 import { Command } from "commander";
 import pkg from "../package.json";
+import {
+  runClaim,
+  runClaims,
+  runInbox,
+  runLease,
+  runLeases,
+  runMcp,
+  runNote,
+  runNotes,
+  runSend,
+  runUnlease,
+  runWhoami,
+} from "./commands/coord";
 import { runDoctor } from "./commands/doctor";
 import { runEmit } from "./commands/emit";
 import { runHook } from "./commands/hook";
@@ -52,7 +65,8 @@ program
     "--relay-url <url>",
     "relay to pair with (self-hosters: your own Worker URL)",
   )
-  .option("--hooks-only", "only install or refresh Claude Code and Codex hooks (no prompts, config untouched)")
+  .option("--hooks-only", "only install or refresh Claude Code and Codex hooks and the MCP server (no prompts, config untouched)")
+  .option("--no-mcp", "don't register the workmesh MCP server with Claude Code and Codex")
   .action(wrap(runSetup));
 
 program
@@ -168,6 +182,91 @@ hub
   .description("Never share anything under a directory, whatever its git remote")
   .argument("<dir>", "directory (absolute, relative, or ~/…)")
   .action(wrap(runHubExclude));
+
+// v1 Coordinate (SPEC §21, §23): through the daemon, which holds the hub token. Inside an agent session (its Bash),
+// these speak for that session; at a terminal, for you.
+program
+  .command("leases")
+  .description("Active file leases on your team: who holds which paths, for how long")
+  .option("--repo <owner/name>", "only this repo")
+  .option("--json", "machine-readable output")
+  .action(wrap(runLeases));
+
+program
+  .command("lease")
+  .description("Lease files, directories or globs for this agent session (edits by other sessions are refused)")
+  .argument("<paths...>", "paths or globs, absolute or relative to this directory")
+  .option("--reason <text>", "what you're doing, shown to teammates")
+  .option("--minutes <n>", "how long (1-240, default 30)")
+  .option("--repo <owner/name>", "the repo, when the paths are repo-relative")
+  .option("--json", "machine-readable output")
+  .action(wrap(runLease));
+
+program
+  .command("unlease")
+  .description("Release this agent session's leases (the paths given, or all of them)")
+  .argument("[paths...]", "paths you leased")
+  .option("--id <leaseId>", "one lease")
+  .option("--repo <owner/name>", "only this repo")
+  .option("--json", "machine-readable output")
+  .action(wrap(runUnlease));
+
+program
+  .command("claims")
+  .description("Linear issues claimed by your team's agents")
+  .option("--json", "machine-readable output")
+  .action(wrap(runClaims));
+
+program
+  .command("claim")
+  .description("Claim a Linear issue for this agent session (--release to let it go)")
+  .argument("<issue>", "e.g. B3-123")
+  .option("--note <text>", "what you're doing on it")
+  .option("--release", "release the claim instead")
+  .option("--json", "machine-readable output")
+  .action(wrap(runClaim));
+
+program
+  .command("send")
+  .description("Message a teammate or their agent (delivered at its next tool call)")
+  .argument("<to>", "a person (name, email or GitHub login), an agent's session name, or a hub session key")
+  .argument("<text...>", "the message")
+  .option("--kind <kind>", "person | agent | session, when <to> is ambiguous")
+  .option("--thread <id>", "reply in a thread")
+  .option("--json", "machine-readable output")
+  .action(wrap(runSend));
+
+program
+  .command("inbox")
+  .description("Messages waiting for this machine's agents (or, inside an agent session, for that session)")
+  .option("--json", "machine-readable output")
+  .action(wrap(runInbox));
+
+program
+  .command("note")
+  .description("Leave a note every teammate's agent can read")
+  .argument("<text...>", "the note")
+  .option("--tag <tag...>", "one-word tags")
+  .option("--json", "machine-readable output")
+  .action(wrap(runNote));
+
+program
+  .command("notes")
+  .description("Your team's newest shared notes")
+  .option("--tag <tag>", "only this tag")
+  .option("--json", "machine-readable output")
+  .action(wrap(runNotes));
+
+program
+  .command("whoami")
+  .description("Who you are on the team hub, and which agent session this is")
+  .option("--json", "machine-readable output")
+  .action(wrap(runWhoami));
+
+program
+  .command("mcp")
+  .description("Serve the team coordination tools over MCP (stdio), for Claude Code and Codex")
+  .action(wrap(runMcp));
 
 program
   .command("doctor")

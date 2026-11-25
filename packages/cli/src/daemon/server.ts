@@ -9,6 +9,9 @@ import { pauseRequestSchema, resolvePauseUntil } from "../lib/snooze";
 import type { OwnershipSummary } from "./pusher";
 import type { HubForwarderStatus } from "../hub/forwarder";
 import type { HubShareLevel, HubTeamAccepted } from "@workmesh/protocol";
+import type { HookAnswer } from "./coord-hooks";
+import { coordOpRequestSchema } from "./coord-ops";
+import type { CoordOpRequest, CoordOpResult } from "./coord-ops";
 
 /** GET /hub: the forwarder's status, or `enabled: false` when not paired. */
 export type HubState = ({ enabled: true } & HubForwarderStatus) | { enabled: false };
@@ -44,7 +47,20 @@ export type TeamState =
       error?: string;
       pollMs: number;
       team?: HubTeamAccepted;
+      /** v1 (SPEC §23): holds on this machine's agents and messages waiting for them. */
+      coord?: CoordSummary;
     };
+
+/** v1: what the menu bar shows about coordination (this machine's agents only). */
+export interface CoordSummary {
+  /** null: not asked yet; false: this hub has no coordination. */
+  available: boolean | null;
+  holds: Array<{ session: string; name?: string; by: string; reason?: string; since: number }>;
+  unread: Array<{ id: string; session?: string; name?: string; from: string; fromSession?: string; text: string; ts: number; delivered: boolean }>;
+}
+
+/** The header a hook sends with its event: the agent's hook event name (`PreToolUse`, …). */
+export const HOOK_HEADER = "x-workmesh-hook";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -80,6 +96,13 @@ export interface DaemonServerDeps {
   reloadHub?(): HubState;
   /** The team view (GET /team); `open` = the menu bar is showing it. */
   getTeam?(open: boolean): TeamState;
+  /**
+   * v1 (SPEC §23): apply a hook's event and answer the hook (a refusal, context for the agent) from cached state.
+   * Absent: hooks get `{ ok: true }` as before.
+   */
+  applyHookEvent?(event: SessionEvent, hook: string): HookAnswer | undefined;
+  /** v1: an MCP or CLI coordination call (POST /coord/op). */
+  coordOp?(req: CoordOpRequest): Promise<CoordOpResult>;
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
@@ -188,8 +211,33 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
           json(res, 400, { ok: false, error: detail });
           return;
         }
+        const hook = req.headers[HOOK_HEADER];
+        if (typeof hook === "string" && hook && deps.applyHookEvent) {
+          // Fail open: a coordination error must never cost the event or block the agent.
+          let answer: HookAnswer | undefined;
+          try {
+            answer = deps.applyHookEvent(parsed.data, hook.slice(0, 64));
+          } catch {
+            deps.applyEvent(parsed.data);
+          }
+          json(res, 200, answer ? { ok: true, coord: answer } : { ok: true });
+          return;
+        }
         deps.applyEvent(parsed.data);
         json(res, 200, { ok: true });
+        return;
+      }
+      if (method === "POST" && url === "/coord/op") {
+        if (!deps.coordOp) {
+          json(res, 404, { ok: false, error: "not found" });
+          return;
+        }
+        const parsed = await parseBody(req, coordOpRequestSchema);
+        if (!parsed.ok) {
+          json(res, 400, { ok: false, error: parsed.error });
+          return;
+        }
+        json(res, 200, await deps.coordOp(parsed.data));
         return;
       }
       if (method === "GET" && url === "/state") {

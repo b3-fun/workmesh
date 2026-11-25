@@ -189,9 +189,11 @@ struct TeamState: Decodable {
     let pollMs: Double?
     /// Absent until the daemon's first good read.
     let team: TeamView?
+    /// v1: holds on this Mac's agents and messages waiting for them (absent from older daemons).
+    let coord: CoordState?
 
     private enum K: String, CodingKey {
-        case enabled, hubUrl, boardUrl, hubName, deviceId, share, connected, halted, available, fetchedAt, error, pollMs, team
+        case enabled, hubUrl, boardUrl, hubName, deviceId, share, connected, halted, available, fetchedAt, error, pollMs, team, coord
     }
 
     init(from decoder: Decoder) throws {
@@ -209,6 +211,7 @@ struct TeamState: Decodable {
         error = c.text(.error)
         pollMs = c.lenient(Double.self, .pollMs)
         team = c.lenient(TeamView.self, .team)
+        coord = c.lenient(CoordState.self, .coord)
     }
 
     /// What the footer names: the daemon's hub name, else the host without a
@@ -228,6 +231,85 @@ struct TeamState: Decodable {
               url.scheme == "https" || url.scheme == "http"
         else { return nil }
         return url
+    }
+}
+
+// MARK: - Coordination (v1, inside GET /team)
+//
+// Holds a teammate put on this Mac's agents, and messages waiting for them (an
+// agent gets its messages at its next tool call; these are the ones it hasn't
+// reached yet). Read leniently, like the rest of /team.
+
+struct CoordState: Decodable {
+    /// nil = not synced yet; false = the hub has no coordination.
+    let available: Bool?
+    let holds: [CoordHold]
+    let unread: [CoordMessage]
+
+    private enum K: String, CodingKey { case available, holds, unread }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        available = c.lenient(Bool.self, .available)
+        holds = c.lossy(CoordHold.self, .holds)
+        unread = c.lossy(CoordMessage.self, .unread)
+    }
+
+    init(available: Bool?, holds: [CoordHold], unread: [CoordMessage]) {
+        self.available = available
+        self.holds = holds
+        self.unread = unread
+    }
+}
+
+struct CoordHold: Decodable, Identifiable {
+    /// The held session's local key.
+    let session: String
+    let name: String?
+    let by: String
+    let reason: String?
+    let since: Double?
+    var id: String { session }
+
+    private enum K: String, CodingKey { case session, name, by, reason, since }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        guard let session = c.text(.session) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "hold without a session"))
+        }
+        self.session = session
+        name = c.text(.name)
+        by = c.text(.by) ?? "A teammate"
+        reason = c.text(.reason)
+        since = c.lenient(Double.self, .since)
+    }
+}
+
+struct CoordMessage: Decodable, Identifiable {
+    let id: String
+    /// The recipient session's local key, and its name.
+    let session: String?
+    let name: String?
+    let from: String
+    let fromSession: String?
+    let text: String
+    let ts: Double?
+
+    private enum K: String, CodingKey { case id, session, name, from, fromSession, text, ts }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        guard let id = c.text(.id), let text = c.text(.text) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "message without id or text"))
+        }
+        self.id = id
+        self.text = text
+        session = c.text(.session)
+        name = c.text(.name)
+        from = c.text(.from) ?? "A teammate"
+        fromSession = c.text(.fromSession)
+        ts = c.lenient(Double.self, .ts)
     }
 }
 

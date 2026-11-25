@@ -44,12 +44,17 @@ const ANSWERABLE = new Set(["PreToolUse", "PostToolUse", "UserPromptSubmit", "Se
  * match field for field): a PreToolUse refusal as `permissionDecision: "deny"` with its reason, context as
  * `additionalContext`. Never `allow`: Workmesh only ever refuses or informs, the agent's own permissions stand.
  */
-export function hookOutput(hookEvent: string | undefined, answer: HookAnswer | undefined): string | undefined {
+export function hookOutput(
+  hookEvent: string | undefined,
+  answer: HookAnswer | undefined,
+  agent: "claude-code" | "codex" = "claude-code",
+): string | undefined {
   if (!answer || !hookEvent || !ANSWERABLE.has(hookEvent)) return undefined;
   const out: Record<string, string> = { hookEventName: hookEvent };
   if (answer.deny && hookEvent === "PreToolUse") {
     out.permissionDecision = "deny";
-    out.permissionDecisionReason = answer.deny;
+    // Codex shows "Command blocked by PreToolUse hook: <reason>. Command: <command>": its own period follows ours.
+    out.permissionDecisionReason = agent === "codex" ? answer.deny.replace(/\.\s*$/, "") : answer.deny;
   }
   if (answer.context) out.additionalContext = answer.context;
   if (Object.keys(out).length === 1) return undefined;
@@ -117,7 +122,7 @@ export async function runHook(source: string, payload?: string): Promise<void> {
     if (!(await ensureDaemon(config, HOOK_TIMING))) return;
     // The daemon answers from cached state (fails open), so the hook's short timeout costs no answer that matters.
     const res = await postEvent(config.port, fitEventBody(event), hook, HOOK_TIMING.requestTimeoutMs, meta);
-    const out = hookOutput(hook, res.coord);
+    const out = hookOutput(hook, res.coord, source === "codex-hooks" ? "codex" : "claude-code");
     // Synchronous: the process exits right after, and a pipe write could be cut short.
     if (out) fs.writeSync(1, `${out}\n`);
   } catch {

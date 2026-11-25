@@ -10,13 +10,30 @@ import type { CoordCaller, CoordOp, CoordOpResult } from "../daemon/coord-ops";
 
 export const MCP_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 
+/** MCP tool annotations (spec 2025-03-26+): hints a client may use to decide whether a call needs the person's OK. */
+interface ToolAnnotations {
+  readOnlyHint: boolean;
+  destructiveHint?: boolean;
+  openWorldHint: boolean;
+}
+
 interface ToolDef {
   name: CoordOp;
   description: string;
   inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[]; additionalProperties: false };
+  annotations: ToolAnnotations;
 }
 
 const s = (description: string) => ({ type: "string", description });
+
+/**
+ * Every tool talks to the team hub only (a closed domain) and none deletes anything. Codex reads these hints: with its
+ * default `auto` approval it runs a tool that is read-only, or neither destructive nor open-world, without asking, and
+ * under `approval_policy = "never"` (`codex exec`, so every handoff run) it refuses one that would need asking. Without
+ * them every Workmesh tool waited on a terminal prompt and a handoff run could use none (live, codex-cli 0.164).
+ */
+const READ: ToolAnnotations = { readOnlyHint: true, openWorldHint: false };
+const TEAM_WRITE: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 
 /** Tool descriptions stay short and exact: agents read them on every turn. */
 export const MCP_TOOLS: readonly ToolDef[] = [
@@ -24,11 +41,13 @@ export const MCP_TOOLS: readonly ToolDef[] = [
     name: "whoami",
     description: "Who you are on Workmesh: your person, this session, the team hub, and whether coordination is on.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: READ,
   },
   {
     name: "roster",
     description: "Who on the team is working now: each person's agent sessions (name, state, repo), plus active claims.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: READ,
   },
   {
     name: "send",
@@ -46,11 +65,13 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       required: ["to", "text"],
       additionalProperties: false,
     },
+    annotations: TEAM_WRITE,
   },
   {
     name: "inbox",
     description: "Messages teammates sent this session that haven't reached you yet (they also arrive on their own at tool calls).",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: READ,
   },
   {
     name: "claim",
@@ -62,11 +83,13 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       required: ["issue"],
       additionalProperties: false,
     },
+    annotations: TEAM_WRITE,
   },
   {
     name: "release",
     description: "Release a Linear issue you claimed.",
     inputSchema: { type: "object", properties: { issue: s("The Linear issue id.") }, required: ["issue"], additionalProperties: false },
+    annotations: TEAM_WRITE,
   },
   {
     name: "lease",
@@ -83,6 +106,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       required: ["paths"],
       additionalProperties: false,
     },
+    annotations: TEAM_WRITE,
   },
   {
     name: "unlease",
@@ -96,11 +120,13 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       },
       additionalProperties: false,
     },
+    annotations: TEAM_WRITE,
   },
   {
     name: "leases",
     description: "Active file leases on the team: who holds which paths, and for how long.",
     inputSchema: { type: "object", properties: { repo: s("Only this repo, owner/name (optional).") }, additionalProperties: false },
+    annotations: READ,
   },
   {
     name: "note",
@@ -114,11 +140,13 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       required: ["text"],
       additionalProperties: false,
     },
+    annotations: TEAM_WRITE,
   },
   {
     name: "notes",
     description: "The team's newest shared notes.",
     inputSchema: { type: "object", properties: { tag: s("Only notes with this tag (optional).") }, additionalProperties: false },
+    annotations: READ,
   },
   // v3 Memory (SPEC §36): the team's accepted knowledge. Agents propose; a person accepts.
   {
@@ -198,6 +226,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       required: ["to", "task"],
       additionalProperties: false,
     },
+    annotations: TEAM_WRITE,
   },
   {
     name: "handoffs",
@@ -211,6 +240,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       },
       additionalProperties: false,
     },
+    annotations: TEAM_WRITE,
   },
   // Ask (SPEC §29): read-only questions to the board's Ask.
   {
@@ -223,6 +253,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
       required: ["question"],
       additionalProperties: false,
     },
+    annotations: READ,
   },
 ];
 

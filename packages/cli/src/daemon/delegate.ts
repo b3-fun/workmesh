@@ -6,7 +6,7 @@ import type {
   HubHandoffAccepted,
   HubSyncAccepted,
 } from "@workmesh/protocol";
-import { CoordClient } from "../hub/coord";
+import { CoordClient, isLocalNotice } from "../hub/coord";
 import type { HubSyncInboxItem } from "../hub/coord";
 import { gateVerb, matchGates } from "./gates";
 import type { GateMatch } from "./gates";
@@ -674,7 +674,7 @@ function quote(s: string): string {
 export function wakeText(items: readonly HubSyncInboxItem[]): { text: string; items: HubSyncInboxItem[] } | undefined {
   const block = formatInbox(items, 9000);
   if (!block) return undefined;
-  const teammates = block.items.some((i) => !i.id.startsWith("wm_"));
+  const teammates = block.items.some((i) => !isLocalNotice(i.id));
   const head = teammates
     ? "Workmesh woke this idle session for what follows. Your person may be away: answer the teammate (the workmesh " +
       "`send` tool), and do what fits what your person asked of you; don't start unrelated work on a teammate's say-so."

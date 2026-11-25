@@ -1,16 +1,30 @@
 import Foundation
 import UserNotifications
 
-/// Posts a macOS notification when a session newly needs you. Off by default;
-/// the menu's Settings toggle turns it on (and asks for permission then).
+/// Posts a macOS notification when an agent newly needs you: a local waiting
+/// session, or a needsMe item the hub lists from another of your machines. On
+/// unless you turn it off in Settings.
 ///
-/// A "waiting episode" is a session key plus when its waiting state began, so
-/// one wait notifies once, and the sessions already waiting when the app
-/// launches don't all fire at once.
+/// One notification per waiting episode (session plus when the wait began),
+/// counted once across both sources: the local row and the hub's item for the
+/// same session are one wait, and a wait seen first on one side and then only
+/// on the other (dismissed here, still listed by the hub) isn't a new one.
+/// Waits already present when the app starts don't fire; each source is primed
+/// by its first read.
 @MainActor
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
-    private var seen = Set<String>()
-    private var primed = false
+    private struct Seen {
+        var since: Double
+        var local: Bool
+        var lastSeen: Date
+    }
+
+    /// By NeedItem.key. Kept a while after a wait drops out of view, so a row
+    /// that flickers out of one read and back doesn't notify twice.
+    private var seen: [String: Seen] = [:]
+    private var primedLocal = false
+    private var primedTeam = false
+    private let forgetAfter: TimeInterval = 120
 
     /// UNUserNotificationCenter traps outside an app bundle (e.g. `swift run`).
     private var center: UNUserNotificationCenter? {
@@ -26,23 +40,36 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center?.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    func update(sessions: [AgentSession], enabled: Bool) {
-        let waiting = sessions.filter { $0.state == "waiting" && $0.foldedInto == nil }
-        var current = Set<String>()
-        for s in waiting {
-            let episode = "\(s.key)@\(Int(s.stateSince ?? s.updatedAt))"
-            current.insert(episode)
-            if enabled && primed && !seen.contains(episode) { post(s, id: episode) }
+    /// Called with every fresh /state or /team read. `teamReady` once the
+    /// daemon has a team view (so its needsMe items count as "already there").
+    func update(needs: [NeedItem], teamReady: Bool, enabled: Bool) {
+        let now = Date()
+        for n in needs {
+            var fresh = true
+            if let prev = seen[n.key] {
+                // Same side, later start: a new wait. Other side: the same wait.
+                fresh = prev.local == n.isLocal && n.since > prev.since + 1000
+            }
+            let primed = n.isLocal ? primedLocal : primedTeam
+            if fresh && primed && enabled { post(n) }
+            seen[n.key] = Seen(since: n.since, local: n.isLocal, lastSeen: now)
         }
-        seen = current
-        primed = true
+        seen = seen.filter { now.timeIntervalSince($0.value.lastSeen) < forgetAfter }
+        primedLocal = true
+        if teamReady { primedTeam = true }
     }
 
-    private func post(_ s: AgentSession, id: String) {
+    private func post(_ n: NeedItem) {
         let content = UNMutableNotificationContent()
-        content.title = s.project ?? s.name ?? "An agent"
-        content.body = s.name.map { "Needs your input · \($0)" } ?? "Needs your input"
+        content.title = n.title
+        let reason = n.reason ?? "Needs your input"
+        if let name = n.name, name != n.title {
+            content.body = "\(reason) · \(name)"
+        } else {
+            content.body = reason
+        }
         content.sound = .default
+        let id = "\(n.key)@\(Int(n.since))"
         center?.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
     }
 

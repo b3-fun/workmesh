@@ -60,6 +60,18 @@ struct DaemonClient {
         return try JSONDecoder().decode(DaemonConfig.self, from: data)
     }
 
+    /// The team view the daemon caches from the hub. `open` while the menu is
+    /// showing, so the daemon reads the hub more often. nil for a daemon that
+    /// predates the endpoint (404): the menu then hides the team UI.
+    func fetchTeam(open: Bool) async throws -> TeamState? {
+        do {
+            let data = try await request("GET", open ? "/team?open=1" : "/team")
+            return try JSONDecoder().decode(TeamState.self, from: data)
+        } catch DaemonError.http(404) {
+            return nil
+        }
+    }
+
     @discardableResult
     func pause() async throws -> Data { try await request("POST", "/pause") }
 

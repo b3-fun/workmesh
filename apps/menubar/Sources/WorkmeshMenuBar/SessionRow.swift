@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// One action on a session row, shown both on click (a native pop-up menu)
-/// and on right-click (SwiftUI context menu).
+/// One action on a row, shown both on click (a native pop-up menu) and on
+/// right-click (SwiftUI context menu).
 struct RowAction: Identifiable {
     let id = UUID()
     let title: String
@@ -23,23 +23,34 @@ extension SessionGroup {
     }
 }
 
-/// A live session: project first, then what it's doing; source as a glyph,
-/// fan-out as "+N", time in the current state on the right.
-struct SessionRow: View {
-    let session: AgentSession
-    let group: SessionGroup
-    let now: Date
+/// The one row layout every agent row uses: the source glyph, a title with
+/// `+N` fan-out and the time in its state, then what it's doing and a quieter
+/// name. Local sessions, waits from other machines and teammates' sessions
+/// all render through it.
+struct AgentRow: View {
+    let source: String
+    let tint: Color
+    let title: String
+    var subagents: Int?
+    let elapsed: String
+    let detail: String
+    var trailingDetail: String?
+    /// A small mark before the time (e.g. "on another machine").
+    var badge: (symbol: String, help: String)?
+    let tooltip: String
     let actions: [RowAction]
+    var dimmed = false
+    /// Extra leading space, for rows nested under a person.
+    var inset: CGFloat = 0
     @State private var hovering = false
 
     var body: some View {
         Button {
-            ActionMenu.popUp(actions)
+            if !actions.isEmpty { ActionMenu.popUp(actions) }
         } label: {
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: Self.glyph(for: session.source))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(group.tint)
+                AgentGlyph(source: source, size: 12)
+                    .foregroundStyle(tint)
                     .frame(width: 14, height: 16)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 5) {
@@ -47,7 +58,7 @@ struct SessionRow: View {
                             .font(.system(size: 13, weight: .medium))
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        if let n = session.subagents, n > 0 {
+                        if let n = subagents, n > 0 {
                             Text("+\(n)")
                                 .font(.system(size: 10, weight: .semibold))
                                 .monospacedDigit()
@@ -58,18 +69,24 @@ struct SessionRow: View {
                                 .help("\(n) more agent\(n == 1 ? "" : "s") under this session")
                         }
                         Spacer(minLength: 8)
-                        Text(Self.elapsed(since: session.stateSince ?? session.updatedAt, now: now))
+                        if let badge {
+                            Image(systemName: badge.symbol)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.tertiary)
+                                .help(badge.help)
+                        }
+                        Text(elapsed)
                             .font(.system(size: 11))
                             .monospacedDigit()
                             .foregroundStyle(.tertiary)
                     }
                     HStack(spacing: 4) {
-                        Text(activity)
+                        Text(detail)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .layoutPriority(1)
-                        if let name = session.name, name != title {
-                            Text("· \(name)")
+                        if let trailingDetail {
+                            Text("· \(trailingDetail)")
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1)
                         }
@@ -77,16 +94,17 @@ struct SessionRow: View {
                     .font(.system(size: 11))
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.leading, 8 + inset)
+            .padding(.trailing, 8)
             .padding(.vertical, 5)
             .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.primary.opacity(hovering ? 0.08 : 0))
+                    .fill(Color.primary.opacity(hovering && !actions.isEmpty ? 0.08 : 0))
             )
         }
         .buttonStyle(.plain)
-        .opacity(group == .idle ? 0.75 : 1)
+        .opacity(dimmed ? 0.75 : 1)
         .onHover { hovering = $0 }
         .help(tooltip)
         .contextMenu {
@@ -101,11 +119,48 @@ struct SessionRow: View {
         }
     }
 
+    /// "<1m", "4m", "1h 5m", "2d". Minute resolution keeps the list still.
+    static func elapsed(since ms: Double, now: Date) -> String {
+        let secs = max(0, now.timeIntervalSince1970 - ms / 1000)
+        let mins = Int(secs / 60)
+        if mins < 1 { return "<1m" }
+        if mins < 60 { return "\(mins)m" }
+        let hours = mins / 60
+        if hours < 24 { return mins % 60 == 0 ? "\(hours)h" : "\(hours)h \(mins % 60)m" }
+        return "\(hours / 24)d"
+    }
+}
+
+/// A live session on this Mac: project first, then what it's doing.
+/// `reason` replaces the activity line with the hub's waiting reason.
+struct SessionRow: View {
+    let session: AgentSession
+    let group: SessionGroup
+    let now: Date
+    var reason: String?
+    let actions: [RowAction]
+
+    var body: some View {
+        AgentRow(
+            source: session.source,
+            tint: group.tint,
+            title: title,
+            subagents: session.subagents,
+            elapsed: AgentRow.elapsed(since: session.stateSince ?? session.updatedAt, now: now),
+            detail: activity,
+            trailingDetail: session.name == title ? nil : session.name,
+            tooltip: tooltip,
+            actions: actions,
+            dimmed: group == .idle
+        )
+    }
+
     private var title: String {
         session.project ?? session.name ?? String(session.sessionId.prefix(8))
     }
 
     private var activity: String {
+        if let reason { return reason }
         var text = session.activity ?? {
             switch group {
             case .needsYou: return "needs input"
@@ -122,27 +177,6 @@ struct SessionRow: View {
         lines.append([session.name, session.source].compactMap { $0 }.joined(separator: " · "))
         if let cwd = session.cwd { lines.append(cwd) }
         return lines.joined(separator: "\n")
-    }
-
-    static func glyph(for source: String) -> String {
-        switch source {
-        case "claude-code": return "asterisk"
-        case "codex": return "chevron.left.forwardslash.chevron.right"
-        case "workflow": return "point.3.connected.trianglepath.dotted"
-        case "gemini-cli": return "sparkle"
-        default: return "terminal"
-        }
-    }
-
-    /// "<1m", "4m", "1h 5m", "2d". Minute resolution keeps the list still.
-    static func elapsed(since ms: Double, now: Date) -> String {
-        let secs = max(0, now.timeIntervalSince1970 - ms / 1000)
-        let mins = Int(secs / 60)
-        if mins < 1 { return "<1m" }
-        if mins < 60 { return "\(mins)m" }
-        let hours = mins / 60
-        if hours < 24 { return mins % 60 == 0 ? "\(hours)h" : "\(hours)h \(mins % 60)m" }
-        return "\(hours / 24)d"
     }
 }
 

@@ -1,13 +1,17 @@
 import SwiftUI
 
-/// The dropdown: what Slack shows (and the sync control) on top, the live
-/// session list grouped by what it needs from you, settings tucked in a menu.
+/// The dropdown: what Slack shows (and the sync control) on top; then what
+/// needs you (this Mac and your other machines), your sessions here, and your
+/// team; the hub connection, Open board and settings at the bottom.
 struct MenuContent: View {
     @ObservedObject var model: AppModel
     @AppStorage("idleExpanded") private var idleExpanded = false
+    @State private var listHeight: CGFloat = 0
 
     /// Beyond this many visible rows the list scrolls.
     private let maxRowsBeforeScroll = 9
+    private let maxListHeight: CGFloat = 460
+    static let defaultHub = "https://workmesh.b3os.org"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,6 +26,8 @@ struct MenuContent: View {
             footer
         }
         .frame(width: 340)
+        .onAppear { model.menuOpen = true }
+        .onDisappear { model.menuOpen = false }
     }
 
     // MARK: - Header: the Slack line + sync control
@@ -105,35 +111,83 @@ struct MenuContent: View {
         }
     }
 
-    // MARK: - Session list
+    // MARK: - The list: needs you, this Mac, the team
+
+    /// What the team area shows, read straight off GET /team.
+    private enum TeamArea {
+        case none // older daemon, or no team view yet
+        case connectHint // not paired with a hub
+        case reconnect(String) // the hub rejected this device's token
+        case note(String, help: String?) // one quiet line
+        case people(TeamView, [TeamPerson])
+    }
+
+    private var teamArea: TeamArea {
+        guard let t = model.team else { return .none }
+        guard t.enabled else { return .connectHint }
+        if t.halted { return .reconnect("workmesh hub connect \(t.hubUrl ?? Self.defaultHub)") }
+        if t.available == false { return .note("This hub has no team view yet", help: nil) }
+        guard let v = t.team else {
+            if let e = t.error { return .note("Team view unavailable", help: e) }
+            return .none
+        }
+        return .people(v, v.teammates)
+    }
 
     private func list(_ s: DaemonState) -> some View {
+        let now = Date()
+        let hubNow = hubClock(now)
+        let area = teamArea
+        var liveTeam: TeamView?
+        if case .people(let v, _) = area { liveTeam = v }
+
         let visible = s.snapshot.sessions.filter { $0.foldedInto == nil }
-        let groups = SessionGroup.allCases.compactMap { g -> (SessionGroup, [AgentSession])? in
+        let needs = NeedItem.merge(local: visible, team: liveTeam, deviceId: model.team?.deviceId)
+        let groups = [SessionGroup.working, .background, .idle].compactMap { g -> (SessionGroup, [AgentSession])? in
             let rows = Self.order(visible.filter { SessionGroup.of($0) == g }, in: g)
             return rows.isEmpty ? nil : (g, rows)
         }
-        let rowCount = groups.reduce(0) { n, g in
+
+        var rowCount = needs.count + groups.reduce(0) { n, g in
             n + (g.0 == .idle && !idleExpanded ? 0 : g.1.count)
         }
+        switch area {
+        case .none: break
+        case .connectHint, .reconnect, .note: rowCount += 1
+        case .people(let v, let people):
+            rowCount += max(1, people.count)
+            for p in people where model.expandedPeople.contains(p.name) { rowCount += v.sessions(of: p).count }
+        }
+
         let content = VStack(alignment: .leading, spacing: 0) {
-            if groups.isEmpty {
+            if needs.isEmpty && groups.isEmpty {
                 Text("No agents running")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 18)
             }
-            ForEach(groups, id: \.0) { group, rows in
-                section(group, rows)
+            if !needs.isEmpty {
+                sectionHeader("Needs you", count: needs.count > 1 ? "\(needs.count)" : nil, urgent: true)
+                ForEach(needs) { needRow($0, now: now, hubNow: hubNow) }
             }
+            ForEach(groups, id: \.0) { group, rows in
+                section(group, rows, now)
+            }
+            teamSection(area, hubNow: hubNow)
         }
         .padding(.horizontal, 6)
         .padding(.bottom, 6)
 
         return Group {
             if rowCount > maxRowsBeforeScroll {
-                ScrollView { content }.frame(height: 460)
+                ScrollView {
+                    content.background(GeometryReader { g in
+                        Color.clear.preference(key: ListHeightKey.self, value: g.size.height)
+                    })
+                }
+                .frame(height: min(listHeight > 0 ? listHeight : maxListHeight, maxListHeight))
+                .onPreferenceChange(ListHeightKey.self) { listHeight = $0 }
             } else {
                 content
             }
@@ -141,31 +195,30 @@ struct MenuContent: View {
     }
 
     @ViewBuilder
-    private func section(_ group: SessionGroup, _ rows: [AgentSession]) -> some View {
-        let now = Date()
+    private func section(_ group: SessionGroup, _ rows: [AgentSession], _ now: Date) -> some View {
         if group == .idle {
             Button {
                 idleExpanded.toggle()
             } label: {
-                sectionHeader(group, count: rows.count, chevron: idleExpanded ? "chevron.down" : "chevron.right")
+                sectionHeader(group.title, count: "\(rows.count)", chevron: idleExpanded ? "chevron.down" : "chevron.right")
             }
             .buttonStyle(.plain)
             if idleExpanded {
                 ForEach(rows) { row($0, group, now) }
             }
         } else {
-            sectionHeader(group, count: rows.count, chevron: nil)
+            sectionHeader(group.title, count: rows.count > 1 ? "\(rows.count)" : nil)
             ForEach(rows) { row($0, group, now) }
         }
     }
 
-    private func sectionHeader(_ group: SessionGroup, count: Int, chevron: String?) -> some View {
+    private func sectionHeader(_ title: String, count: String?, urgent: Bool = false, chevron: String? = nil) -> some View {
         HStack(spacing: 4) {
-            Text(group.title)
+            Text(title)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(group == .needsYou ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
-            if count > 1 || chevron != nil {
-                Text("\(count)")
+                .foregroundStyle(urgent ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+            if let count {
+                Text(count)
                     .font(.system(size: 11))
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
@@ -187,6 +240,30 @@ struct MenuContent: View {
         SessionRow(session: s, group: group, now: now, actions: actions(for: s, group))
     }
 
+    /// A wait on me: the local row when it's on this Mac (with the hub's reason
+    /// when the hub has one), else the hub's item from another machine.
+    @ViewBuilder
+    private func needRow(_ n: NeedItem, now: Date, hubNow: Date) -> some View {
+        if let s = n.local {
+            SessionRow(session: s, group: .needsYou, now: now, reason: n.remote?.reason,
+                       actions: actions(for: s, .needsYou))
+        } else if let r = n.remote {
+            AgentRow(
+                source: n.source,
+                tint: .orange,
+                title: n.title,
+                elapsed: AgentRow.elapsed(since: n.since, now: hubNow),
+                detail: r.reason ?? "needs input",
+                trailingDetail: r.name == n.title ? nil : r.name,
+                badge: (symbol: "desktopcomputer", help: "On another of your machines"),
+                tooltip: [n.title + " — " + (r.reason ?? "needs input"),
+                          [r.name, r.source, r.repo].compactMap { $0 }.joined(separator: " · "),
+                          "On another of your machines"].filter { !$0.isEmpty }.joined(separator: "\n"),
+                actions: hubActions(name: r.name)
+            )
+        }
+    }
+
     private func actions(for s: AgentSession, _ group: SessionGroup) -> [RowAction] {
         var out: [RowAction] = []
         if let name = s.name {
@@ -206,6 +283,18 @@ struct MenuContent: View {
         return out
     }
 
+    /// Rows the hub knows about but this Mac doesn't: copy the name, open the board.
+    private func hubActions(name: String?) -> [RowAction] {
+        var out: [RowAction] = []
+        if let name, !name.isEmpty {
+            out.append(RowAction(title: "Copy Name", systemImage: "doc.on.doc") { model.copy(name) })
+        }
+        if model.team?.boardLink != nil {
+            out.append(RowAction(title: "Open Board", systemImage: "arrow.up.right.square") { model.openBoard() })
+        }
+        return out
+    }
+
     /// Stable order so rows don't jump on every tool call: the longest wait
     /// first under "Needs you", otherwise by name.
     static func order(_ rows: [AgentSession], in group: SessionGroup) -> [AgentSession] {
@@ -217,6 +306,88 @@ struct MenuContent: View {
             let b = ($1.project ?? $1.name ?? "").lowercased()
             return a == b ? $0.startedAt < $1.startedAt : a < b
         }
+    }
+
+    // MARK: - Team
+
+    @ViewBuilder
+    private func teamSection(_ area: TeamArea, hubNow: Date) -> some View {
+        switch area {
+        case .none:
+            EmptyView()
+        case .connectHint:
+            commandHint("Connect a hub", "workmesh hub connect \(Self.defaultHub)")
+        case .reconnect(let command):
+            commandHint("Reconnect", command)
+        case .note(let text, let help):
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+                .help(help ?? text)
+        case .people(let v, let people):
+            let online = people.filter(\.online).count
+            sectionHeader("Team", count: online > 0 ? "\(online) online" : nil)
+            if people.isEmpty {
+                Text("No teammates on this hub yet")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+            }
+            ForEach(people) { p in
+                let sessions = v.sessions(of: p)
+                let expanded = model.expandedPeople.contains(p.name) && !sessions.isEmpty
+                PersonRow(person: p, expanded: expanded, expandable: !sessions.isEmpty) {
+                    model.togglePerson(p.name)
+                }
+                if expanded {
+                    ForEach(sessions) { s in
+                        TeamSessionRow(session: s, now: hubNow, actions: hubActions(name: s.name))
+                    }
+                }
+            }
+        }
+    }
+
+    /// A command with a copy button, under a short label: pairing and
+    /// re-pairing hints. The command keeps to one line (a URL never splits).
+    private func commandHint(_ label: String, _ command: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text(command)
+                    .font(.system(size: 10, design: .monospaced))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                Spacer(minLength: 0)
+                Button {
+                    model.copy(command)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.borderless)
+                .help("Copy")
+                .accessibilityLabel("Copy command")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+    }
+
+    /// The hub's clock, from its serverNow at the daemon's last read, so the
+    /// ages of team rows don't depend on this Mac's clock.
+    private func hubClock(_ now: Date) -> Date {
+        guard let t = model.team, let server = t.team?.serverNow, let fetched = t.fetchedAt else { return now }
+        return now.addingTimeInterval((server - fetched) / 1000)
     }
 
     // MARK: - Offline
@@ -245,48 +416,30 @@ struct MenuContent: View {
         .padding(14)
     }
 
-    // MARK: - Footer: settings menu + quit
+    // MARK: - Footer: settings, hub status, Open board, quit
 
     private var footer: some View {
-        HStack {
-            Menu {
-                if let c = model.config {
-                    Picker("Slack Detail", selection: Binding(
-                        get: { c.granularity },
-                        set: { model.setGranularity($0) }
-                    )) {
-                        Text("Off").tag("off")
-                        Text("Presence").tag("presence")
-                        Text("Count").tag("count")
-                        Text("Activity").tag("activity")
-                    }
-                    Picker("When My Status Is Set", selection: Binding(
-                        get: { c.statusPolicy },
-                        set: { model.setPolicy($0) }
-                    )) {
-                        Text("Leave It").tag("respect")
-                        Text("Replace It, Then Restore").tag("overwrite")
-                    }
-                    Toggle("Lead With Repo Name", isOn: Binding(
-                        get: { c.repoPrefix },
-                        set: { model.setRepoPrefix($0) }
-                    ))
-                    Divider()
-                }
-                Toggle("Notify When an Agent Needs Me", isOn: $model.notifyOnNeedsYou)
-                Divider()
-                Button("Open Config File…") { model.openConfigFile() }
-            } label: {
-                Image(systemName: "gearshape")
+        HStack(spacing: 10) {
+            settingsMenu
+            if model.reachable, let t = model.team, t.enabled {
+                hubStatus(t)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Settings")
-            .accessibilityLabel("Settings")
-
-            Spacer()
-
+            Spacer(minLength: 6)
+            if model.reachable, let t = model.team, t.enabled, let url = t.boardLink {
+                Button {
+                    model.openBoard()
+                } label: {
+                    HStack(spacing: 2) {
+                        Text("Open board")
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.workmeshAccent)
+                .help(url.absoluteString)
+            }
             Button("Quit") { model.quit() }
                 .buttonStyle(.plain)
                 .font(.system(size: 12))
@@ -297,6 +450,77 @@ struct MenuContent: View {
         .padding(.vertical, 8)
     }
 
+    /// Dot + "Connected to b3os.org" over "Sharing conversation".
+    private func hubStatus(_ t: TeamState) -> some View {
+        let label: String
+        var live = false
+        if t.halted {
+            label = "Reconnect needed"
+        } else if t.connected == false && (t.fetchedAt == nil || t.error != nil) {
+            // No good send and no good team read: a fresh team read alone
+            // proves the hub answers (sends start a little after launch).
+            label = "Hub unreachable"
+        } else {
+            label = "Connected to \(t.hubLabel)"
+            live = true
+        }
+        var help = [t.hubUrl, t.error].compactMap { $0 }
+        if t.halted { help.append("The hub no longer accepts this Mac. Pair it again.") }
+        return HStack(spacing: 6) {
+            PresenceDot(online: live)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(label)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                if let share = t.share {
+                    Text("Sharing \(share)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .lineLimit(1)
+        }
+        .help(help.joined(separator: "\n"))
+    }
+
+    private var settingsMenu: some View {
+        Menu {
+            if let c = model.config {
+                Picker("Slack Detail", selection: Binding(
+                    get: { c.granularity },
+                    set: { model.setGranularity($0) }
+                )) {
+                    Text("Off").tag("off")
+                    Text("Presence").tag("presence")
+                    Text("Count").tag("count")
+                    Text("Activity").tag("activity")
+                }
+                Picker("When My Status Is Set", selection: Binding(
+                    get: { c.statusPolicy },
+                    set: { model.setPolicy($0) }
+                )) {
+                    Text("Leave It").tag("respect")
+                    Text("Replace It, Then Restore").tag("overwrite")
+                }
+                Toggle("Lead With Repo Name", isOn: Binding(
+                    get: { c.repoPrefix },
+                    set: { model.setRepoPrefix($0) }
+                ))
+                Divider()
+            }
+            Toggle("Notify When an Agent Needs Me", isOn: $model.notifyOnNeedsYou)
+            Divider()
+            Button("Open Config File…") { model.openConfigFile() }
+        } label: {
+            Image(systemName: "gearshape")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Settings")
+        .accessibilityLabel("Settings")
+    }
+
     private static func clock(_ date: Date) -> String {
         let f = DateFormatter()
         f.timeStyle = .short
@@ -304,4 +528,9 @@ struct MenuContent: View {
         f.doesRelativeDateFormatting = true
         return f.string(from: date)
     }
+}
+
+private struct ListHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

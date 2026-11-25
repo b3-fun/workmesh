@@ -2,18 +2,22 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   areClaudeHooksInstalled,
+  claudeHookNodes,
   claudeSettingsPath,
   isClaudeWakeInstalled,
-  staleClaudeHookNodes,
 } from "../adapters/claude-code";
 import {
   areCodexHooksInstalled,
   codexConfigPath,
   codexHooksPath,
+  ourCodexHookCommands,
 } from "../adapters/codex";
 import { askCodexHooks, codexNotifyState, codexTrustFromConfig, codexTrustFromList, describeCodexTrust } from "../adapters/codex-doctor";
 import type { CodexHookTrust } from "../adapters/codex-doctor";
-import { claudeJsonPath, isClaudeMcpInstalled, isCodexMcpInstalled, mcpServerCommand } from "../adapters/mcp-install";
+import { claudeJsonPath, claudeMcpCommand, codexMcpCommand, isClaudeMcpInstalled, isCodexMcpInstalled, mcpServerCommand } from "../adapters/mcp-install";
+import { hookNodePath } from "../lib/hook-files";
+import { judgeNodePath, stableNodePath } from "../lib/node-path";
+import type { NodeManager, NodePathFs } from "../lib/node-path";
 import { findBin } from "../daemon/handoff-runner";
 import { delegateSettings, hubShareLevel, loadConfig, loadConfigSafe } from "../lib/config";
 import type { Config } from "../lib/config";
@@ -320,13 +324,10 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
   const claudeDir = opts.claudeDir ? resolveClaudeDir(opts.claudeDir) : undefined;
   const settingsPath = claudeSettingsPath(claudeDir);
   const claudeJson = claudeJsonPath(claudeDir);
-  const staleNodes = staleClaudeHookNodes(settingsPath);
   checks.push(
-    staleNodes.length > 0
-      ? fail("claude code hooks", `${settingsPath} runs ${staleNodes.join(", ")}, which no longer exists — run \`workmesh setup --hooks-only\``)
-      : areClaudeHooksInstalled(settingsPath)
-        ? ok("claude code hooks", settingsPath)
-        : warn("claude code hooks", `not installed in ${settingsPath} — run \`workmesh setup\``),
+    areClaudeHooksInstalled(settingsPath)
+      ? ok("claude code hooks", settingsPath)
+      : warn("claude code hooks", `not installed in ${settingsPath} — run \`workmesh setup\``),
   );
   if (areClaudeHooksInstalled(settingsPath)) {
     checks.push(
@@ -358,6 +359,17 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
         : warn("codex mcp", "not registered — run `workmesh setup --hooks-only`"),
     );
   }
+  // 0.12.1: the Node every hook, MCP entry and the service runs is there, and not a path the next upgrade deletes.
+  checks.push(
+    ...nodePathChecks(
+      pinnedNodeUses({
+        settingsPath,
+        claudeJson,
+        ...(codexUsed ? { codexHooks: codexHooksPath(), codexConfig: codexConfigPath() } : {}),
+        ...(svc ? { service: svc } : {}),
+      }),
+    ),
+  );
   if (codexUsed) {
     checks.push(codexNotifyCheck());
   } else {
@@ -382,6 +394,105 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     }
   }
   if (failed) process.exitCode = 1;
+}
+
+/** One place a Node path is written: a host's hooks or MCP entry, Codex's notify, the daemon's service. */
+export interface NodeUse {
+  what: string;
+  node: string;
+}
+
+/** The Node paths Workmesh's hooks, MCP registrations, Codex notify and service run, as written in their files. */
+export function pinnedNodeUses(opts: {
+  settingsPath: string;
+  claudeJson: string;
+  codexHooks?: string;
+  codexConfig?: string;
+  service?: Pick<ServiceStatus, "installed" | "kind" | "program">;
+}): NodeUse[] {
+  const uses: NodeUse[] = [];
+  for (const node of claudeHookNodes(opts.settingsPath)) uses.push({ what: "claude code hooks", node });
+  const claudeMcp = claudeMcpCommand(opts.claudeJson);
+  if (claudeMcp) uses.push({ what: "claude code mcp", node: claudeMcp.command });
+  if (opts.codexHooks) {
+    for (const command of ourCodexHookCommands(opts.codexHooks)) {
+      const node = hookNodePath(command);
+      if (node) uses.push({ what: "codex hooks", node });
+    }
+  }
+  if (opts.codexConfig) {
+    const codexMcp = codexMcpCommand(opts.codexConfig);
+    if (codexMcp) uses.push({ what: "codex mcp", node: codexMcp.command });
+    let text = "";
+    try {
+      text = fs.readFileSync(opts.codexConfig, "utf8");
+    } catch {
+      // no config
+    }
+    const notify = codexNotifyState(text);
+    if (notify.kind === "direct" && notify.node) uses.push({ what: "codex notify", node: notify.node });
+  }
+  const program = opts.service?.program?.[0];
+  if (opts.service?.installed && program) uses.push({ what: `the daemon's ${opts.service.kind} service`, node: program });
+  const seen = new Set<string>();
+  return uses.filter((u) => {
+    const key = `${u.what}\0${u.node}`;
+    if (!path.isAbsolute(u.node) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+const MANAGER_NAMES: Record<NodeManager, string> = {
+  homebrew: "Homebrew",
+  nvm: "nvm",
+  fnm: "fnm",
+  volta: "Volta",
+  asdf: "asdf",
+  mise: "mise",
+  n: "n",
+};
+
+/** "a", "a and b", "a, b and c". */
+function words(list: readonly string[]): string {
+  return list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
+}
+
+/**
+ * 0.12.1: one line per Node path that is gone (fail) or versioned with a stable name for the same binary (warn), with
+ * the fix; a version manager's path with no stable name is fine until that version goes (said in the ok line).
+ */
+export function nodePathChecks(
+  uses: readonly NodeUse[],
+  opts: { pathEnv?: string; io?: NodePathFs; exists?: (p: string) => boolean; current?: string } = {},
+): CheckResult[] {
+  if (uses.length === 0) return [];
+  const byNode = new Map<string, string[]>();
+  for (const u of uses) {
+    const whats = byNode.get(u.node) ?? [];
+    if (!whats.includes(u.what)) whats.push(u.what);
+    byNode.set(u.node, whats);
+  }
+  const fix = "`workmesh setup --hooks-only`";
+  const problems: CheckResult[] = [];
+  const fine: string[] = [];
+  for (const [node, whats] of byNode) {
+    const who = words(whats);
+    const f = judgeNodePath(node, opts);
+    const name = f.manager ? MANAGER_NAMES[f.manager] : undefined;
+    if (f.status === "missing") {
+      const current = opts.current ?? stableNodePath();
+      problems.push(fail("node path", `${who} run ${node}, which no longer exists, so they fail → ${fix} points them at ${current}`));
+    } else if (f.status === "versioned") {
+      const when = f.manager === "homebrew" ? "`brew upgrade node` deletes" : `removing that ${name} version deletes`;
+      problems.push(warn("node path", `${who} run ${node}, ${name}'s versioned path, which ${when} → ${fix} points them at ${f.stable}`));
+    } else if (f.status === "pinned") {
+      fine.push(`${who} run ${node} (${name}'s; after removing that version, install Workmesh under your new Node and run ${fix})`);
+    } else {
+      fine.push(`${who} run ${node}`);
+    }
+  }
+  return problems.length > 0 ? problems : [ok("node path", fine.join("; "))];
 }
 
 /**

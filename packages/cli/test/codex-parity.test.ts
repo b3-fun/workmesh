@@ -396,7 +396,7 @@ describe("doctor: what Codex really runs", () => {
     fs.mkdirSync(path.dirname(self), { recursive: true });
     fs.writeFileSync(self, "");
     const direct = `notify = ["/usr/local/bin/node", ${JSON.stringify(self)}, "hook", "codex"]\n`;
-    expect(codexNotifyState(direct)).toEqual({ kind: "direct", target: self });
+    expect(codexNotifyState(direct)).toEqual({ kind: "direct", target: self, node: "/usr/local/bin/node" });
     expect(codexNotifyCheck(direct, self)).toMatchObject({ status: "ok", detail: expect.stringContaining("direct, to this install") });
     // Codex Computer Use's line (shape from a live config): the previous notify rides along as a JSON array.
     const old = "/home/me/Documents/agentblip/packages/cli/dist/index.js";

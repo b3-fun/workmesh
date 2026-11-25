@@ -14,7 +14,7 @@ import type { McpInstallReport } from "../adapters/mcp-install";
 import { hubShareLevel, loadConfigSafe, saveConfig } from "../lib/config";
 import type { Config } from "../lib/config";
 import { isDaemonUp } from "../lib/daemon-client";
-import { versionManagedNode } from "../lib/hook-files";
+import { stableNodePath, versionManagedNode } from "../lib/node-path";
 import { claudeConfigDir, codexHome, configPath } from "../lib/paths";
 import { resolveDir } from "./hub";
 import { runServiceInstall } from "./service";
@@ -168,12 +168,16 @@ export function codexDecision(flag: boolean | undefined): { install: boolean; wh
   return { install: false, why: `no Codex install found (${codexHome()}), skipped (pass --codex to install anyway)` };
 }
 
-/** A warning when the hooks will pin a Node that a version manager may remove. */
-export function nodePathWarning(execPath = process.execPath): string | undefined {
-  if (!versionManagedNode(execPath)) return undefined;
+/**
+ * A note when the hooks will pin a Node that a version manager may remove: the path setup writes (lib/node-path.ts)
+ * is still inside one version's tree (nvm, asdf, Volta without a stable name). Homebrew's isn't: it gets
+ * `/opt/homebrew/bin/node`.
+ */
+export function nodePathWarning(node = stableNodePath()): string | undefined {
+  if (!versionManagedNode(node)) return undefined;
   return (
-    `hooks run ${execPath}, a version-managed Node: after you upgrade or remove it, every hook fails ` +
-    "until you run `workmesh setup --hooks-only` again (`workmesh doctor` checks for this)"
+    `hooks run ${node}, a version-managed Node: after you remove that version, every hook fails until you ` +
+    "install Workmesh under your new Node and run `workmesh setup --hooks-only` (`workmesh doctor` checks for this)"
   );
 }
 

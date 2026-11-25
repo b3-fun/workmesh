@@ -633,7 +633,12 @@ read and drops the rest one by one):
   merge into `~/.claude.json`, written by rename) and with Codex as `[mcp_servers.workmesh]` in `~/.codex/config.toml`.
   Both back the file up once before the first change, repoint an older install of theirs, and leave alone another
   server named `workmesh` or a file they can't read. `workmesh doctor` checks both, and whether the running daemon
-  coordinates.
+  coordinates. `<node>` here, in every hook command, Codex's `notify` and the service (§24) is a stable path for the
+  running Node (0.12.1, `lib/node-path.ts`): Homebrew's `<prefix>/bin/node` or `<prefix>/opt/<formula>/bin/node`
+  rather than its `Cellar/<formula>/<version>` path, which the next upgrade deletes; nvm's `current`, fnm's
+  `aliases/default` or mise's major-version link when one resolves to the same binary; never a per-project shim
+  (Volta, asdf, mise `shims/`). `init`, `setup` and `update` repoint what an older version wrote, and `doctor` names
+  any of them whose Node is gone (fail) or versioned with a stable name for it (warn), with the fix.
 - **Guidance.** A shared top-level session gets a five-line note once (`SessionStart`, or the first boundary after it
   becomes shared) while the hub coordinates: it is on Workmesh with its team, and how to claim, lease, read its inbox,
   and message a holder instead of editing leased files.

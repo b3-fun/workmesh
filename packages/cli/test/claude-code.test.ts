@@ -11,6 +11,7 @@ import {
   textAsksUser,
 } from "../src/adapters/claude-code";
 import { OUR_COMMAND_RE } from "../src/lib/names";
+import { stableNodePath } from "../src/lib/node-path";
 
 const input = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   hook_event_name: "PreToolUse",
@@ -258,7 +259,7 @@ describe("claudeHookCommand", () => {
   it("writes a quoted absolute invocation that carries one of our names", () => {
     const command = claudeHookCommand();
     // absolute node + entry paths, quoted for spaces, PATH-independent
-    expect(command.startsWith(`"${process.execPath}" "`)).toBe(true);
+    expect(command.startsWith(`"${stableNodePath()}" "`)).toBe(true);
     expect(command.endsWith('" hook claude-code')).toBe(true);
     // install idempotency recognises our command by name (lib/names.ts)
     expect(command).toMatch(OUR_COMMAND_RE);

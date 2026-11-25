@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stableNodePath } from "./node-path";
 
 /**
  * The daemon as an OS service (SPEC §24): launchd on macOS, a systemd --user
@@ -168,29 +169,8 @@ export function systemdUnitPath(home = os.homedir()): string {
   return path.join(base, "systemd", "user", SYSTEMD_UNIT);
 }
 
-/**
- * The node binary a service should run: the one on PATH when it is the same
- * program as this process (Homebrew's /opt/homebrew/bin/node survives upgrades;
- * its Cellar path doesn't), else this process's own.
- */
-export function stableNodePath(execPath = process.execPath, pathEnv = process.env.PATH ?? ""): string {
-  let real: string;
-  try {
-    real = fs.realpathSync(execPath);
-  } catch {
-    return execPath;
-  }
-  for (const dir of pathEnv.split(path.delimiter)) {
-    if (!dir || !path.isAbsolute(dir)) continue;
-    const candidate = path.join(dir, "node");
-    try {
-      if (fs.realpathSync(candidate) === real) return candidate;
-    } catch {
-      // not here
-    }
-  }
-  return execPath;
-}
+/** The node binary a service should run (lib/node-path.ts): Homebrew's /opt/homebrew/bin/node, not its Cellar path. */
+export { stableNodePath } from "./node-path";
 
 /** The CLI entry this process runs (dist/index.js in a build). */
 export function cliEntry(): string {

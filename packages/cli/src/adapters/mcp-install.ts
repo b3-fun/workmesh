@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { OUR_COMMAND_RE } from "../lib/names";
 import { codexConfigPath } from "./codex";
 import { writeBackup } from "../lib/hook-files";
+import { stableNodePath } from "../lib/node-path";
 
 /**
  * Registers `workmesh mcp` with Claude Code (user scope) and Codex (docs/SPEC.md §23). Merge, never overwrite: another
@@ -15,9 +16,9 @@ import { writeBackup } from "../lib/hook-files";
 
 export const MCP_SERVER_NAME = "workmesh";
 
-/** The absolute command (GUI-launched agents don't inherit the shell's PATH), as for hooks. */
+/** The absolute command (GUI-launched agents don't inherit the shell's PATH), as for hooks: Node by its stable path. */
 export function mcpServerCommand(): { command: string; args: string[] } {
-  return { command: process.execPath, args: [fileURLToPath(import.meta.url), "mcp"] };
+  return { command: stableNodePath(), args: [fileURLToPath(import.meta.url), "mcp"] };
 }
 
 /**
@@ -99,6 +100,14 @@ function readClaudeEntry(file: string): { exists: boolean; entry?: McpEntry; err
 export function isClaudeMcpInstalled(file = claudeJsonPath()): boolean {
   const r = readClaudeEntry(file);
   return r.entry !== undefined && isOurs(r.entry);
+}
+
+/** Our MCP entry's command and args in Claude Code's user config (0.12.1: doctor checks the Node it runs). */
+export function claudeMcpCommand(file = claudeJsonPath()): { command: string; args: string[] } | undefined {
+  const r = readClaudeEntry(file);
+  if (!r.entry || !isOurs(r.entry) || typeof r.entry.command !== "string") return undefined;
+  const args = Array.isArray(r.entry.args) ? r.entry.args.filter((a): a is string => typeof a === "string") : [];
+  return { command: r.entry.command, args };
 }
 
 /** Writes `text` to `file` by rename, keeping the file's mode. */
@@ -216,6 +225,28 @@ export function isCodexMcpInstalled(file = codexConfigPath()): boolean {
     return t !== undefined && OUR_COMMAND_RE.test(t.body) && /"mcp"/.test(t.body);
   } catch {
     return false;
+  }
+}
+
+/** Our `[mcp_servers.workmesh]` command and args in Codex's config.toml (they are written as JSON strings). */
+export function codexMcpCommand(file = codexConfigPath()): { command: string; args: string[] } | undefined {
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  const t = findCodexTable(text);
+  if (!t || !OUR_COMMAND_RE.test(t.body) || !/"mcp"/.test(t.body)) return undefined;
+  const command = /^[ \t]*command[ \t]*=[ \t]*("(?:[^"\\\n]|\\.)*")/m.exec(t.body)?.[1];
+  const args = /^[ \t]*args[ \t]*=[ \t]*(\[[^\n]*\])/m.exec(t.body)?.[1];
+  try {
+    const c = command ? (JSON.parse(command) as unknown) : undefined;
+    const a = args ? (JSON.parse(args) as unknown) : [];
+    if (typeof c !== "string") return undefined;
+    return { command: c, args: Array.isArray(a) ? a.filter((x): x is string => typeof x === "string") : [] };
+  } catch {
+    return undefined;
   }
 }
 

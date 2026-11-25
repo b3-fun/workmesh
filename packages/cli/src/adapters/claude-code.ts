@@ -20,16 +20,18 @@ import {
 import { OUR_COMMAND_RE } from "../lib/names";
 import { hookNodePath, removeOurHooks, writeBackup } from "../lib/hook-files";
 import { claudeConfigDir } from "../lib/paths";
+import { stableNodePath } from "../lib/node-path";
 import { runningTasks } from "../hub/mirror";
 
 /**
  * Absolute hook invocation: GUI-launched agents don't inherit the login-shell
  * PATH, so a bare `workmesh` may not resolve (exit 127 on every hook).
  * import.meta.url is the bundled CLI entry (dist/index.js) at runtime; both
- * paths are quoted for spaces.
+ * paths are quoted for spaces. Node by its stable path (lib/node-path.ts):
+ * Homebrew's Cellar path dies with the next `brew upgrade`.
  */
 export function claudeHookCommand(): string {
-  return `"${process.execPath}" "${fileURLToPath(import.meta.url)}" hook claude-code`;
+  return `"${stableNodePath()}" "${fileURLToPath(import.meta.url)}" hook claude-code`;
 }
 
 /**
@@ -37,7 +39,7 @@ export function claudeHookCommand(): string {
  * (`wake-wait`, not `hook`), so the main hook's refresh never repoints it.
  */
 export function claudeWakeCommand(): string {
-  return `"${process.execPath}" "${fileURLToPath(import.meta.url)}" wake-wait claude-code`;
+  return `"${stableNodePath()}" "${fileURLToPath(import.meta.url)}" wake-wait claude-code`;
 }
 
 /** How long one wake waiter may run: Claude Code enforces `timeout` on asyncRewake hooks (the waiter leaves first). */
@@ -1002,14 +1004,11 @@ export function removeClaudeHooks(settingsPath = claudeSettingsPath()): HookRemo
   return { removed, settingsPath, backupPath };
 }
 
-/**
- * Node binaries our installed hooks point at that no longer exist (an nvm
- * version removed after setup): every such hook fails until setup runs again.
- */
-export function staleClaudeHookNodes(settingsPath = claudeSettingsPath()): string[] {
+/** Every hook command of ours in the settings (the main hook and the wake hook, under any of our names). */
+export function ourClaudeHookCommands(settingsPath = claudeSettingsPath()): string[] {
   try {
     const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as { hooks?: Record<string, unknown> };
-    const stale = new Set<string>();
+    const out: string[] = [];
     for (const entries of Object.values(parsed.hooks ?? {})) {
       if (!Array.isArray(entries)) continue;
       for (const entry of entries) {
@@ -1017,16 +1016,27 @@ export function staleClaudeHookNodes(settingsPath = claudeSettingsPath()): strin
         if (!Array.isArray(hooks)) continue;
         for (const hook of hooks) {
           const command = (hook as { command?: unknown } | null)?.command;
-          if (!isOurClaudeHook(command) && !isOurWakeHook(command)) continue;
-          const node = hookNodePath(command);
-          if (node && !fs.existsSync(node)) stale.add(node);
+          if (isOurClaudeHook(command) || isOurWakeHook(command)) out.push(command);
         }
       }
     }
-    return [...stale];
+    return out;
   } catch {
     return [];
   }
+}
+
+/** The Node binaries our installed hooks run (0.12.1: doctor checks each is there and not a versioned path). */
+export function claudeHookNodes(settingsPath = claudeSettingsPath()): string[] {
+  return [...new Set(ourClaudeHookCommands(settingsPath).map((c) => hookNodePath(c)).filter((n): n is string => n !== undefined))];
+}
+
+/**
+ * Node binaries our installed hooks point at that no longer exist (an nvm
+ * version removed after setup): every such hook fails until setup runs again.
+ */
+export function staleClaudeHookNodes(settingsPath = claudeSettingsPath()): string[] {
+  return claudeHookNodes(settingsPath).filter((n) => !fs.existsSync(n));
 }
 
 export function areClaudeHooksInstalled(settingsPath = claudeSettingsPath()): boolean {

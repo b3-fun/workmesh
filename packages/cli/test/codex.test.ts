@@ -13,6 +13,7 @@ import {
   rolloutSessionId,
 } from "../src/adapters/codex";
 import { OUR_COMMAND_RE } from "../src/lib/names";
+import { stableNodePath } from "../src/lib/node-path";
 
 describe("mapNotifyArg", () => {
   const notify = (over: Record<string, unknown> = {}): string =>
@@ -159,7 +160,7 @@ describe("codexNotifyLine", () => {
   it("uses an absolute node + entry invocation that carries one of our names", () => {
     const line = codexNotifyLine();
     expect(line).toMatch(/^notify = \[/);
-    expect(line).toContain(JSON.stringify(process.execPath));
+    expect(line).toContain(JSON.stringify(stableNodePath()));
     expect(line).toContain('"hook", "codex"]');
     // isCodexNotifyInstalled looks for our name — the entry path carries it
     expect(line).toMatch(OUR_COMMAND_RE);

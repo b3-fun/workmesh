@@ -353,8 +353,13 @@ after such a 400, as it does for `message`/`turn`.
     when the workspace is known. Metadata.
   - `github_pr` / `github_issue`: from `gh pr|issue create|view|merge|…` commands and their responses, only when
     `<owner>/<repo>` is shared (§3.3 rule 7). Metadata.
-  - `slack`: from Slack MCP tool calls (send, read thread, …): channel id and message ts, the permalink when the
-    response carries one or the workspace host is known, `label` = the channel name when the call names it.
+  - `slack`: from Slack MCP tool calls (send, read thread, search, …), read from the call's response (PostToolUse):
+    channel id and message ts, the permalink when the response carries one or the workspace host is known, and
+    `label` = what happened and where, `"<Action> · <place>"` or one of them alone: the action from the tool's name
+    (`Sent`, `Drafted`, `Scheduled`, `Read`, `Searched`, `Reacted`, `Listed`, `Created`, `Updated`, `Uploaded`,
+    `Used`), the place from the response or an earlier call in the session (`#eng`, `DM`, `group DM`, `3 channels`
+    for a search across several). Never message text, search terms or user ids. One link per action and place in a
+    session (a DM's sends, a thread's reads; a search per what it found): the first permalink stands for the rest.
     Conversation level only.
   - `url`: not sent by the relay in this pass.
   The hub reads links tolerantly: a link it can't read is dropped on its own, past 10 it keeps the first ten.
@@ -362,6 +367,10 @@ after such a 400, as it does for `message`/`turn`.
 Ingest body adds `person: { github?: string ≤ 40 }`: the person's GitHub login as the local `gh` CLI reports it
 (`gh api user --jq .login`, read at `hub connect` and at daemon start, 5 s timeout, skipped when `gh` is absent or not
 logged in), sent on every heartbeat for the board's and menu bar's avatars. The hub reads a malformed value as absent.
+
+Linear ids (rule 6, and these `linear` links) are never read from a prompt the agent tool injected, from Workmesh's
+own lines (its guidance, inbox notes and heads-ups start with "Workmesh"), or from an id written as an example
+("e.g. B3-123").
 
 What still never leaves a machine (§3.3 holds): tool input or output, file contents, full commands, a subagent's
 prompt or its transcript text (the main thread's only, §9; what agents write to each other travels as

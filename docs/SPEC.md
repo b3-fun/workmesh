@@ -402,8 +402,12 @@ How the relay builds them (`packages/cli`, verified on Claude Code 2.1.331 and C
   go on its own timeline; `title` from its `agent-<id>.meta.json` `description`; `model` and tokens from its
   `agent-<id>.jsonl`; `statusLine` = its activity label; `ended` at SubagentStop or when its parent goes. The relay
   sends subagent sessions only to a hub that serves `GET /relay/team` (§16): an older hub keeps seeing their tool
-  calls on the parent, as before. A main session's `statusLine` says what it waits on ("waiting on 1 shell") from
-  its Stop's `background_tasks`.
+  calls on the parent, as before. A subagent nothing confirms (no `agent_type`, no task, no hook of its own, no
+  tokens) is held back until it has lasted 2 s, and never sent when it ends sooner: Claude Code fires
+  SubagentStart/SubagentStop pairs with nothing between them (calls replayed on resume), and each one sent was a
+  nameless agent on the board (relays after 0.12.1; hubs also drop the ones older relays sent: unnamed, no events,
+  ended within 2 s of starting). A main session's `statusLine` says what it waits on ("waiting on 1 shell") from its
+  Stop's `background_tasks`.
 - **Codex spawned threads:** already their own sessions (`codex:<thread id>`); the rollout's first `session_meta`
   line names `parent_thread_id`, `agent_role` (→ `agentType`) and `agent_path` (→ `title`, conversation level);
   tokens and model from its `token_count` and `turn_context` lines.

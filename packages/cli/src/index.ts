@@ -1,8 +1,12 @@
 import { Command } from "commander";
 import pkg from "../package.json";
 import {
+  runApprovals,
   runClaim,
   runClaims,
+  runGates,
+  runHandoff,
+  runHandoffs,
   runInbox,
   runLease,
   runLeases,
@@ -16,6 +20,9 @@ import {
 import { runDoctor } from "./commands/doctor";
 import { runEmit } from "./commands/emit";
 import { runHook } from "./commands/hook";
+import { runInit } from "./commands/init";
+import { runHandoffPolicy, runRoots } from "./commands/roots";
+import { runWake, runWakeWait } from "./commands/wake";
 import {
   EXAMPLE_HUB_URL,
   runHubConnect,
@@ -62,6 +69,22 @@ program
   .version(pkg.version);
 
 program
+  .command("init")
+  .description("Set this machine up for a team hub in one go: hooks, MCP tools, the daemon, and pairing (safe to run again)")
+  .argument("<hub-url>", `the team's hub, e.g. ${EXAMPLE_HUB_URL}`)
+  .option("--share <level>", "conversation | metadata (asked when omitted in a terminal)")
+  .option("--codex", "install Codex hooks even when no Codex install is found")
+  .option("--no-codex", "leave Codex's files alone")
+  .option("--no-open", "print the approve link without opening a browser")
+  .option("--machine <name>", "name this machine on the board (default: hostname)")
+  .option("--claude-dir <path>", "Claude Code config dir to hook (default: $CLAUDE_CONFIG_DIR, else ~/.claude)")
+  .option("--no-mcp", "don't register the workmesh MCP server")
+  .option("--no-service", "run the daemon in the background, not under launchd / systemd")
+  .option("--no-wake", "don't install the hook that wakes idle sessions for messages")
+  .option("--repair", "pair again even if this machine is already paired with the hub")
+  .action(wrap((url: string, opts: Parameters<typeof runInit>[1]) => runInit(url, opts)));
+
+program
   .command("setup")
   .description("Connect Slack, pick a privacy level, and install agent hooks")
   .option(
@@ -74,6 +97,7 @@ program
   .option("--no-codex", "leave Codex's files alone")
   .option("--no-mcp", "don't register the workmesh MCP server with Claude Code and Codex")
   .option("--no-service", "don't run the daemon under launchd / systemd")
+  .option("--no-wake", "don't install the hook that wakes idle sessions for messages")
   .action(wrap(runSetup));
 
 const service = program
@@ -305,6 +329,62 @@ program
   .description("Who you are on the team hub, and which agent session this is")
   .option("--json", "machine-readable output")
   .action(wrap(runWhoami));
+
+// v2 Delegate (SPEC §31): handoffs, approval gates, waking idle sessions.
+program
+  .command("handoff")
+  .description("Hand a task to a teammate (or `me`: one of your other machines); their machine starts an agent for it once they accept")
+  .argument("<to>", "a person (name, email or GitHub login), or me")
+  .argument("<task...>", "what to do")
+  .option("--repo <owner/name>", "the repo (default: this directory's)")
+  .option("--issue <id>", "a Linear issue, e.g. B3-123")
+  .option("--context <text>", "anything else the agent should know")
+  .option("--json", "machine-readable output")
+  .action(wrap(runHandoff));
+const handoffs = program
+  .command("handoffs")
+  .description("Handoffs offered to you and sent by you; accept or decline one")
+  .argument("[action]", "list | accept | decline")
+  .argument("[id]", "the handoff, for accept and decline")
+  .option("--note <text>", "why (decline)")
+  .option("--json", "machine-readable output")
+  .action(wrap(runHandoffs));
+handoffs
+  .command("policy")
+  .description("Which handoffs this machine takes without a click: auto-self (default), ask, never")
+  .argument("[policy]", "auto-self | ask | never")
+  .action(wrap(runHandoffPolicy));
+program
+  .command("roots")
+  .description("Where your repos live, so a handoff finds its checkout here (repos your sessions worked in count too)")
+  .argument("[action]", "list | add | remove")
+  .argument("[dir]", "a directory (absolute, relative, or ~/…)")
+  .action(wrap(runRoots));
+program
+  .command("gates")
+  .description("Approval gates on your own agents: they ask before they merge, deploy, publish, force-push or spend")
+  .argument("[action]", "list | set | off (or a list, e.g. merge,deploy)")
+  .argument("[gates]", "for set: merge,deploy,publish,force_push,spend,custom")
+  .option("--json", "machine-readable output")
+  .action(wrap(runGates));
+program
+  .command("approvals")
+  .description("Approvals your agents asked for, and ones you can decide; approve or deny one")
+  .argument("[action]", "list | approve | deny")
+  .argument("[id]", "the approval, for approve and deny")
+  .option("--note <text>", "why (shown to the agent)")
+  .option("--json", "machine-readable output")
+  .action(wrap(runApprovals));
+program
+  .command("wake")
+  .description("Show or set whether an idle session wakes for a message, an approval or a handoff result (on by default)")
+  .argument("[value]", "on | off")
+  .action(wrap(runWake));
+program
+  .command("wake-wait", { hidden: true })
+  .description("Claude Code asyncRewake Stop hook: wait for this session's next message (never fails the session)")
+  .argument("<source>", "claude-code")
+  .action(runWakeWait);
 
 program
   .command("mcp")

@@ -191,9 +191,11 @@ struct TeamState: Decodable {
     let team: TeamView?
     /// v1: holds on this Mac's agents and messages waiting for them (absent from older daemons).
     let coord: CoordState?
+    /// v2: handoffs offered to me or running here, and pending approvals (absent from older daemons).
+    let delegate: DelegateState?
 
     private enum K: String, CodingKey {
-        case enabled, hubUrl, boardUrl, hubName, deviceId, share, connected, halted, available, fetchedAt, error, pollMs, team, coord
+        case enabled, hubUrl, boardUrl, hubName, deviceId, share, connected, halted, available, fetchedAt, error, pollMs, team, coord, delegate
     }
 
     init(from decoder: Decoder) throws {
@@ -212,6 +214,7 @@ struct TeamState: Decodable {
         pollMs = c.lenient(Double.self, .pollMs)
         team = c.lenient(TeamView.self, .team)
         coord = c.lenient(CoordState.self, .coord)
+        delegate = c.lenient(DelegateState.self, .delegate)
     }
 
     /// What the footer names: the daemon's hub name, else the host without a
@@ -310,6 +313,147 @@ struct CoordMessage: Decodable, Identifiable {
         from = c.text(.from) ?? "A teammate"
         fromSession = c.text(.fromSession)
         ts = c.lenient(Double.self, .ts)
+    }
+}
+
+// MARK: - Delegate (v2, inside GET /team)
+//
+// Handoffs offered to this person (Accept / Decline) or running on this Mac,
+// and pending approvals: this Mac's agents' asks, and ones this person may
+// decide. Read leniently like the rest of /team: an item without an id is
+// dropped, and a status the app doesn't know is neither offered nor pending.
+
+struct DelegateState: Decodable {
+    /// The hub serves v2.
+    let available: Bool?
+    let handoffs: [DelegateHandoff]
+    let approvals: [DelegateApproval]
+
+    private enum K: String, CodingKey { case available, handoffs, approvals }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        available = c.lenient(Bool.self, .available)
+        handoffs = c.lossy(DelegateHandoff.self, .handoffs)
+        approvals = c.lossy(DelegateApproval.self, .approvals)
+    }
+
+    /// Offered to me (oldest first), then the ones running on this Mac.
+    var shownHandoffs: [DelegateHandoff] {
+        let offered = handoffs.filter(\.isOffered).sorted { ($0.createdAt ?? 0) < ($1.createdAt ?? 0) }
+        return offered + handoffs.filter(\.runningHere)
+    }
+
+    /// Pending ones I may decide or this Mac's agents asked, oldest first.
+    var shownApprovals: [DelegateApproval] {
+        approvals.filter { $0.isPending && ($0.canDecide || $0.mine) }.sorted { ($0.ts ?? 0) < ($1.ts ?? 0) }
+    }
+}
+
+struct DelegateHandoff: Decodable, Identifiable {
+    let id: String
+    let from: String
+    let fromSession: String?
+    let task: String
+    let repo: String?
+    let issue: String?
+    /// offered | accepted | started | done | failed | declined (kept as sent).
+    let status: String?
+    let createdAt: Double?
+    let runningHere: Bool
+
+    /// Waiting for my Accept or Decline.
+    var isOffered: Bool { status == "offered" && !runningHere }
+
+    /// "from An · b3-fun/b3os-beta · B3-7168".
+    var origin: String { ["from \(from)", repo, issue].compactMap { $0 }.joined(separator: " · ") }
+
+    private enum K: String, CodingKey { case id, from, fromSession, task, repo, issue, status, createdAt, runningHere }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        guard let id = c.text(.id), let task = c.text(.task) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "handoff without id or task"))
+        }
+        self.id = id
+        self.task = task
+        from = c.text(.from) ?? "A teammate"
+        fromSession = c.text(.fromSession)
+        repo = c.text(.repo)
+        issue = c.text(.issue)
+        status = c.text(.status)
+        createdAt = c.lenient(Double.self, .createdAt)
+        runningHere = c.lenient(Bool.self, .runningHere) ?? false
+    }
+}
+
+struct DelegateApproval: Decodable, Identifiable {
+    let id: String
+    /// This Mac's session that asked, and its name.
+    let session: String?
+    let name: String?
+    /// merge | deploy | publish | force_push | spend | custom (kept as sent).
+    let gate: String?
+    let detail: String
+    let status: String?
+    let ts: Double?
+    /// One of this Mac's agents asked.
+    let mine: Bool
+    /// This person may approve or deny it.
+    let canDecide: Bool
+
+    /// The daemon lists pending ones only; a status it adds later isn't pending.
+    var isPending: Bool { status == nil || status == "pending" }
+
+    /// "your agent documents-07 asks to merge", or the gate for a teammate's ask.
+    var ask: String {
+        guard mine else { return gateLabel }
+        return "your agent" + (name.map { " \($0)" } ?? "") + " asks to \(verb)"
+    }
+
+    private var verb: String {
+        switch gate {
+        case let g? where ["merge", "deploy", "publish", "spend"].contains(g): return g
+        case "force_push": return "force-push"
+        default: return "run" // custom, or a gate this app doesn't know
+        }
+    }
+
+    private var gateLabel: String {
+        guard let gate else { return "approval" }
+        return gate.replacingOccurrences(of: "_", with: "-")
+    }
+
+    private enum K: String, CodingKey { case id, session, name, gate, detail, status, ts, mine, canDecide }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        guard let id = c.text(.id), let detail = c.text(.detail) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "approval without id or detail"))
+        }
+        self.id = id
+        self.detail = detail
+        session = c.text(.session)
+        name = c.text(.name)
+        gate = c.text(.gate)
+        status = c.text(.status)
+        ts = c.lenient(Double.self, .ts)
+        mine = c.lenient(Bool.self, .mine) ?? false
+        canDecide = c.lenient(Bool.self, .canDecide) ?? false
+    }
+}
+
+/// POST /coord/op's answer: `{ok, text, data}` (data unused here).
+struct CoordOpAnswer: Decodable {
+    let ok: Bool
+    let text: String?
+
+    private enum K: String, CodingKey { case ok, text }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        ok = c.lenient(Bool.self, .ok) ?? false
+        text = c.text(.text)
     }
 }
 

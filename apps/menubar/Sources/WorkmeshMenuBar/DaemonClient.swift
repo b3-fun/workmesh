@@ -29,12 +29,12 @@ struct DaemonClient {
         return p
     }
 
-    private func request(_ method: String, _ path: String, body: Data? = nil) async throws -> Data {
+    private func request(_ method: String, _ path: String, body: Data? = nil, timeout: TimeInterval = 3) async throws -> Data {
         let token = try secret()
         var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.timeoutInterval = 3
+        req.timeoutInterval = timeout
         if let body {
             req.httpBody = body
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -91,6 +91,15 @@ struct DaemonClient {
 
     @discardableResult
     func resume() async throws -> Data { try await request("POST", "/resume") }
+
+    /// v2: a coordination call as the person, not an agent (POST /coord/op):
+    /// accept or decline a handoff, approve or deny an approval. The daemon
+    /// makes the hub call (up to 8 s), so this waits longer than the reads.
+    func coordOp(_ op: String, args: [String: Any]) async throws -> CoordOpAnswer {
+        let body = try JSONSerialization.data(withJSONObject: ["op": op, "args": args, "caller": ["client": "menubar"]])
+        let data = try await request("POST", "/coord/op", body: body, timeout: 12)
+        return try JSONDecoder().decode(CoordOpAnswer.self, from: data)
+    }
 
     @discardableResult
     func patchConfig(_ patch: [String: Any]) async throws -> DaemonConfig {

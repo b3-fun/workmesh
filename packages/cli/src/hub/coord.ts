@@ -1,5 +1,11 @@
 import {
   HUB_RECENT_EDIT_MS,
+  hubApprovalRequestSchema,
+  hubApprovalResponseAcceptSchema,
+  hubGatesRequestSchema,
+  hubGatesResponseAcceptSchema,
+  hubHandoffRequestSchema,
+  hubHandoffResponseAcceptSchema,
   hubClaimRequestSchema,
   hubClaimResponseAcceptSchema,
   hubIdResponseAcceptSchema,
@@ -14,6 +20,12 @@ import {
   leasePathsOverlap,
 } from "@workmesh/protocol";
 import type {
+  HubApprovalRequest,
+  HubApprovalResponseAccepted,
+  HubGatesRequest,
+  HubGatesResponseAccepted,
+  HubHandoffRequest,
+  HubHandoffResponseAccepted,
   HubClaimRequest,
   HubClaimResponseAccepted,
   HubLeaseAccepted,
@@ -75,6 +87,8 @@ export interface CoordClientOptions {
   holdGraceMs?: number;
   /** Leases and recent edits count only while the last good sync is this fresh. */
   staleMs?: number;
+  /** v2 (SPEC §31): after each good sync, with the one before (handoffs, approvals and wake checks diff them). */
+  onSync?: (next: HubSyncAccepted, previous: HubSyncAccepted | undefined) => void;
 }
 
 /** What a hub call answered: the parsed body, or why there is none. */
@@ -83,6 +97,9 @@ export type CoordResult<T> =
   | { ok: false; status?: number; error: string; unavailable?: boolean };
 
 const MAX_DELIVERED = 2000;
+/** Ids of notices the daemon writes itself (an approval decided, a handoff finished): never acked to the hub. */
+const LOCAL_ID_PREFIX = "wm_";
+const MAX_LOCAL = 500;
 /** An undelivered message the hub stopped listing is kept this long (its session may come back). */
 const INBOX_KEEP_MS = 24 * 60 * 60_000;
 
@@ -126,6 +143,12 @@ export class CoordClient {
   private readonly delivered = new Set<string>();
   private readonly ackQueue = new Set<string>();
   private acking: Promise<void> | undefined;
+  /** v2: notices for this device's sessions that the daemon wrote itself, by id. */
+  private readonly local = new Map<string, HubSyncInboxItem>();
+  private localSeq = 0;
+  private readonly onSync: CoordClientOptions["onSync"];
+  /** v2 endpoints this hub answered 404 to, and until when that is remembered. */
+  private readonly v2Absent = new Map<string, number>();
 
   constructor(opts: CoordClientOptions) {
     this.url = opts.url.replace(/\/+$/, "");
@@ -143,6 +166,7 @@ export class CoordClient {
     this.timeoutMs = opts.timeoutMs ?? 8000;
     this.holdGraceMs = opts.holdGraceMs ?? 30 * 60_000;
     this.staleMs = opts.staleMs ?? 90_000;
+    this.onSync = opts.onSync;
   }
 
   // --- lifecycle ---------------------------------------------------------------
@@ -226,8 +250,18 @@ export class CoordClient {
     return i === -1 ? key : key.slice(0, i);
   }
 
-  private fresh(now = this.now()): boolean {
+  /** The last good sync is recent enough to act on (leases, edits, gates). */
+  fresh(now = this.now()): boolean {
     return this.fetchedAt !== undefined && now - this.fetchedAt <= this.staleMs;
+  }
+
+  /**
+   * v2 (SPEC §30): this hub sends handoffs, gates or approvals on sync. A v1 hub sends none of the lists, and a relay
+   * then gates nothing and runs no handoffs.
+   */
+  delegateAvailable(): boolean {
+    const s = this.state;
+    return s !== undefined && (s.handoffs !== undefined || s.gates !== undefined || s.approvals !== undefined);
   }
 
   // --- what hooks read (cached; never a network call) ----------------------------
@@ -287,14 +321,66 @@ export class CoordClient {
       .sort((a, b) => b.ts - a.ts);
   }
 
-  /** Messages for this session (exactly its key) not yet handed to it, oldest first. */
+  /** Messages for this session (exactly its key) not yet handed to it, oldest first (the daemon's own notices too). */
   pendingFor(localKey: string): HubSyncInboxItem[] {
     const out: HubSyncInboxItem[] = [];
     for (const { item } of this.inbox.values()) {
       if (this.delivered.has(item.id)) continue;
       if (this.recipientLocalKey(item) === localKey) out.push(item);
     }
+    for (const item of this.local.values()) {
+      if (!this.delivered.has(item.id) && item.to === localKey) out.push(item);
+    }
     return out.sort((a, b) => a.ts - b.ts);
+  }
+
+  /**
+   * v2 (SPEC §31): whether a message should wake an idle session: the hub's `wake` when it set one, else yes for a
+   * message a person wrote (no sending session) and no for one an agent sent.
+   */
+  static wakes(item: HubSyncInboxItem): boolean {
+    return item.wake ?? item.from.sessionKey === undefined;
+  }
+
+  /** Waiting messages that should wake this session if it is idle, oldest first. */
+  wakeFor(localKey: string): HubSyncInboxItem[] {
+    return this.pendingFor(localKey).filter((i) => CoordClient.wakes(i));
+  }
+
+  /** The local sessions (and subagents) with any undelivered message, for the daemon's wake check. */
+  sessionsWithPending(): Set<string> {
+    const out = new Set<string>();
+    for (const { item } of this.inbox.values()) {
+      if (this.delivered.has(item.id)) continue;
+      const k = this.recipientLocalKey(item);
+      if (k !== undefined) out.add(k);
+    }
+    for (const item of this.local.values()) if (!this.delivered.has(item.id)) out.add(item.to);
+    return out;
+  }
+
+  /**
+   * v2: a notice for one of this device's sessions that the daemon writes itself (an approval was decided, a handoff
+   * it sent was taken or finished). It is delivered like a teammate's message (next tool boundary, or a wake) and
+   * never acked to the hub. Returns its id.
+   */
+  notify(localKey: string, text: string, opts: { from?: string; wake?: boolean } = {}): string {
+    const id = `${LOCAL_ID_PREFIX}${this.now().toString(36)}${(this.localSeq++).toString(36)}`;
+    this.local.set(id, {
+      id,
+      to: localKey,
+      from: { person: opts.from ?? "Workmesh", sessionName: undefined, sessionKey: undefined },
+      text: text.slice(0, 4000),
+      ts: this.now(),
+      thread: undefined,
+      wake: opts.wake ?? true,
+    });
+    while (this.local.size > MAX_LOCAL) {
+      const first = this.local.keys().next().value;
+      if (first === undefined) break;
+      this.local.delete(first);
+    }
+    return id;
   }
 
   /** Every message waiting for this device's sessions, delivered or not (the CLI's and menu bar's view). */
@@ -317,7 +403,8 @@ export class CoordClient {
     for (const id of ids) {
       if (this.delivered.has(id)) continue;
       this.delivered.add(id);
-      this.ackQueue.add(id);
+      if (id.startsWith(LOCAL_ID_PREFIX)) this.local.delete(id);
+      else this.ackQueue.add(id);
     }
     while (this.delivered.size > MAX_DELIVERED) {
       const first = this.delivered.values().next().value;
@@ -415,6 +502,7 @@ export class CoordClient {
 
   /** Takes in a good sync answer (exposed for tests). */
   apply(s: HubSyncAccepted, now = this.now(), sentAt = now): void {
+    const previous = this.state;
     this.state = s;
     this.fetchedAt = now;
     this.error = undefined;
@@ -441,6 +529,13 @@ export class CoordClient {
     for (const item of s.inbox) if (this.delivered.has(item.id)) this.ackQueue.add(item.id);
     this.setAvailable(true);
     if (this.ackQueue.size > 0) void this.flushAcks();
+    if (this.onSync) {
+      try {
+        this.onSync(s, previous);
+      } catch (err) {
+        this.log(`hub: delegate check failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   private flushAcks(): Promise<void> {
@@ -468,10 +563,15 @@ export class CoordClient {
     reqSchema: z.ZodType<Req>,
     body: unknown,
     resSchema: z.ZodType<Res> | null,
+    /** A v2 endpoint: a 404 means this hub has no v2 (remembered for a while), not that it has no coordination. */
+    v2 = false,
   ): Promise<CoordResult<Res>> {
     if (this.halted) return { ok: false, error: "the hub rejected this device's token: run `workmesh hub connect` again" };
     if (this.available === false) {
       return { ok: false, unavailable: true, error: "this hub has no coordination yet (it predates Workmesh v1)" };
+    }
+    if (v2 && (this.v2Absent.get(pathname) ?? 0) > this.now()) {
+      return { ok: false, status: 404, unavailable: true, error: "this hub has no delegation yet (it predates Workmesh v2)" };
     }
     const req = reqSchema.safeParse(body);
     if (!req.success) {
@@ -494,6 +594,10 @@ export class CoordClient {
       raw = text ? (JSON.parse(text) as unknown) : {};
     } catch {
       raw = undefined;
+    }
+    if (res.status === 404 && v2 && (raw === undefined || (raw as { ok?: unknown }).ok === undefined)) {
+      this.v2Absent.set(pathname, this.now() + this.absentRetryMs);
+      return { ok: false, status: 404, unavailable: true, error: "this hub has no delegation yet (it predates Workmesh v2)" };
     }
     if (res.status === 404 && (raw === undefined || (raw as { ok?: unknown }).ok === undefined)) {
       this.setAvailable(false);
@@ -532,5 +636,19 @@ export class CoordClient {
 
   note(req: HubNoteRequest): Promise<CoordResult<z.infer<typeof hubIdResponseAcceptSchema>>> {
     return this.post("/relay/notes", hubNoteRequestSchema, req, hubIdResponseAcceptSchema);
+  }
+
+  // --- v2 Delegate (SPEC §30) ------------------------------------------------------
+
+  handoff(req: HubHandoffRequest): Promise<CoordResult<HubHandoffResponseAccepted>> {
+    return this.post("/relay/handoffs", hubHandoffRequestSchema, req, hubHandoffResponseAcceptSchema, true);
+  }
+
+  approval(req: HubApprovalRequest): Promise<CoordResult<HubApprovalResponseAccepted>> {
+    return this.post("/relay/approvals", hubApprovalRequestSchema, req, hubApprovalResponseAcceptSchema, true);
+  }
+
+  setGates(req: HubGatesRequest): Promise<CoordResult<HubGatesResponseAccepted>> {
+    return this.post("/relay/gates", hubGatesRequestSchema, req, hubGatesResponseAcceptSchema, true);
   }
 }

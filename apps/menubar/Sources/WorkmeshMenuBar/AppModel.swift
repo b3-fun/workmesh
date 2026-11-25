@@ -13,6 +13,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var teamChecked = false
     /// Teammates whose sessions are expanded, by name. Memory only.
     @Published var expandedPeople = Set<String>()
+    /// v2: handoff and approval ids with an Accept/Decline/Approve/Deny call in flight.
+    @Published private(set) var delegateBusy = Set<String>()
+    /// v2: what was answered ("Accepted", "Denied"), by id, until the daemon no
+    /// longer lists it as offered or pending (it syncs with the hub right after).
+    @Published private(set) var delegateAnswered = [String: String]()
+    /// v2: the daemon's text for a call that failed, by id, shown for a few seconds.
+    @Published private(set) var delegateFailed = [String: String]()
     /// Notify when an agent newly needs you. App-local preference: on unless
     /// the user turned it off.
     @Published var notifyOnNeedsYou: Bool {
@@ -96,6 +103,7 @@ final class AppModel: ObservableObject {
         do {
             team = try await client.fetchTeam(open: menuOpen)
             teamChecked = true
+            pruneAnswered()
             updateNotifier()
         } catch {
             // Daemon down or a bad answer: keep the last view; /state drives "offline".
@@ -123,6 +131,64 @@ final class AppModel: ObservableObject {
             _ = try? await call(client)
             await refresh()
         }
+    }
+
+    // v2 Delegate: answered through the daemon's POST /coord/op, as the person.
+
+    func answerHandoff(_ id: String, accept: Bool) {
+        delegateCall("handoffs", accept ? "accept" : "decline", id: id, done: accept ? "Accepted" : "Declined")
+    }
+
+    func decideApproval(_ id: String, approve: Bool) {
+        delegateCall("approvals", approve ? "approve" : "deny", id: id, done: approve ? "Approved" : "Denied")
+    }
+
+    /// One call at a time per item. On success the row says what was done
+    /// until the daemon drops it; on failure it shows the daemon's text for a
+    /// few seconds. Then /team is read again, and once more after the daemon's
+    /// hub sync.
+    private func delegateCall(_ op: String, _ action: String, id: String, done: String) {
+        guard !delegateBusy.contains(id) else { return }
+        delegateBusy.insert(id)
+        delegateFailed[id] = nil
+        Task {
+            var failure: String?
+            do {
+                let r = try await client.coordOp(op, args: ["action": action, "id": id])
+                if r.ok { delegateAnswered[id] = done } else { failure = r.text ?? "Workmesh couldn't do that." }
+            } catch DaemonError.http(let code) {
+                failure = "The Workmesh daemon answered \(code)."
+            } catch {
+                failure = "The Workmesh daemon didn't answer."
+            }
+            delegateBusy.remove(id)
+            if let failure { showFailure(failure, for: id) }
+            await refreshTeamAfterAction()
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await refreshTeamAfterAction()
+        }
+    }
+
+    private func showFailure(_ text: String, for id: String) {
+        delegateFailed[id] = text
+        Task {
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            if delegateFailed[id] == text { delegateFailed[id] = nil }
+        }
+    }
+
+    /// A read already in flight may predate the action: wait it out, then read.
+    private func refreshTeamAfterAction() async {
+        while teamInFlight { try? await Task.sleep(nanoseconds: 50_000_000) }
+        await refreshTeam()
+    }
+
+    /// An answered item stays marked only while the daemon still lists it as offered or pending.
+    private func pruneAnswered() {
+        guard !delegateAnswered.isEmpty else { return }
+        let d = team?.delegate
+        let open = Set((d?.handoffs.filter(\.isOffered).map(\.id) ?? []) + (d?.approvals.filter(\.isPending).map(\.id) ?? []))
+        delegateAnswered = delegateAnswered.filter { open.contains($0.key) }
     }
 
     func setGranularity(_ value: String) { patch(["granularity": value]) }

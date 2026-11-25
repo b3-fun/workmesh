@@ -102,3 +102,13 @@ export function stopRequestPath(): string {
 export function hubForwardStatePath(): string {
   return path.join(stateDir(), "hub-forward.json");
 }
+
+/** v2 (SPEC §31): handoff runs (logs, exit codes, the running list) and scratch dirs for handoffs with no repo. */
+export function handoffsDir(): string {
+  return path.join(stateDir(), "handoffs");
+}
+
+/** v2: the main checkout of each shared repo this machine's sessions worked in (for handoffs). */
+export function checkoutsPath(): string {
+  return path.join(stateDir(), "checkouts.json");
+}

@@ -6,18 +6,30 @@ import { codexSessionsDir, createCodexWatcher } from "../adapters/codex";
 import type { CodexWatcher } from "../adapters/codex";
 import { claudeProjectsDir, createWorkflowWatcher } from "../adapters/workflow";
 import type { WorkflowWatcher } from "../adapters/workflow";
-import { formatOptionsFromConfig, hubShareLevel, hubStickyShare, readHubConfig, safeConfig, saveConfig } from "../lib/config";
+import {
+  delegateSettings,
+  formatOptionsFromConfig,
+  hubShareLevel,
+  hubStickyShare,
+  loadConfigSafe,
+  readHubConfig,
+  safeConfig,
+  saveConfig,
+} from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
 import { TeamPoller } from "../hub/team";
 import { CoordClient } from "../hub/coord";
 import { CoordHooks } from "./coord-hooks";
 import { runCoordOp } from "./coord-ops";
+import { Delegate } from "./delegate";
+import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
+import { codexWaker } from "./codex-wake";
 import type { CoordSummary } from "./server";
 import { readGithubLogin } from "../lib/github";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
-import { hubForwardStatePath, stateDir } from "../lib/paths";
+import { checkoutsPath, handoffsDir, hubForwardStatePath, stateDir } from "../lib/paths";
 import { removeStateFile } from "../hub/persist";
 import { findRunningDaemon, takeStopRequest } from "../lib/daemon-control";
 import { SERVICE_ENV } from "../lib/service";
@@ -94,6 +106,35 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   // (`setup --claude-dir`), else $CLAUDE_CONFIG_DIR, else ~/.claude.
   const claudeDir = config.adapters.claudeCode.configDir ?? claudeConfigDir();
   let liveClaude: Map<string, ClaudeProcess> | undefined = claudeOn ? readLiveClaudeSessions(claudeDir) : undefined;
+  // v2 Delegate (SPEC §31): the settings are read from disk (at most every 2 s), so `workmesh roots|wake|handoffs`
+  // apply without a restart.
+  let settingsCache: { at: number; v: ReturnType<typeof delegateSettings> } | undefined;
+  const settings = (): ReturnType<typeof delegateSettings> => {
+    const now = Date.now();
+    if (!settingsCache || now - settingsCache.at > 2000) settingsCache = { at: now, v: delegateSettings(loadConfigSafe()) };
+    return settingsCache.v;
+  };
+  const checkouts = new CheckoutIndex(checkoutsPath());
+  const runner = new HandoffRunner({
+    coord: () => coord,
+    settings: () => ({ ...settings(), share: liveConfig.hub ? hubShareLevel(liveConfig.hub) : "metadata" }),
+    checkouts,
+    dir: handoffsDir(),
+    log,
+  });
+  const delegate = new Delegate({
+    coord: () => coord,
+    getSession: (key) => store.get(key),
+    isShared: (key) => forwarder?.isShared(key) ?? false,
+    repoOf: (dir) => forwarder?.classify(dir)?.repo,
+    settings,
+    runner,
+    codexWake: config.adapters.codex.enabled ? codexWaker({ log }) : undefined,
+    log,
+  });
+  /** The cwd each session last reported (the checkout index learns a repo's checkout once per session and dir). */
+  const lastCwd = new Map<string, string>();
+
   const startForwarder = (hub: HubConfig | undefined): void => {
     const previous = forwarder;
     forwarder = undefined;
@@ -114,7 +155,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       url: hub.url,
       token: hub.deviceToken,
       rule: hub.project,
-      includeDirs: hub.includeDirs,
+      // Handoffs with no repo run in Workmesh's own scratch dirs, shared so they show on the board (SPEC §31).
+      includeDirs: [...hub.includeDirs, handoffsDir()],
       excludeDirs: hub.excludeDirs,
       listSessions: () => store.list(),
       getSession: (key) => store.get(key),
@@ -152,8 +194,10 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       person: hub.person?.name,
       active: () => fwd.hasLiveShared(),
       log,
+      onSync: (next, previous) => delegate.onSync(next, previous),
     });
     coord.start();
+    runner.start();
     if (!githubRead) {
       githubRead = true;
       void readGithubLogin().then((login) => {
@@ -177,6 +221,14 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     store.apply(clean);
     pusher.notify();
     forwarder?.observe(clean);
+    const key = `${clean.source}:${clean.sessionId}`;
+    if (clean.cwd && forwarder && lastCwd.get(key) !== clean.cwd) {
+      lastCwd.set(key, clean.cwd);
+      if (lastCwd.size > 2000) lastCwd.clear();
+      const target = forwarder.classify(clean.cwd);
+      if (target?.repo) checkouts.observe(clean.cwd, target.repo);
+    }
+    delegate.observe(clean);
   };
 
   // v1: hooks get refusals and context from the cached coordination state (never a network call).
@@ -192,6 +244,14 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       deny = coordHooks.refuse(event, hook);
     } catch {
       deny = undefined; // fail open
+    }
+    if (!deny) {
+      try {
+        // v2: an action this person gated waits for an approval (SPEC §31).
+        deny = delegate.gateRefusal(event, hook);
+      } catch {
+        deny = undefined; // fail open
+      }
     }
     if (deny) {
       // The tool won't run: keep the session alive, but nothing about the refused call goes anywhere.
@@ -291,6 +351,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         pollMs: view.pollMs,
         team: view.team,
         coord: coordSummary(),
+        delegate: delegate.summary((local) => store.get(local)?.name),
       };
     },
     applyHookEvent,
@@ -303,7 +364,10 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         classify: (p) => forwarder?.classify(p),
         isShared: (key) => forwarder?.isShared(key) ?? false,
         claudeSessions: () => readLiveClaudeSessions(claudeDir),
+        onAccepted: (h) => delegate.accepted(h),
+        runningHandoffs: () => runner.running(),
       }),
+    wakeWait: (session, timeoutMs, signal) => delegate.wait(session, timeoutMs, signal),
     reloadHub: () => {
       const hub = readHubConfig();
       if (hub === "unreadable") throw new Error("config file is unreadable — hub settings unchanged");
@@ -316,10 +380,15 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       // `workmesh hub …` writes the hub section while the daemon runs: take
       // it from disk so saving a live patch never drops a pairing.
       const hubOnDisk = readHubConfig();
+      const onDisk = hubOnDisk === "unreadable" ? liveConfig : loadConfigSafe();
       liveConfig = {
         ...liveConfig,
         ...patch,
         hub: hubOnDisk === "unreadable" ? liveConfig.hub : hubOnDisk,
+        // v2 sections the CLI writes while the daemon runs (roots, wake, gates).
+        handoffs: onDisk.handoffs,
+        wake: onDisk.wake,
+        gates: onDisk.gates,
       };
       formatOpts = formatOptionsFromConfig(liveConfig);
       pusher.applyConfig(formatOpts, liveConfig.statusPolicy);
@@ -374,6 +443,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         for (const key of actions.touch) store.touch(key, now);
         for (const key of actions.reap) {
           store.remove(key);
+          delegate.sessionGone(key);
           log(`ended ${key}: its Claude Code process is gone`);
         }
         if (actions.reap.length > 0) pusher.notify();
@@ -403,6 +473,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         try {
           teamPoller?.stop();
           coord?.stop();
+          runner.stop();
+          checkouts.save();
           await Promise.all([pusher.shutdown(), forwarder?.stop()]);
         } catch {
           // best effort

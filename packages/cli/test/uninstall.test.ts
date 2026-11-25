@@ -178,4 +178,54 @@ describe("claudeJsonPath", () => {
     expect(claudeJsonPath(path.join(os.homedir(), ".claude"))).toBe(path.join(os.homedir(), ".claude.json"));
     expect(claudeJsonPath(path.join(dir, ".clive"))).toBe(path.join(dir, ".clive", ".claude.json"));
   });
+
+  it("follows Claude Code when CLAUDE_CONFIG_DIR is set, even to ~/.claude", async () => {
+    const { claudeJsonPath } = await import("../src/adapters/mcp-install");
+    const def = path.join(os.homedir(), ".claude");
+    try {
+      process.env.CLAUDE_CONFIG_DIR = def;
+      expect(claudeJsonPath()).toBe(path.join(def, ".claude.json"));
+      expect(claudeJsonPath(def)).toBe(path.join(def, ".claude.json"));
+      process.env.CLAUDE_CONFIG_DIR = path.join(dir, ".clive");
+      expect(claudeJsonPath()).toBe(path.join(dir, ".clive", ".claude.json"));
+      // the default profile named by a flag while the variable points elsewhere: Claude Code run without it
+      expect(claudeJsonPath(def)).toBe(path.join(os.homedir(), ".claude.json"));
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    }
+  });
+});
+
+describe("workmesh uninstall and the daemon service", () => {
+  it("removes the service setup installed, and --no-service keeps it", async () => {
+    vi.resetModules();
+    const uninstallService = vi.fn(() => true);
+    vi.doMock("../src/lib/service", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../src/lib/service")>()),
+      uninstallService,
+    }));
+    const saved = { HOME: process.env.HOME };
+    process.env.HOME = dir;
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    try {
+      const { runUninstall: run } = await import("../src/commands/uninstall");
+      await run({ claudeDir: path.join(dir, ".clive"), codex: false });
+      expect(uninstallService).toHaveBeenCalledTimes(1);
+      expect(lines.join("\n")).toContain("daemon service: ");
+      expect(lines.join("\n")).toContain("removed");
+
+      lines.length = 0;
+      await run({ claudeDir: path.join(dir, ".clive"), codex: false, service: false });
+      expect(uninstallService).toHaveBeenCalledTimes(1);
+      expect(lines.join("\n")).toContain("kept (--no-service)");
+    } finally {
+      log.mockRestore();
+      process.env.HOME = saved.HOME;
+      vi.doUnmock("../src/lib/service");
+      vi.resetModules();
+    }
+  });
 });

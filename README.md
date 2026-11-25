@@ -53,7 +53,7 @@ workmesh hub connect <url>         # join your team's board (approve in the brow
 Codex install (`$CODEX_HOME` or `~/.codex`) and says so; `--no-codex` leaves Codex alone,
 `--codex` installs it anyway. The `workmesh` MCP server is registered in the same
 profiles (`--no-mcp` skips it). `workmesh uninstall` takes the hooks and the MCP server
-out again.
+out again, and removes the daemon service setup installed (`--no-service` keeps it).
 
 Claude Code and Codex sessions appear automatically via their hooks (Codex also keeps
 its notify hook and a session watcher as fallbacks). Anything else can report itself
@@ -522,7 +522,7 @@ Open questions:
 | Command | Does |
 |---|---|
 | `workmesh setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt; `--hooks-only` just installs or refreshes the hooks and the `workmesh` MCP server (`--no-mcp` skips it); `--claude-dir <path>` picks the Claude Code profile (default `$CLAUDE_CONFIG_DIR`, else `~/.claude`); `--codex` / `--no-codex` decide about Codex (default: only when installed) |
-| `workmesh uninstall` | Remove Workmesh's hooks and MCP server from Claude Code (`settings.json`, `.claude.json`) and Codex (`hooks.json`, `config.toml`), keeping everything else; backs up each file first (`--claude-dir <path>`, `--no-codex`) |
+| `workmesh uninstall` | Remove Workmesh's hooks and MCP server from Claude Code (`settings.json`, `.claude.json`) and Codex (`hooks.json`, `config.toml`), keeping everything else, and its launchd / systemd daemon service (which stops the daemon it ran); backs up each file first (`--claude-dir <path>`, `--no-codex`, `--no-service`) |
 | `workmesh start [--detach]` | Run the daemon, foreground or in the background |
 | `workmesh stop` | Stop the background daemon; returns once it has exited (SIGKILL after 5 s). Also stops a daemon started before the rename |
 | `workmesh restart` | Stop the daemon, wait for it to exit, and start it again in the background |

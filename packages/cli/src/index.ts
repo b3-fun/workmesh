@@ -100,9 +100,10 @@ service
 
 program
   .command("uninstall")
-  .description("Remove Workmesh's hooks from Claude Code and Codex, keeping every other hook (backs up each file)")
+  .description("Remove Workmesh's hooks and MCP server from Claude Code and Codex, and its daemon service, keeping every other hook (backs up each file)")
   .option("--claude-dir <path>", "Claude Code config dir to unhook (default: $CLAUDE_CONFIG_DIR, else ~/.claude)")
   .option("--no-codex", "leave Codex's files alone")
+  .option("--no-service", "keep the daemon service (launchd / systemd) installed")
   .action(wrap(runUninstall));
 
 program

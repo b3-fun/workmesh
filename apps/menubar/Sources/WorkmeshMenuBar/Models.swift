@@ -381,6 +381,8 @@ struct TeamPerson: Decodable, Identifiable {
     let email: String?
     let github: String?
     let online: Bool
+    /// v0.10 (SPEC §24): the hub's presence, "online" | "reconnecting" | "asleep" | "offline"; nil from older hubs.
+    let presence: String?
     let counts: TeamCounts
 
     var id: String { name }
@@ -390,7 +392,7 @@ struct TeamPerson: Decodable, Identifiable {
         return online ? 1 : 2
     }
 
-    private enum K: String, CodingKey { case name, email, github, online, counts }
+    private enum K: String, CodingKey { case name, email, github, online, presence, counts }
     private enum CountKeys: String, CodingKey { case working, waiting, idle }
 
     init(from decoder: Decoder) throws {
@@ -402,6 +404,8 @@ struct TeamPerson: Decodable, Identifiable {
         email = c.text(.email)
         github = c.text(.github)
         online = c.lenient(Bool.self, .online) ?? false
+        let p = c.text(.presence)
+        presence = ["online", "reconnecting", "asleep", "offline"].contains(p ?? "") ? p : nil
         if let cc = try? c.nestedContainer(keyedBy: CountKeys.self, forKey: .counts) {
             counts = TeamCounts(working: cc.count(.working), waiting: cc.count(.waiting), idle: cc.count(.idle))
         } else {

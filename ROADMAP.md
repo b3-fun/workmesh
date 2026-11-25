@@ -27,6 +27,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **done** (11-25): wire #10 (SPEC §21), relay #12 in 0.10.0 (npm), hub and board workmesh-cloud #5; the Workmesh agent in Linear (claims as agent sessions, replies and stop from Linear) workmesh-cloud #11, #13, #14 |
 | Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); relay MCP tool `ask` next |
 | v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **done** (11-25): wire #22 (SPEC §30), relay #23 + #26 in **0.11.0** (npm, GitHub release v0.11.0), hub and board workmesh-cloud #12; follow-ups below |
+| Onboarding hardening | First run solid on macOS and Linux: lingering so an SSH box stays online after logout, no half-installed systemd unit, `init` checks the hub heard from the machine, `doctor` names why a machine shows offline, one pairing per machine (the same hub under two addresses, a re-pair retires the old device), "online, no agents running" and "paired, never connected" on the board; a Docker smoke test (Node 20/22/24, with and without systemd, over SSH) | **in review** (11-25): relay 0.11.1 (not published), hub workmesh-cloud |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -234,8 +235,30 @@ this". Wire: SPEC §26.
 - **Next:** a live handoff between two people's machines; the approval retry checked live (does the agent carry on
   without its person's word in the terminal); the team onboarded (Mitch, An, David, Gio) on 0.11.0.
 
+### Onboarding hardening (0.11.1, 11-25)
+
+- **Why:** Mitch paired `b3-box` (0.10.0) over SSH; the hub heard from it once, a second after pairing, and never
+  again. Reproduced in Docker: systemd stops a user's services ~10 s after the last logout unless the user lingers, so
+  the daemon (a `systemd --user` unit since 0.10.0) stopped as he logged out. A paired machine with no agents was never
+  the problem: the relay heartbeats every 30 s with or without sessions. An upgraded from agentblip 0.6.0 (paired at
+  bullpen.b3os.org) and `workmesh init https://workmesh.b3os.org` paired a second device for the same machine.
+- **Relay (0.11.1):** `init`/`setup`/`service install` turn lingering on (offer `sudo` in a terminal where logind
+  refuses; `--no-linger`), never write a unit systemd can't run, find `/run/user/<uid>` for `su` shells, run detached
+  without systemd; `init` keeps a pairing made under another address of the same hub and ends by checking the hub heard
+  from the machine; `doctor` says since when the hub hasn't heard from the machine and why (daemon down, lingering off,
+  no user session, wrong hub address, superseded token), and skips Codex checks where Codex isn't installed;
+  `scripts/smoke-linux/smoke.sh` (Docker; CI runs the light version against a stand-in hub).
+- **Hub:** pairing a machine name again retires the person's older device for it (401 "superseded", its sessions end
+  and leave the board); the board says "online, no agents running" and "paired, never connected" (with `workmesh
+  doctor` as the next step).
+
 ## Decision log
 
+- 11-25 Onboarding: `workmesh init` turns lingering on by itself on Linux. The alternative, printing a hint, is what
+  left Mitch offline; lingering is per user, reversible (`loginctl disable-linger`), and what a person running an agent
+  daemon on a server wants. Where only an admin may, it asks before running `sudo`, never silently.
+- 11-25 Onboarding: a machine paired again (same person, same machine name) supersedes the older device rather than
+  leaving both. Two machines that share a name need `--machine`; the superseded relay's log says so.
 - 11-25 Teammates set up with one command: `npm i -g @b3os/workmesh@latest && workmesh init https://workmesh.b3os.org`.
 
 - 11-25 Linear identities: one Workmesh app for the team, not one per person. Linear gives an app one identity, so the

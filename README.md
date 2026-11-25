@@ -51,8 +51,10 @@ installs or refreshes the agent hooks and the `workmesh` MCP server, runs the da
 launchd / systemd when it can) and restarts it on the current build, then pairs this machine
 with the hub, opening the browser to approve. Running it again is safe: hooks that are
 already right stay as they are, and pairing is skipped while the hub still accepts this
-machine (`--repair` pairs again). `--share conversation|metadata`, `--no-codex`, `--no-open`,
-`--machine <name>`, `--claude-dir <path>`, `--no-mcp`, `--no-service` and `--no-wake` pass
+machine (`--repair` pairs again). A machine paired under another address of the same hub
+(`bullpen.b3os.org` before the rename) keeps its pairing and switches to the address you
+gave. `--share conversation|metadata`, `--no-codex`, `--no-open`, `--machine <name>`,
+`--claude-dir <path>`, `--no-mcp`, `--no-service`, `--no-linger` and `--no-wake` pass
 through. The same steps by hand:
 
 ```bash
@@ -67,6 +69,32 @@ Codex install (`$CODEX_HOME` or `~/.codex`) and says so; `--no-codex` leaves Cod
 `--codex` installs it anyway. The `workmesh` MCP server is registered in the same
 profiles (`--no-mcp` skips it). `workmesh uninstall` takes the hooks and the MCP server
 out again, and removes the daemon service setup installed (`--no-service` keeps it).
+
+It ends by checking that the hub heard from this machine: from then on you show as
+online on the board, with "no agents running" until an agent works in a shared repo.
+`workmesh doctor` says what is wrong when a machine shows offline, and what to run.
+
+### Linux
+
+`workmesh init` works the same on Linux, with Node 20, 22 or 24:
+
+- **With systemd** (Ubuntu, Debian, Fedora, WSL with systemd) the daemon runs as a
+  `systemd --user` unit, `~/.config/systemd/user/workmesh.service`. systemd stops your
+  user services about 10 s after you log out of your last session, so on a box you SSH
+  into, the daemon would stop when you leave and the board would show you offline.
+  `init` turns on lingering for your user (`loginctl enable-linger`) so the daemon keeps
+  running and starts at boot. Where only an admin may do that (no polkit, as on a minimal
+  Debian), `init` offers to run `sudo loginctl enable-linger $USER` in the terminal, and
+  prints it otherwise. `--no-linger` leaves lingering off. Undo with
+  `loginctl disable-linger`.
+- **Without systemd** (a container, WSL without systemd, a minimal VM) the daemon runs
+  detached in the background and outlives the shell that started it. After a reboot the
+  next agent hook starts it again.
+- **`su`, `sudo -u` or cron shells** often lack `XDG_RUNTIME_DIR`; Workmesh finds your
+  user manager at `/run/user/<uid>` anyway.
+- Check it with `workmesh doctor`; it names the cause (`logout`, `daemon service`,
+  `hub forward`) and the fix. `scripts/smoke-linux/smoke.sh` runs this whole path on
+  fresh Linux boxes in Docker (Node 20/22/24, with and without systemd, over SSH).
 
 Claude Code and Codex sessions appear automatically via their hooks (Codex also keeps
 its notify hook and a session watcher as fallbacks). Anything else can report itself

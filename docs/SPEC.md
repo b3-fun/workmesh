@@ -103,6 +103,19 @@ by someone else `409`, expired `410`. A code approved in time delivers its token
 reads the pairing with `GET /api/pair/:code` → `{ code, machine, client, status: "pending" | "approved" | "expired",
 expiresAt, approvedBy }`.
 
+**A machine paired again retires its older pairing** (0.11.1). When a person completes a pairing for a machine name
+they already have a device for, the hub revokes that older device: its open sessions end, it leaves the board, and its
+token answers every `/relay/*` call with `401 { "error": "superseded: <machine> paired with this hub again …",
+"reason": "superseded" }` (a token revoked by hand keeps the plain `401`). A relay that gets it stops forwarding and
+says so; the relay that paired again sends its open sessions under the new device. Two machines with the same name
+need their own names (`workmesh init <hub> --machine <name>`).
+
+**One hub, several addresses** (0.11.1). `workmesh init <url>` keeps an existing pairing when `<url>` is the hub it
+already paired with under another address: B3's two hosts (§1) always; another host under the same parent domain (or
+both on this machine) when it accepts the machine's device token (`GET /relay/team` answers anything but `401`/`403`).
+The relay never shows a token to a host outside that domain. The pairing is kept and the relay forwards to `<url>`
+from then on.
+
 ### 3.2 Ingest
 
 `POST /relay/ingest`, `Authorization: Bearer bp_…`
@@ -659,6 +672,25 @@ takes the state it reports.
   `start --detach` and the hooks' autostart go through the service when it is installed, and a service daemon that
   finds another one running waits for it to exit instead of starting a second. `workmesh service
   install|uninstall|status` manages it by hand; `workmesh doctor` reports it and the state file.
+
+**Onboarding on Linux** (0.11.1, after Mitch's `b3-box` on 11-25: paired over SSH, sent one heartbeat, then nothing):
+- A relay sends a heartbeat every 30 s whether or not it has sessions, so a paired machine with no agents running is
+  `online` on the board ("online, no agents running"). A machine that paired but never sent is "paired, never
+  connected" on the board, with `workmesh doctor` as the next step.
+- systemd stops a user's services about 10 s after their last session ends unless the user lingers. On a box you SSH
+  into, that stopped the daemon at logout. `workmesh init`, `setup` and `service install` turn lingering on
+  (`loginctl enable-linger`, no password prompt; allowed for yourself where polkit runs, as on Ubuntu Server and
+  Fedora). Where logind refuses (no polkit, as on a minimal Debian), they offer `sudo loginctl enable-linger <user>` in
+  a terminal and otherwise print it; `--no-linger` leaves lingering off. `workmesh doctor` warns while it is off.
+- No unit file is written unless `systemctl --user` reaches the user's manager. A shell without `XDG_RUNTIME_DIR`
+  (`su`, `sudo -u`, cron) gets `/run/user/<uid>` for its systemctl calls. Without systemd (a container, WSL without
+  systemd, a minimal VM) the daemon runs detached (its own session, so it outlives the shell that started it), and
+  the next agent hook starts it after a reboot.
+- `workmesh init` ends by waiting (≤ 10 s) for the daemon's first accepted send and says whether the hub heard from
+  the machine. The forwarder's state file keeps `lastContactAt`, the last time the hub accepted a send, so `doctor`
+  can say since when the hub hasn't heard from a machine whose daemon is down, and why: no daemon (`workmesh
+  restart`), lingering off or no systemd user session (`sudo loginctl enable-linger $USER`), no service installed, a
+  daemon forwarding to another hub address than the one paired, or a superseded or rejected token (`workmesh init`).
 
 ---
 

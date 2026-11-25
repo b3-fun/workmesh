@@ -15,5 +15,8 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     environment: "node",
+    // Tests that install hooks point HOME at a temp dir; a CLAUDE_CONFIG_DIR or
+    // CODEX_HOME from the developer's shell would aim them at a real profile.
+    setupFiles: ["test/setup-env.ts"],
   },
 });

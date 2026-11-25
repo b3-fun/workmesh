@@ -177,11 +177,11 @@ describe("installCodexHooks", () => {
     },
   };
 
-  it("merges without touching other entries and backs up once", () => {
+  it("merges without touching other entries and backs the file up first", () => {
     fs.writeFileSync(hooksPath, JSON.stringify(existing, null, 2));
     const result = installCodexHooks(hooksPath);
     expect(result.changed).toBe(true);
-    expect(result.backupPath).toBe(`${hooksPath}.workmesh-backup`);
+    expect(result.backupPath).toMatch(/hooks\.json\.workmesh-backup-\d{8}T\d{9}Z$/);
     expect(JSON.parse(fs.readFileSync(result.backupPath!, "utf8"))).toEqual(existing);
 
     const doc = JSON.parse(fs.readFileSync(hooksPath, "utf8")) as typeof existing & {

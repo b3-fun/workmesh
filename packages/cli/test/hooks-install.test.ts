@@ -119,7 +119,7 @@ describe("installClaudeHooks", () => {
     fs.writeFileSync(settingsPath, JSON.stringify({ hooks }, null, 2));
     const result = installClaudeHooks(settingsPath);
     expect(result.changed).toBe(true);
-    expect(result.backupPath).toBe(`${settingsPath}.workmesh-backup`);
+    expect(result.backupPath).toMatch(/settings\.json\.workmesh-backup-\d{8}T\d{9}Z$/);
     const after = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
     for (const event of CLAUDE_HOOK_EVENTS) {
       expect(after.hooks[event]).toHaveLength(1);
@@ -128,22 +128,25 @@ describe("installClaudeHooks", () => {
     expect(installClaudeHooks(settingsPath).changed).toBe(false);
   });
 
-  it("backs up the original file exactly once", () => {
+  it("backs up the file as it was before each change, in a new file every time", () => {
     fs.writeFileSync(settingsPath, JSON.stringify({ model: "opus" }));
     const first = installClaudeHooks(settingsPath);
-    expect(first.backupPath).toBe(`${settingsPath}.workmesh-backup`);
+    expect(first.backupPath).toMatch(/settings\.json\.workmesh-backup-\d{8}T\d{9}Z$/);
     expect(fs.readFileSync(first.backupPath ?? "", "utf8")).toBe(
       JSON.stringify({ model: "opus" }),
     );
 
-    // remove one event so a second install writes again — backup must survive
+    // remove one event so a second install writes again: a second backup, of that state
     const settings = readSettings();
     delete settings.hooks.Stop;
     fs.writeFileSync(settingsPath, JSON.stringify(settings));
-    installClaudeHooks(settingsPath);
-    expect(fs.readFileSync(`${settingsPath}.workmesh-backup`, "utf8")).toBe(
-      JSON.stringify({ model: "opus" }),
-    );
+    const second = installClaudeHooks(settingsPath);
+    expect(second.backupPath).toBeDefined();
+    expect(second.backupPath).not.toBe(first.backupPath);
+    expect(fs.readFileSync(second.backupPath ?? "", "utf8")).toBe(JSON.stringify(settings));
+    expect(fs.readFileSync(first.backupPath ?? "", "utf8")).toBe(JSON.stringify({ model: "opus" }));
+    // nothing to change: no new backup
+    expect(installClaudeHooks(settingsPath).backupPath).toBeUndefined();
   });
 
   it("reports not-installed for partial installs", () => {

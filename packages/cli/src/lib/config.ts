@@ -77,7 +77,14 @@ export const configSchema = z.object({
   adapters: z
     .object({
       claudeCode: z
-        .object({ enabled: z.boolean().default(true) })
+        .object({
+          enabled: z.boolean().default(true),
+          /**
+           * Claude Code config dir the daemon reads sessions and workflows
+           * from (`setup --claude-dir`). Unset: $CLAUDE_CONFIG_DIR, else ~/.claude.
+           */
+          configDir: z.string().optional(),
+        })
         .default({ enabled: true }),
       codex: z
         .object({

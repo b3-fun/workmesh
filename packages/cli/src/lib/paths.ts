@@ -10,6 +10,20 @@ function stateBase(): string {
   return process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state");
 }
 
+/**
+ * Claude Code's config dir: $CLAUDE_CONFIG_DIR, else ~/.claude. Claude Code
+ * reads its settings, sessions and projects from here, so hook installs, the
+ * workflow watcher and the liveness probe all resolve it the same way.
+ */
+export function claudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
+}
+
+/** Codex's home: $CODEX_HOME, else ~/.codex (hooks.json, config.toml, sessions). */
+export function codexHome(): string {
+  return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+}
+
 /** ~/.config/workmesh (XDG_CONFIG_HOME respected). */
 export function configDir(): string {
   return path.join(configBase(), APP_NAME);

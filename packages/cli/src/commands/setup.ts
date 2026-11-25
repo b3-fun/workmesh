@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import path from "node:path";
 import { spawn } from "node:child_process";
 import { pairPollResponseSchema, pairStartResponseSchema } from "@workmesh/core";
 import {
@@ -10,9 +9,12 @@ import {
   installCodexNotify,
 } from "../adapters/codex";
 import { claudeSettingsPath, installClaudeHooks } from "../adapters/claude-code";
-import { loadConfigSafe, saveConfig } from "../lib/config";
+import { hubShareLevel, loadConfigSafe, saveConfig } from "../lib/config";
+import type { Config } from "../lib/config";
 import { isDaemonUp } from "../lib/daemon-client";
-import { configPath } from "../lib/paths";
+import { versionManagedNode } from "../lib/hook-files";
+import { claudeConfigDir, codexHome, configPath } from "../lib/paths";
+import { resolveDir } from "./hub";
 import {
   ask,
   askSecret,
@@ -124,24 +126,58 @@ export interface SetupOptions {
   relayUrl?: string;
   /** Install or refresh agent hooks only: no prompts, no pairing, config untouched. */
   hooksOnly?: boolean;
+  /** Claude Code config dir to hook (default $CLAUDE_CONFIG_DIR, else ~/.claude). */
+  claudeDir?: string;
+  /** `--codex` / `--no-codex`; undefined: only when a Codex install is found. */
+  codex?: boolean;
 }
 
-/** `workmesh setup --hooks-only`: (re)install Claude Code and Codex hooks, nothing else. */
-export function installHooksOnly(): void {
-  console.log(bold("workmesh setup --hooks-only"));
-  try {
-    const result = installClaudeHooks();
-    console.log(
-      `  claude code: ${result.changed ? green("hooks installed") : dim("already installed")}` +
-        (result.backupPath ? dim(` (backup: ${result.backupPath})`) : ""),
+/** `--claude-dir`, else $CLAUDE_CONFIG_DIR, else ~/.claude. */
+export function resolveClaudeDir(flag?: string): string {
+  return flag ? resolveDir(flag) : claudeConfigDir();
+}
+
+/** True when this machine has Codex: $CODEX_HOME is set or ~/.codex exists. */
+export function codexDetected(): boolean {
+  return Boolean(process.env.CODEX_HOME) || fs.existsSync(codexHome());
+}
+
+/**
+ * Whether to touch Codex, and the line that says why. An explicit flag wins;
+ * without one, only a Codex install found on this machine is hooked.
+ */
+export function codexDecision(flag: boolean | undefined): { install: boolean; why: string } {
+  if (flag === false) return { install: false, why: "skipped (--no-codex)" };
+  if (flag === true) return { install: true, why: `installing in ${codexHome()} (--codex)` };
+  if (codexDetected()) {
+    return { install: true, why: `found ${codexHome()}, installing there (pass --no-codex to leave Codex alone)` };
+  }
+  return { install: false, why: `no Codex install found (${codexHome()}), skipped (pass --codex to install anyway)` };
+}
+
+/** A warning when the hooks will pin a Node that a version manager may remove. */
+export function nodePathWarning(execPath = process.execPath): string | undefined {
+  if (!versionManagedNode(execPath)) return undefined;
+  return (
+    `hooks run ${execPath}, a version-managed Node: after you upgrade or remove it, every hook fails ` +
+    "until you run `workmesh setup --hooks-only` again (`workmesh doctor` checks for this)"
+  );
+}
+
+/** What `hub connect` will share, or does share: printed by setup so nobody has to guess. */
+export function sharingSummary(config: Pick<Config, "hub">): string {
+  if (!config.hub) {
+    return (
+      "hub: not connected. `workmesh hub connect <url>` shares conversation by default (your prompts and the agent's " +
+      "replies, redacted) once a session touches a shared repo; add `--share metadata` for metadata only"
     );
-  } catch (err) {
-    console.log(`  claude code: ${red(`could not install hooks: ${errorMessage(err)}`)}`);
   }
-  if (!fs.existsSync(path.dirname(codexConfigPath())) && !process.env.CODEX_HOME) {
-    console.log(`  codex: ${dim("not installed here (no ~/.codex), skipped")}`);
-    return;
-  }
+  const level = hubShareLevel(config.hub);
+  const other = level === "conversation" ? "metadata" : "conversation";
+  return `hub: sharing ${level} with ${config.hub.project.name}; switch with \`workmesh hub share ${other}\``;
+}
+
+function installCodex(): void {
   try {
     const result = installCodexHooks();
     console.log(
@@ -159,16 +195,49 @@ export function installHooksOnly(): void {
     if (notify === "manual") {
       console.log(`  codex notify: ${dim("config.toml already sets notify; left as is (fallback only)")}`);
     } else {
-      console.log(`  codex notify: ${notify === "installed" ? green("installed") : dim("already installed")}`);
+      console.log(`  codex notify: ${notify === "installed" ? green(`installed in ${codexConfigPath()}`) : dim("already installed")}`);
     }
   } catch (err) {
     console.log(`  codex notify: ${red(`could not update config.toml: ${errorMessage(err)}`)}`);
   }
 }
 
+/** `workmesh setup --hooks-only`: (re)install Claude Code hooks, and Codex's when found or asked for. */
+export function installHooksOnly(opts: Pick<SetupOptions, "claudeDir" | "codex"> = {}): void {
+  console.log(bold("workmesh setup --hooks-only"));
+  const settingsPath = claudeSettingsPath(resolveClaudeDir(opts.claudeDir));
+  try {
+    const result = installClaudeHooks(settingsPath);
+    console.log(
+      `  claude code: ${result.changed ? green(`hooks installed in ${settingsPath}`) : dim(`already installed in ${settingsPath}`)}` +
+        (result.backupPath ? dim(` (backup: ${result.backupPath})`) : ""),
+    );
+  } catch (err) {
+    console.log(`  claude code: ${red(`could not install hooks in ${settingsPath}: ${errorMessage(err)}`)}`);
+  }
+  if (opts.claudeDir) {
+    console.log(
+      dim(
+        "  the daemon reads sessions and workflows from $CLAUDE_CONFIG_DIR (a daemon a hook starts inherits it); " +
+          "for a daemon started elsewhere set adapters.claudeCode.configDir in config.json",
+      ),
+    );
+  }
+  const codex = codexDecision(opts.codex);
+  if (codex.install) {
+    console.log(`  codex: ${codex.why}`);
+    installCodex();
+  } else {
+    console.log(`  codex: ${dim(codex.why)}`);
+  }
+  const warning = nodePathWarning();
+  if (warning) console.log(`  ${yellow(`note: ${warning}`)}`);
+  console.log(`  ${sharingSummary(loadConfigSafe())}`);
+}
+
 export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   if (opts.hooksOnly) {
-    installHooksOnly();
+    installHooksOnly(opts);
     return;
   }
   console.log(bold("workmesh setup"));
@@ -241,14 +310,16 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   );
 
   console.log("");
-  const wantClaude = await confirm(
-    `Install Claude Code hooks (${claudeSettingsPath()})?`,
-    true,
-  );
+  const claudeDir = resolveClaudeDir(opts.claudeDir);
+  const settingsPath = claudeSettingsPath(claudeDir);
+  const wantClaude = await confirm(`Install Claude Code hooks (${settingsPath})?`, true);
   config.adapters.claudeCode.enabled = wantClaude;
+  // A dir given on the command line is remembered, so a daemon started from
+  // any terminal watches the same profile the hooks were installed in.
+  if (opts.claudeDir) config.adapters.claudeCode.configDir = claudeDir;
   if (wantClaude) {
     try {
-      const result = installClaudeHooks();
+      const result = installClaudeHooks(settingsPath);
       console.log(
         result.changed
           ? `  ${green("hooks installed")}${result.backupPath ? dim(` (backup: ${result.backupPath})`) : ""}`
@@ -259,10 +330,12 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     }
   }
 
-  const wantCodex = await confirm(
-    `Install Codex hooks (${codexHooksPath()}, plus the notify fallback in ${codexConfigPath()})?`,
-    fs.existsSync(path.dirname(codexConfigPath())),
-  );
+  const wantCodex =
+    opts.codex ??
+    (await confirm(
+      `Install Codex hooks (${codexHooksPath()}, plus the notify fallback in ${codexConfigPath()})?`,
+      codexDetected(),
+    ));
   config.adapters.codex.enabled = wantCodex;
   if (wantCodex) {
     try {
@@ -298,6 +371,9 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   saveConfig(config);
   console.log("");
   console.log(green(`config saved to ${configPath()}`));
+  const warning = nodePathWarning();
+  if (warning) console.log(yellow(`note: ${warning}`));
+  console.log(sharingSummary(config));
   if (await isDaemonUp(config.port)) {
     // The daemon captures its config (sink, token, granularity) at startup —
     // without a restart the changes above silently never apply.

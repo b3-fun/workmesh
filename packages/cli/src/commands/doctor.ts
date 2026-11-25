@@ -2,6 +2,7 @@ import fs from "node:fs";
 import {
   areClaudeHooksInstalled,
   claudeSettingsPath,
+  staleClaudeHookNodes,
 } from "../adapters/claude-code";
 import {
   areCodexHooksInstalled,
@@ -14,6 +15,7 @@ import type { Config } from "../lib/config";
 import { getHealth, getHubState, sinkConfigured } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
 import { createSink } from "../sinks";
+import { resolveClaudeDir } from "./setup";
 import {
   dim,
   errorMessage,
@@ -37,6 +39,8 @@ const fail = (name: string, detail: string): CheckResult => ({ name, status: "fa
 
 export interface DoctorOptions {
   json?: boolean;
+  /** Claude Code config dir to check (default $CLAUDE_CONFIG_DIR, else ~/.claude). */
+  claudeDir?: string;
 }
 
 export async function runDoctor(opts: DoctorOptions): Promise<void> {
@@ -186,10 +190,14 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     }
   }
 
+  const settingsPath = claudeSettingsPath(resolveClaudeDir(opts.claudeDir));
+  const staleNodes = staleClaudeHookNodes(settingsPath);
   checks.push(
-    areClaudeHooksInstalled()
-      ? ok("claude code hooks", claudeSettingsPath())
-      : warn("claude code hooks", "not installed — run `workmesh setup`"),
+    staleNodes.length > 0
+      ? fail("claude code hooks", `${settingsPath} runs ${staleNodes.join(", ")}, which no longer exists — run \`workmesh setup --hooks-only\``)
+      : areClaudeHooksInstalled(settingsPath)
+        ? ok("claude code hooks", settingsPath)
+        : warn("claude code hooks", `not installed in ${settingsPath} — run \`workmesh setup\``),
   );
   checks.push(
     areCodexHooksInstalled()

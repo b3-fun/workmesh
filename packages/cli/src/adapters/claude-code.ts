@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -19,6 +18,8 @@ import {
   urlHost,
 } from "./detail";
 import { OUR_COMMAND_RE } from "../lib/names";
+import { hookNodePath, removeOurHooks, writeBackup } from "../lib/hook-files";
+import { claudeConfigDir } from "../lib/paths";
 
 /**
  * Absolute hook invocation: GUI-launched agents don't inherit the login-shell
@@ -87,7 +88,7 @@ const SUBAGENT_LIVE_MS = 120_000;
 export function hasBackgroundWork(
   sessionId: string,
   now = Date.now(),
-  claudeDir = path.join(os.homedir(), ".claude"),
+  claudeDir = claudeConfigDir(),
 ): boolean {
   try {
     const dir = path.join(claudeDir, "sessions");
@@ -676,8 +677,12 @@ function mapClaudeEvent(input: ClaudeHookInput, base: EventBase, opts: MapHookOp
   }
 }
 
-export function claudeSettingsPath(): string {
-  return path.join(os.homedir(), ".claude", "settings.json");
+/**
+ * <dir>/settings.json, where <dir> is `--claude-dir`, else $CLAUDE_CONFIG_DIR,
+ * else ~/.claude: the file Claude Code reads its hooks from.
+ */
+export function claudeSettingsPath(configDir = claudeConfigDir()): string {
+  return path.join(configDir, "settings.json");
 }
 
 /** Our Claude Code hook command, under any of our names (lib/names.ts) and any install path. */
@@ -728,7 +733,8 @@ export interface HookInstallResult {
 /**
  * Merges Workmesh hook entries into Claude Code settings. Idempotent: events
  * that already carry our command are skipped, unknown keys are
- * preserved, and the original file is backed up once.
+ * preserved, and the file as it was is backed up (a new timestamped copy each
+ * time it changes).
  */
 export function installClaudeHooks(settingsPath = claudeSettingsPath()): HookInstallResult {
   let settings: Record<string, unknown> = {};
@@ -772,14 +778,69 @@ export function installClaudeHooks(settingsPath = claudeSettingsPath()): HookIns
 
   let backupPath: string | undefined;
   if (changed) {
-    if (original !== undefined) {
-      backupPath = `${settingsPath}.workmesh-backup`;
-      if (!fs.existsSync(backupPath)) fs.writeFileSync(backupPath, original);
-    }
+    if (original !== undefined) backupPath = writeBackup(settingsPath, original);
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
     fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
   }
   return { changed, settingsPath, backupPath };
+}
+
+export interface HookRemoveResult {
+  /** Hooks removed (one per event we had installed). */
+  removed: number;
+  settingsPath: string;
+  backupPath?: string;
+}
+
+/**
+ * Takes Workmesh's hooks (under any of our names) out of Claude Code settings
+ * and leaves everything else as it was. A missing file, or one with none of
+ * ours, is not touched. Throws (changing nothing) on a file that isn't a JSON
+ * object.
+ */
+export function removeClaudeHooks(settingsPath = claudeSettingsPath()): HookRemoveResult {
+  if (!fs.existsSync(settingsPath)) return { removed: 0, settingsPath };
+  const original = fs.readFileSync(settingsPath, "utf8");
+  const parsed = JSON.parse(original) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`unexpected shape in ${settingsPath} — expected a JSON object`);
+  }
+  const settings = parsed as Record<string, unknown>;
+  const hooks = settings.hooks;
+  if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) return { removed: 0, settingsPath };
+  const removed = removeOurHooks(hooks as Record<string, unknown>, isOurClaudeHook);
+  if (removed === 0) return { removed, settingsPath };
+  if (Object.keys(hooks).length === 0) delete settings.hooks;
+  const backupPath = writeBackup(settingsPath, original);
+  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+  return { removed, settingsPath, backupPath };
+}
+
+/**
+ * Node binaries our installed hooks point at that no longer exist (an nvm
+ * version removed after setup): every such hook fails until setup runs again.
+ */
+export function staleClaudeHookNodes(settingsPath = claudeSettingsPath()): string[] {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as { hooks?: Record<string, unknown> };
+    const stale = new Set<string>();
+    for (const entries of Object.values(parsed.hooks ?? {})) {
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const hooks = (entry as { hooks?: unknown } | null)?.hooks;
+        if (!Array.isArray(hooks)) continue;
+        for (const hook of hooks) {
+          const command = (hook as { command?: unknown } | null)?.command;
+          if (!isOurClaudeHook(command)) continue;
+          const node = hookNodePath(command);
+          if (node && !fs.existsSync(node)) stale.add(node);
+        }
+      }
+    }
+    return [...stale];
+  } catch {
+    return [];
+  }
 }
 
 export function areClaudeHooksInstalled(settingsPath = claudeSettingsPath()): boolean {

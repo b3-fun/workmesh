@@ -16,7 +16,7 @@ import { stateDir } from "../lib/paths";
 import { findRunningDaemon } from "../lib/daemon-control";
 import { readPidFile, removePidFile, writePidFile } from "../lib/pidfile";
 import { createSink } from "../sinks";
-import { ClaudeLiveness, readLiveClaudeSessions } from "./claude-liveness";
+import { ClaudeLiveness, claudeConfigDir, readLiveClaudeSessions } from "./claude-liveness";
 import { Pusher } from "./pusher";
 import { createDaemonServer } from "./server";
 
@@ -235,7 +235,10 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     }
 
     let wfWatcher: WorkflowWatcher | undefined;
-    const projectsDir = config.adapters.workflow.projectsDir ?? claudeProjectsDir();
+    // One Claude Code config dir for workflows and liveness: the config's
+    // (`setup --claude-dir`), else $CLAUDE_CONFIG_DIR, else ~/.claude.
+    const claudeDir = config.adapters.claudeCode.configDir ?? claudeConfigDir();
+    const projectsDir = config.adapters.workflow.projectsDir ?? claudeProjectsDir(claudeDir);
     if (config.adapters.workflow.enabled && fs.existsSync(projectsDir)) {
       wfWatcher = createWorkflowWatcher(projectsDir, applyEvent, log);
       log(`watching Claude Code workflows in ${projectsDir}`);
@@ -249,7 +252,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       const liveness = new ClaudeLiveness();
       const checkLiveness = (): void => {
         const now = Date.now();
-        const actions = liveness.step(store.list(), readLiveClaudeSessions(), now);
+        const actions = liveness.step(store.list(), readLiveClaudeSessions(claudeDir), now);
         for (const [key, name] of actions.names) store.annotate(key, { name });
         for (const key of actions.touch) store.touch(key, now);
         for (const key of actions.reap) {

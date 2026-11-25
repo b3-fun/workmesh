@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { watch } from "chokidar";
@@ -19,6 +18,8 @@ import {
   transcriptPathOf,
 } from "./detail";
 import { OUR_COMMAND_RE } from "../lib/names";
+import { removeOurHooks, writeBackup } from "../lib/hook-files";
+import { codexHome } from "../lib/paths";
 
 const MAX_ACTIVITY_LEN = 60;
 
@@ -32,12 +33,14 @@ export function codexNotifyLine(): string {
   return `notify = [${JSON.stringify(process.execPath)}, ${JSON.stringify(entry)}, "hook", "codex"]`;
 }
 
+/** $CODEX_HOME/config.toml (default ~/.codex/config.toml). */
 export function codexConfigPath(): string {
-  return path.join(os.homedir(), ".codex", "config.toml");
+  return path.join(codexHome(), "config.toml");
 }
 
+/** $CODEX_HOME/sessions (default ~/.codex/sessions). */
 export function codexSessionsDir(): string {
-  return path.join(os.homedir(), ".codex", "sessions");
+  return path.join(codexHome(), "sessions");
 }
 
 const notifySchema = z.looseObject({ type: z.string() });
@@ -94,6 +97,7 @@ export function installCodexNotify(configPath = codexConfigPath()): CodexInstall
     if (!match || !OUR_COMMAND_RE.test(match[0])) return "already-installed";
     const next = text.replace(ours, codexNotifyLine());
     if (next === text) return "already-installed";
+    writeBackup(configPath, text);
     fs.writeFileSync(configPath, next);
     return "installed";
   }
@@ -106,8 +110,51 @@ export function installCodexNotify(configPath = codexConfigPath()): CodexInstall
       ? `${text.replace(/\n*$/, "\n")}\n${block}`
       : block;
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  if (text) writeBackup(configPath, text);
   fs.writeFileSync(configPath, next);
   return "installed";
+}
+
+/**
+ * Takes our notify line (and the comment we put above it) out of
+ * config.toml. Another tool's notify, even one that chains to us, is left
+ * alone. True when the file changed.
+ */
+export function removeCodexNotify(configPath = codexConfigPath()): boolean {
+  if (!fs.existsSync(configPath)) return false;
+  const text = fs.readFileSync(configPath, "utf8");
+  const ours = /^[ \t]*notify[ \t]*=[ \t]*\[[ \t]*"[^"\n]*"[ \t]*,[ \t]*(?:"[^"\n]*"[ \t]*,[ \t]*)?"hook"[ \t]*,[ \t]*"codex"[ \t]*\][ \t]*$/m;
+  const match = ours.exec(text);
+  if (!match || !OUR_COMMAND_RE.test(match[0])) return false;
+  const lines = text.split("\n");
+  const at = text.slice(0, match.index).split("\n").length - 1;
+  let from = at;
+  if (from > 0 && /^# workmesh:/.test(lines[from - 1] ?? "")) from--;
+  lines.splice(from, at - from + 1);
+  // The blank line install added between our block and the rest goes too.
+  if (lines[from] === "" && (from === 0 || lines[from - 1] === "")) lines.splice(from, 1);
+  writeBackup(configPath, text);
+  fs.writeFileSync(configPath, lines.join("\n"));
+  return true;
+}
+
+/** Takes our hooks out of Codex's hooks.json; other tools' entries stay. Returns how many went. */
+export function removeCodexHooks(hooksPath = codexHooksPath()): { removed: number; hooksPath: string; backupPath?: string } {
+  if (!fs.existsSync(hooksPath)) return { removed: 0, hooksPath };
+  const original = fs.readFileSync(hooksPath, "utf8");
+  if (!original.trim()) return { removed: 0, hooksPath };
+  const parsed = JSON.parse(original) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`unexpected shape in ${hooksPath} — expected a JSON object`);
+  }
+  const doc = parsed as Record<string, unknown>;
+  const hooks = doc.hooks;
+  if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) return { removed: 0, hooksPath };
+  const removed = removeOurHooks(hooks as Record<string, unknown>, isOurCodexHook);
+  if (removed === 0) return { removed, hooksPath };
+  const backupPath = writeBackup(hooksPath, original);
+  fs.writeFileSync(hooksPath, `${JSON.stringify(doc, null, 2)}\n`);
+  return { removed, hooksPath, backupPath };
 }
 
 /** A top-level `notify = …` line that names one of our commands. */
@@ -207,8 +254,7 @@ export function codexHookCommand(): string {
 
 /** $CODEX_HOME/hooks.json (default ~/.codex/hooks.json). */
 export function codexHooksPath(): string {
-  const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-  return path.join(home, "hooks.json");
+  return path.join(codexHome(), "hooks.json");
 }
 
 /**
@@ -531,8 +577,8 @@ export interface CodexHooksInstallResult {
 /**
  * Merges Workmesh's entries into Codex's hooks.json. Never overwrites: other
  * tools' entries and unknown keys are kept, events that already carry our
- * codex-hooks command are skipped, and the original file is backed
- * up once. Throws (changing nothing) when the file isn't a JSON object.
+ * codex-hooks command are skipped, and the file as it was is backed up
+ * (a new timestamped copy each time it changes). Throws (changing nothing) when the file isn't a JSON object.
  */
 export function installCodexHooks(hooksPath = codexHooksPath()): CodexHooksInstallResult {
   let doc: Record<string, unknown> = {};
@@ -569,10 +615,7 @@ export function installCodexHooks(hooksPath = codexHooksPath()): CodexHooksInsta
 
   let backupPath: string | undefined;
   if (changed) {
-    if (original !== undefined) {
-      backupPath = `${hooksPath}.workmesh-backup`;
-      if (!fs.existsSync(backupPath)) fs.writeFileSync(backupPath, original);
-    }
+    if (original !== undefined && original.trim()) backupPath = writeBackup(hooksPath, original);
     fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
     fs.writeFileSync(hooksPath, `${JSON.stringify(doc, null, 2)}\n`);
   }

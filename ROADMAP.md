@@ -25,8 +25,8 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | Liveness | Presence from the hub, not the browser; a restart never ends sessions; the daemon as a launchd / systemd service; current client versions; quiet and stalled sessions | **done** (11-25): wire #11, relay in 0.10.0 (npm), hub workmesh-cloud #4 |
 | v0.11 Session mirror | The board's session page reads like the person's terminal: title, harness and model; prompts, messages, folded tool runs; background-agent and shell notices; turn lines with what's still running; mode, background tasks and agents in a footer | **done** (11-25): wire #13, relay #14 + #20 (0.10.0), hub and board workmesh-cloud #8 |
 | v1 Coordinate | Claims, file leases, hold, messages, notes, Linear agent identities | **done** (11-25): wire #10 (SPEC §21), relay #12 in 0.10.0 (npm), hub and board workmesh-cloud #5; the Workmesh agent in Linear (claims as agent sessions, replies and stop from Linear) workmesh-cloud #11, #13, #14 |
-| Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); relay MCP tool `ask` next |
-| v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **done** (11-25): wire #22 (SPEC §30), relay #23 + #26 in **0.11.0** (npm, GitHub release v0.11.0), hub and board workmesh-cloud #12; follow-ups below |
+| Ask | Ask the board about anyone's agents in plain words; it proposes messages, holds and notes that run only on your confirm; agents ask through `/relay/ask` | **done** (11-25) on the board (workmesh-cloud #6, SPEC §29); agents' `ask` tool and `workmesh ask` in 0.11.x |
+| v2 Delegate | Messages into running sessions, handoffs, approvals, shared knowledge; `workmesh init` | **done** (11-25): wire #22 (SPEC §30), relay #23 + #26 in **0.11.0** (npm, GitHub release v0.11.0), hub and board workmesh-cloud #12; follow-ups (approval → the agent carries on, a live two-person handoff) in 0.11.x |
 | Launch | Public docs, self-host guide, B3OS-hosted hub | later |
 
 ## Next up, in detail
@@ -199,7 +199,13 @@ this". Wire: SPEC §26.
 - Actions: it can draft a message to an agent or a person, a hold or release, or a project note; each is a card with
   exactly what will happen and runs only when you confirm it, as you.
 - Agents: `POST /relay/ask` (SPEC §29) answers an agent's question from the same data minus other sessions' prompt and
-  message text, and can't act. **Next:** the relay's `ask` MCP tool.
+  message text, and can't act.
+- **Agents' `ask` (0.11.x):** the MCP tool `ask { question }` and `workmesh ask <question…>`, answered by the daemon
+  through `/relay/ask` (the agent never holds the token): the question redacted on the machine, one at a time per
+  session; the hub's no (no Ask, Ask off, its rate limit of 6 a minute per device, the person's 100 a day, the
+  project's $1.50 a day of model spend) comes back as a plain "no answer, carry on" and is remembered, so an agent
+  doesn't retry into it. Checked live against a local hub: a real Claude Code session asked "what is An's agent
+  doing?" and answered from the tool; with Ask off, a second question didn't reach the hub.
 
 ### v2 Delegate (Linear B3-7168, done 11-25)
 - Messages delivered into running and idle sessions (Claude Code session inbox, Codex app-server).
@@ -231,11 +237,31 @@ this". Wire: SPEC §26.
   checked with fixtures: a stand-in `claude` binary, `codex queue` per a live probe of codex-cli 0.164, a temp HOME.
 - **Shipped 11-25:** hub and board (workmesh-cloud #12: Needs-you cards, Handoffs pane, Settings → Approvals, Ask
   `hand_off`); 0.11.0 on npm; #26 stops a re-run of `setup`/`init` from racing launchd ("Bootstrap failed: 5").
-- **Next:** a live handoff between two people's machines; the approval retry checked live (does the agent carry on
-  without its person's word in the terminal); the team onboarded (Mitch, An, David, Gio) on 0.11.0.
+- **Follow-ups (0.11.x, Linear B3-7168):**
+  - Approval → the agent carries on. Re-run live (Claude Code 2.1.332, throwaway HOMEs, a stand-in hub, a stand-in
+    `gh`; never a real merge or deploy), 3 runs per model per case. With a plain setup, every run carried on, on
+    0.11.0's texts and even on the first draft's (Sonnet and Haiku; a custom gate on `echo deploy-test`, a merge, and
+    11-25's sequence of a teammate's wake then a gated merge). The stall came back once the person's own CLAUDE.md
+    said automated messages are never their approval (STRICT_TALLY). The fix: an approval runs the exact
+    command it was asked for, once, within 30 minutes (a rerun asks anew with `renew`); its wake names who decided,
+    as whom, and quotes the held command; the session-start note of a person with gates says up front that such an
+    approval is their consent for that command; Claude Code shows the wake as "Workmesh", not "Stop hook feedback".
+  - A live handoff between two people: a local hub (`wrangler dev`), two relays in temp HOMEs paired by `workmesh
+    init` as Sean and An, Sean's real Claude Code session calling `handoff`, An's `workmesh handoffs accept`, An's
+    daemon running `claude -p --model haiku` in a new worktree (a one-line commit, $0.003), Sean's session woken with
+    the outcome, about 20 s end to end. It found two bugs, both fixed: the wake hook kept a finished `claude -p` open
+    (it now skips headless sessions), and `workmesh handoffs` showed a minute-old sync (lists now sync first).
+    `handoffs.model` picks the handoff agent's model.
+- **Next:** the team onboarded (Mitch, An, David, Gio) on 0.11.x; a live Codex wake from the daemon.
 
 ## Decision log
 
+- 11-25 An approval is consent for one exact command: the gate lets the command it was asked for through once, within
+  30 minutes, and a rerun asks again. The wake quotes that command and names who decided; a person with gates has
+  their agents told at session start that such an approval is their consent. The gate, not the notice, is the check,
+  so an agent never has to trust the text to act safely.
+- 11-25 Handoff runs and other headless sessions are never woken: nobody is there to answer, and waiting held the run
+  open.
 - 11-25 Teammates set up with one command: `npm i -g @b3os/workmesh@latest && workmesh init https://workmesh.b3os.org`.
 
 - 11-25 Linear identities: one Workmesh app for the team, not one per person. Linear gives an app one identity, so the

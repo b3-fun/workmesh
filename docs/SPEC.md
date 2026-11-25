@@ -564,7 +564,12 @@ read and drops the rest one by one):
   and an older daemon ignores the header. The hook prints Claude Code's documented hook JSON (Codex 0.164's hook
   output schemas take the same fields): `hookSpecificOutput.permissionDecision: "deny"` with
   `permissionDecisionReason`, and `additionalContext`. It never answers `allow`: the agent's own permissions stand.
-  - A hold on the session (or the session a subagent runs under) refuses every tool call, naming who held it and why.
+  - A hold on the session (or the session a subagent runs under) refuses every tool call, naming who held it and why,
+    and how to reach them. Through a hold (0.11.x) go only what lets the agent talk to people and read the board: the
+    workmesh MCP tools `whoami`, `roster`, `send`, `inbox`, `leases`, `notes`, `ask`, `release` and `unlease`, and a
+    shell command that is exactly one `workmesh send|inbox|whoami|claims|leases|notes …` (no `;`, `&`, `|`,
+    redirects, `$(…)`, backticks or env prefix outside single quotes), so an agent whose session predates the MCP
+    tools can still answer the person who held it.
   - An edit to a file another session's lease covers is refused, naming the file, the holder (person and session), the
     reason, the entries that cover it, when the lease expires, and how to ask them. Edits are Edit, Write, MultiEdit,
     NotebookEdit (their path), Codex `apply_patch` (every file in the patch), and shell commands that plainly write a
@@ -581,11 +586,18 @@ read and drops the rest one by one):
   (`<key>/<agentId>`) reaches only that subagent. The MCP `inbox` tool and `workmesh inbox` list them too.
 - **MCP** (`mcp/server.ts`). `workmesh mcp` (stdio, JSON-RPC 2.0, one message per line; protocol versions 2024-11-05 to
   2025-11-25) gives every agent `whoami`, `roster`, `send`, `inbox`, `claim`, `release`, `lease`, `unlease`, `leases`,
-  `note` and `notes`. It talks to the local daemon only (`POST /coord/op` on the loopback API, bearer secret as
+  `note` and `notes` (v2 adds `handoff`, `handoffs` and `ask`). It talks to the local daemon only (`POST /coord/op` on the loopback API, bearer secret as
   everywhere) and never holds the device token; the daemon makes the hub calls. The daemon tells which session is
   calling from the caller's parent process (Claude Code's `~/.claude/sessions/<pid>.json`), else
   `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`, else the live session in the caller's directory that moved last;
   none of them means the person at a terminal. Message and note text is redacted (§9) before it is sent.
+  `send`'s `to` (0.11.x) resolves on the machine from the last sync's roster: a person (name or GitHub login), a
+  session by the name the board shows or its key (`claude-code:<id>`, or the start of the id, 6+ characters), or a hub
+  key; a name that fits several live sessions is refused, listing them, rather than guessed (`--kind session|agent|
+  person` narrows it). An agent's reply wakes its recipient (§30 `wake: true`) when it is in a thread a message to the
+  sender opened or carried, or goes to the session (or that session's person) that wrote to the sender in the last 30
+  minutes; other agent messages keep the hub's default (they don't wake). A claim, release, lease or unlease the hub
+  took is applied to the cached sync at once, so `claims` and `leases` (and the hooks) show it before the next sync.
 - **Registration.** `workmesh setup` (and `setup --hooks-only`; `--no-mcp` skips it) registers the server with Claude
   Code at user scope (`claude mcp add -s user workmesh -- <node> <cli> mcp` when the `claude` CLI is on PATH, else a
   merge into `~/.claude.json`, written by rename) and with Codex as `[mcp_servers.workmesh]` in `~/.codex/config.toml`.
@@ -598,8 +610,9 @@ read and drops the rest one by one):
 - **Menu bar.** `GET /team` adds `coord: { available, holds: [{ session, name, by, reason, since }], unread: [{ id,
   session, name, from, fromSession, text, ts, delivered }] }` for this machine's sessions; Workmesh.app shows "On
   hold" and "Messages for your agents".
-- **CLI.** `workmesh leases`, `lease`, `unlease`, `claims`, `claim`, `send`, `inbox`, `note`, `notes`, `whoami`, through
-  the same daemon call as the MCP tools.
+- **CLI.** `workmesh leases`, `lease`, `unlease`, `claims`, `claim`, `send`, `inbox`, `note`, `notes`, `whoami` (and
+  `ask`), through the same daemon call as the MCP tools; a refusal (a claim someone else holds, a lease conflict)
+  exits 1 and `--json` says `ok: false`.
 
 ---
 
@@ -743,9 +756,13 @@ tool the relay will add. Still `v: 1`; an older hub answers `404`, which a relay
 - **Privacy:** the question goes to the hub and its model provider (B3's hub: OpenRouter, as for summaries, §Privacy
   rules); the hub keeps no conversation for it, only a count toward the person's daily limit. Logs carry no question
   or answer.
-- **The relay side (to come):** an `ask { question }` tool in `workmesh mcp` (§23), answered by the daemon calling this
-  endpoint with the device token (the agent never holds it): text only, no streaming, one question in flight per
-  session, `404` remembered for 10 minutes like the other v1 endpoints.
+- **The relay side (0.11.x):** an `ask { question }` tool in `workmesh mcp` (§23) and `workmesh ask <question…>`,
+  answered by the daemon calling this endpoint with the device token (the agent never holds it): the question redacted
+  on the machine (§9), the machine's time zone as `zone`, text only, no streaming, one question in flight per session
+  (or per person at a terminal), up to 90 s. The answer is the text, then the sessions it names with their hub keys
+  (for `send`). The hub's no fails soft, as a plain answer rather than a tool error, so the agent carries on: `404`
+  (a hub without Ask) and `503` (Ask off) are remembered for 10 minutes and `429` until its `Retry-After`, without
+  asking the hub again meanwhile; `502` and no answer say so. Code form: `packages/protocol/src/ask.ts`.
 
 ---
 
@@ -767,7 +784,7 @@ the device token names the person, requests carry ingest keys, answers carry hub
 |---|---|---|
 | `POST /relay/handoffs` | `{ action: "create", from?: sessionKey, to: { person }, task: 1..4000, repo?: owner/name, issue?: id, context?: 1..4000 }` | `{ ok: true, handoff }`; `404` `{ ok: false, error }` for no such person |
 | `POST /relay/handoffs` | `{ action: "accept" \| "decline" \| "start" \| "done" \| "fail", id, sessionKey?, note?: ≤ 500 }` | `{ ok: true, handoff }`; `404` no such handoff; `409` `{ ok: false, error, handoff? }` a move its state doesn't allow |
-| `POST /relay/approvals` | `{ action: "request", sessionKey, gate: GateAction, detail: 1..500 }` | `{ ok: true, approval }` |
+| `POST /relay/approvals` | `{ action: "request", sessionKey, gate: GateAction, detail: 1..500, renew?: true }` | `{ ok: true, approval }` |
 | `POST /relay/approvals` | `{ action: "approve" \| "deny", id, note?: ≤ 500 }` | `{ ok: true, approval }`; `403` not yours to decide, `404`, `409` already decided |
 | `POST /relay/gates` | `{ actions: GateAction[] }` (the device's person's own gates; `[]` turns them off) | `{ ok: true, gates: GatePolicy }` |
 | `POST /relay/messages` | (§21) gains `wake?: boolean` | as §21 |
@@ -790,7 +807,10 @@ the device token names the person, requests carry ingest keys, answers carry hub
   by?, note? }`. `detail` names the action in a few words, as the relay's matcher reads it from the command
   (`gh pr merge 212 --merge in b3-fun/b3os-beta`), redacted; it is the one piece of a command beyond §3.3's
   program + subcommand that leaves a machine, and only when the person gated that action. A second `request` for
-  the same session, gate and detail while one is pending answers the pending one.
+  the same session, gate and detail while one is pending answers the pending one (and B3's hub also answers with a
+  decision made in the last few minutes). `renew: true` (0.11.x) says the relay used the last approval for its one
+  run (§31): the hub answers only with a pending one, making a new request if none is pending, never with a decision.
+  A hub that predates it ignores the field.
 - **Wake**: an inbox item (§21) may carry `wake: true`, meaning "start a turn in this session if it is idle". Absent,
   a relay wakes for a message a person wrote (no `from.sessionKey`) and not for one an agent sent; a sender sets
   `wake` on the request to choose. The hub copies it onto the inbox item.
@@ -831,10 +851,14 @@ command run; a waiter that can't reach the daemon ends.
   refspec), `spend` (a few paid-infra creates: aws ec2 run-instances, gcloud compute instances create, hcloud, doctl,
   vastai, runpodctl, fly scale), and `custom` (the person's own regexes, `gates.custom` in config). When the person's
   policy (`gates`, owner = this device's person) gates the action, the relay looks for an approval for this session,
-  gate and detail: approved (decided within the hour) lets the command run; denied refuses it with who and why;
-  pending, or none yet, holds it with "Waiting for Sean's approval to merge (gh pr merge 212 --merge in
-  b3-fun/b3os-beta); you'll get a message when it's decided", and with none yet the daemon asks (`request`) in the
-  background, never in the hook path. A request the hub doesn't take (an error, a `404`, no answer) lets that
+  gate and detail. Approved (0.11.x): it lets through the exact command it was asked for (the command's words with
+  runs of whitespace made one, hashed and kept on the machine), once, within 30 minutes of the decision; the same
+  command again, or another command with the same detail, is held and asked anew with `renew: true`. (An approval the
+  daemon didn't see asked, after a restart, lets one command with its gate and detail through.) Denied (within the
+  hour) refuses it with who and why. Pending, or none yet, holds it with "Waiting for Sean's approval to merge (gh pr
+  merge 212 --merge in b3-fun/b3os-beta); Workmesh asked Sean on the team board…", which also says that an approval
+  is the person's go-ahead for this exact command, once, and to run it again as written when it arrives; with none
+  yet the daemon asks (`request`) in the background, never in the hook path. A request the hub doesn't take (an error, a `404`, no answer) lets that
   command through for 10 minutes and tells the agent so. A decision reaches the session that asked as a notice
   (below), waking it. The `detail` is program, subcommand, the PR or target, safe flags and the repo, never a flag
   value or env value, and is redacted (§9). Agents can't set gates or decide approvals: `gates` and
@@ -854,31 +878,46 @@ command run; a waiter that can't reach the daemon ends.
   exit code lands in a file: `claude -p <prompt> --session-id <uuid chosen before start> --output-format json
   --permission-mode <handoffs.permissionMode, default auto> --name "handoff: …"`, or `codex exec --json -C <dir> -s
   workspace-write -o <file> <prompt>` (its thread id, read from the first event, goes to the hub as a second
-  `start`). A handoff with no repo runs in a scratch dir under the state dir, which is shared (it is Workmesh's own
+  `start`), each with `--model` / `-m <handoffs.model>` when the person set one (e.g. `haiku`). A handoff with no repo runs in a scratch dir under the state dir, which is shared (it is Workmesh's own
   and holds nothing else). At exit the runner sends `done` (exit 0) or `fail`, with the agent's last words as the
   note at the conversation level (redacted, ≤ 500) and only how it ended at `metadata`. Runs survive a daemon
   restart (`handoffs/running.json`, 0600), at most `handoffs.maxRunning` (2) at once, stopped after
   `handoffs.maxMinutes` (120). The session that sent a handoff gets a notice when it is accepted, declined, started,
-  done or failed (the last three wake it).
+  done or failed (the last three wake it). `handoffs` (list) and `approvals` (list) sync first when the last sync is
+  over 5 s old, so a person at a terminal sees a handoff offered a moment ago.
 - **Notices.** The daemon writes notices for its own sessions (an approval decided, a handoff's progress) into the
   same inbox as teammates' messages, delivered the same way and never acked to the hub.
 - **Wake.** An inbox item wakes an idle session when its `wake` says so, else when a person wrote it; the daemon's
   notices about outcomes wake too. Claude Code: `workmesh setup` (and `init`; `--no-wake` skips it) adds a Stop hook
-  `{ type: "command", command: "<node> <cli> wake-wait claude-code", asyncRewake: true, timeout: 3600 }`. Claude Code
-  runs it in the background after each turn; it long-polls the daemon (`POST /wake/wait {session, timeoutMs ≤ 55 s}`,
-  bearer secret) and exits 2 with the messages on stderr, which Claude Code shows the model ("Stop hook feedback")
-  and so starts a turn, or exits 0 when the session ends, a newer waiter takes over, its parent goes, the daemon is
-  gone for 5 minutes, or after 59 minutes; the next Stop arms a new one. It runs only for Claude Code 2.1.330 or newer,
-  read from the transcript's `version` (an older one could run an async hook in the foreground). The daemon hands a
+  `{ type: "command", command: "<node> <cli> wake-wait claude-code", asyncRewake: true, timeout: 3600, rewakeMessage,
+  rewakeSummary }`: the last two (0.11.x) replace Claude Code's "Stop hook blocking error from command …" before the
+  text the model reads with "Workmesh, the team tool your person installed, woke this session (not an error):", and
+  the "Stop hook feedback" line the person sees with "Workmesh". Claude Code runs it in the background after each
+  turn; it long-polls the daemon (`POST /wake/wait {session, timeoutMs ≤ 55 s}`, bearer secret) and exits 2 with the
+  messages on stderr, which Claude Code shows the model and so starts a turn, or exits 0 when the session ends, a
+  newer waiter takes over, its parent goes, the daemon is gone for 5 minutes, or after 59 minutes; the next Stop arms
+  a new one. It runs only for Claude Code 2.1.330 or newer, read from the transcript's `version` (an older one could
+  run an async hook in the foreground), and never for a headless session (`WORKMESH_HANDOFF` set, or
+  `CLAUDE_CODE_ENTRYPOINT` sdk-*: `claude -p`, an SDK), which nobody would answer and which Claude Code keeps from
+  exiting while an asyncRewake hook runs (found live on a handoff run, 11-25). The daemon hands a
   waiter messages only while its session isn't working (a working session gets them at its next tool boundary, §23),
   marks them delivered when it answers, and frees a waiter whose request closed. Codex: for an idle thread the daemon
   runs `codex queue --thread <id> --message <text>` once per message (verified on codex-cli 0.164: an idle TUI holding
   the thread starts a turn within seconds; a thread nobody holds keeps it until resumed); a failure leaves the message
   for the next tool boundary. `workmesh wake off` turns waking off. The texts say where they come from: a wake for a
   teammate's message asks the agent to answer and not to start unrelated work on a teammate's say-so; an approval
-  notice says the gate re-checks on the retry, so the agent needn't trust the notice to act on it.
+  notice names who decided and as whom ("Your person, Sean," or "An, whom your person Sean named to answer their
+  approvals,"), quotes the exact command the session was held on (local only: it never leaves the machine), and says
+  that this is the person's consent for exactly that command, once, in the next 30 minutes, and that the gate checks
+  the approval itself when the command runs.
 - **Team knowledge.** The SessionStart note (§23) adds the project's notes tagged `rule` or `convention` (newest first,
-  one line each, ≤ 15 lines with the claims) and the person's open claims.
+  one line each, ≤ 15 lines with the claims) and the person's open claims. When the person gated some actions
+  (0.11.x), it also says so up front: which actions wait for whose approval, that the session should end its turn or
+  carry on meanwhile, and that an approval, which arrives as a Workmesh wake quoting the command, is the person's
+  consent to run exactly that command once, without asking again in the terminal. (Live, 11-25: with a person's
+  CLAUDE.md saying automated messages are never their approval, Haiku without this note asked to confirm in the
+  terminal; with it, it ran the approved merge, taking the person's own request as the authorization and the gate as
+  the check.)
 - **Menu bar.** `GET /team` adds `delegate: { available, handoffs, approvals }` (handoffs offered to the person or
   running here; pending approvals this machine's agents asked for or the person may decide); Workmesh.app shows
   "Handoffs for you" (Accept / Decline) and "Approvals" (Approve / Deny), answered through `POST /coord/op` as the

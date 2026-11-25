@@ -1,11 +1,13 @@
 # Workmesh roadmap
 
 **Workmesh** (formerly agentblip + Bullpen) is one system where every teammate's coding agents and the people they
-work for share a live board: a relay on each machine (CLI, daemon, hooks, menu bar app) and a team hub (Cloudflare
-Worker + Durable Object) with a web board. Linear stays the team's system of record.
+work for share a live board: a relay on each machine (CLI, daemon, hooks, menu bar app; open source, this repo) and a
+team hub with a web board (hosted by B3; its code is private, in `b3-fun/workmesh-cloud`). Linear stays the team's
+system of record.
 
-This file is the project's roadmap. Agents and people update it in the same PR as the work it describes: move an item
-when it starts or lands, and add a line to the decision log for every product call.
+This file is the project's one roadmap, for the client and the hosted hub alike, and it stays public. Agents and
+people update it in the same PR as the work it describes (hub work: a PR here beside the workmesh-cloud change, with
+no hub internals): move an item when it starts or lands, and add a line to the decision log for every product call.
 
 Status keys: **done** · **in progress** · **next** · **later**. Dates are 2026.
 
@@ -32,6 +34,8 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 - Everything visible says Workmesh; no model or provider names in the UI.
 
 ### v0.4 One system (done 11-24)
+- Since the split later that day (decision log), the hub and board live in the private workmesh-cloud; this section
+  is v0.4 as it landed.
 - The hub and board live in this repo under `apps/hub` (`@workmesh/hub`), with bullpen's 13 commits rewritten under
   that prefix (`Imported-From` trailers; `docs/research.html` filtered out, it stays in Linear). The board stays inside
   `apps/hub` rather than `apps/board`: it is built into the Worker's static assets and shares its types.
@@ -97,6 +101,12 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
   teammates' Slack messages); one wire package with a strict reading for relays and a tolerant one for the hub; hub
   served at workmesh.b3os.org and bullpen.b3os.org from the same `bullpen` Worker; hub deploys stay manual until CI
   has an NPC Labs token.
+- 11-24 Split (Sean: "separate the UI from the agent/daemon, so that the platform always remains hosted / by us, while
+  the piece that gets installed on users machine is open source"): the hub, board, summaries and vendored B3OS kit
+  move to the private `b3-fun/workmesh-cloud` with their history; this repo keeps the CLI, core, protocol, menu bar
+  app, site, the public SPEC (protocol, sharing levels, privacy rules) and this roadmap. The hub pins this repo as a
+  submodule for `@workmesh/protocol`, so a wire change lands here first. The hub's code up to the split stays in this
+  repo's history (no rewrite). Launch's self-host guide covers the relay; the hub stays hosted.
 
 ## Links
 

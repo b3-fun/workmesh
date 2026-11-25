@@ -384,22 +384,19 @@ to pair again. A hub too old to accept conversation events still gets everything
 
 ### The hub
 
-The hub is in this repo, in [`apps/hub`](apps/hub): one Cloudflare Worker with a Durable
-Object per project that pairs machines, keeps the roster and a 7-day timeline, writes
-short summaries (now lines, turn summaries, waiting reasons, a "since you looked"
-digest), and serves the board, a live web page of everyone's sessions with each one's
-conversation a click away. People sign in to the board through Cloudflare Access; relays
-reach `/relay/*` with their own device tokens. The relay and the hub validate every
-request against one set of wire schemas, [`packages/protocol`](packages/protocol), and
-the contract they share (what may leave a machine, sharing levels, the wire format,
-summaries, the board) is [docs/SPEC.md](docs/SPEC.md).
+The hub is the hosted half of Workmesh: it pairs machines, keeps the roster and a 7-day
+timeline, writes short summaries (now lines, turn summaries, waiting reasons, a "since
+you looked" digest), and serves the board, a live web page of everyone's sessions with
+each one's conversation a click away. B3 runs it at
+[workmesh.b3os.org](https://workmesh.b3os.org) (`bullpen.b3os.org`, the hub's name
+before it joined Workmesh, serves the same hub, so machines paired there keep sending).
+People sign in to the board; relays reach `/relay/*` with their own device tokens.
 
-B3 runs one at `workmesh.b3os.org`; `bullpen.b3os.org`, the hub's name before it joined
-Workmesh, serves the same hub, so machines paired there keep sending. To run your own,
-deploy `apps/hub` to your Cloudflare account behind an Access application of your own
-(`npm run deploy -w @workmesh/hub` after setting the account, host, Access team domain and
-audience in `apps/hub/wrangler.jsonc`, and your project's sharing rule in
-`apps/hub/src/shared/types.ts`); [CONTRIBUTING.md](CONTRIBUTING.md) has the local setup.
+The hosted platform is B3's and its code is private. Everything that runs on your
+machine is here and open source, and so is the contract the relay and the hub share:
+the wire format, what may leave a machine, sharing levels, redaction and the privacy
+rules a hub keeps are in [docs/SPEC.md](docs/SPEC.md), and the schemas both sides
+validate against are [`packages/protocol`](packages/protocol).
 
 ## CLI reference
 

@@ -10,6 +10,8 @@ import {
   installCodexNotify,
 } from "../adapters/codex";
 import { claudeSettingsPath, installClaudeHooks } from "../adapters/claude-code";
+import { installClaudeMcp, installCodexMcp } from "../adapters/mcp-install";
+import type { McpInstallReport } from "../adapters/mcp-install";
 import { loadConfigSafe, saveConfig } from "../lib/config";
 import { isDaemonUp } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
@@ -124,10 +126,42 @@ export interface SetupOptions {
   relayUrl?: string;
   /** Install or refresh agent hooks only: no prompts, no pairing, config untouched. */
   hooksOnly?: boolean;
+  /** Register the `workmesh` MCP server with Claude Code and Codex (default true; `--no-mcp` skips it). */
+  mcp?: boolean;
 }
 
-/** `workmesh setup --hooks-only`: (re)install Claude Code and Codex hooks, nothing else. */
-export function installHooksOnly(): void {
+function mcpLine(r: McpInstallReport): string {
+  switch (r.result) {
+    case "installed":
+    case "updated":
+      return `${green(r.result === "installed" ? "MCP server registered" : "MCP server repointed")}${r.via === "claude-cli" ? dim(" (claude mcp add, user scope)") : dim(` (${r.path})`)}${r.backupPath ? dim(` (backup: ${r.backupPath})`) : ""}`;
+    case "already-installed":
+      return dim("MCP server already registered");
+    case "manual":
+      return yellow(`MCP server not registered: ${r.detail ?? "left as is"}`);
+  }
+}
+
+/** Registers `workmesh mcp` with Claude Code (user scope). `claudeBin: null` merges the file without the CLI. */
+export function setupClaudeMcp(opts: { claudeBin?: string | null } = {}): void {
+  try {
+    console.log(`  claude code mcp: ${mcpLine(installClaudeMcp({ claudeBin: opts.claudeBin }))}`);
+  } catch (err) {
+    console.log(`  claude code mcp: ${red(`could not register: ${errorMessage(err)}`)}`);
+  }
+}
+
+/** Registers `workmesh mcp` in Codex's config.toml. */
+export function setupCodexMcp(): void {
+  try {
+    console.log(`  codex mcp: ${mcpLine(installCodexMcp())}`);
+  } catch (err) {
+    console.log(`  codex mcp: ${red(`could not update config.toml: ${errorMessage(err)}`)}`);
+  }
+}
+
+/** `workmesh setup --hooks-only`: (re)install Claude Code and Codex hooks and the MCP server, nothing else. */
+export function installHooksOnly(opts: { mcp?: boolean; claudeBin?: string | null } = {}): void {
   console.log(bold("workmesh setup --hooks-only"));
   try {
     const result = installClaudeHooks();
@@ -138,6 +172,7 @@ export function installHooksOnly(): void {
   } catch (err) {
     console.log(`  claude code: ${red(`could not install hooks: ${errorMessage(err)}`)}`);
   }
+  if (opts.mcp !== false) setupClaudeMcp({ claudeBin: opts.claudeBin });
   if (!fs.existsSync(path.dirname(codexConfigPath())) && !process.env.CODEX_HOME) {
     console.log(`  codex: ${dim("not installed here (no ~/.codex), skipped")}`);
     return;
@@ -164,11 +199,12 @@ export function installHooksOnly(): void {
   } catch (err) {
     console.log(`  codex notify: ${red(`could not update config.toml: ${errorMessage(err)}`)}`);
   }
+  if (opts.mcp !== false) setupCodexMcp();
 }
 
 export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   if (opts.hooksOnly) {
-    installHooksOnly();
+    installHooksOnly({ mcp: opts.mcp });
     return;
   }
   console.log(bold("workmesh setup"));
@@ -257,6 +293,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     } catch (err) {
       console.log(`  ${red(`could not install hooks: ${errorMessage(err)}`)}`);
     }
+    if (opts.mcp !== false) setupClaudeMcp();
   }
 
   const wantCodex = await confirm(
@@ -293,6 +330,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     } catch (err) {
       console.log(`  ${red(`could not update config.toml: ${errorMessage(err)}`)}`);
     }
+    if (opts.mcp !== false) setupCodexMcp();
   }
 
   saveConfig(config);

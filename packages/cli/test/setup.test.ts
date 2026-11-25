@@ -25,9 +25,10 @@ describe("setup --hooks-only", () => {
     const { vi } = await import("vitest");
     const { installHooksOnly } = await import("../src/commands/setup");
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-hooksonly-"));
-    const saved = { HOME: process.env.HOME, CODEX_HOME: process.env.CODEX_HOME, XDG: process.env.XDG_CONFIG_HOME };
+    const saved = { HOME: process.env.HOME, CODEX_HOME: process.env.CODEX_HOME, XDG: process.env.XDG_CONFIG_HOME, CLAUDE: process.env.CLAUDE_CONFIG_DIR };
     process.env.HOME = home;
     delete process.env.CODEX_HOME;
+    delete process.env.CLAUDE_CONFIG_DIR;
     process.env.XDG_CONFIG_HOME = path.join(home, ".config");
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
@@ -37,14 +38,19 @@ describe("setup --hooks-only", () => {
       const toml = 'notify = ["/x/Client", "turn-ended", "--previous-notify", "[\\"node\\",\\"/x/workmesh/dist/index.js\\",\\"hook\\",\\"codex\\"]"]\n';
       fs.writeFileSync(path.join(home, ".codex", "config.toml"), toml);
 
-      installHooksOnly();
+      installHooksOnly({ claudeBin: null }); // never the real `claude` CLI in tests
 
       const hooks = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf8")) as {
         hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
       };
       expect(hooks.hooks.Stop?.[0]).toEqual(other.hooks.Stop[0]);
       expect(hooks.hooks.Stop?.some((e) => e.hooks[0]?.command.includes("hook codex-hooks"))).toBe(true);
-      expect(fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8")).toBe(toml);
+      // v1: the MCP server is appended as its own table; the notify line is untouched.
+      const codexToml = fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8");
+      expect(codexToml.startsWith(toml)).toBe(true);
+      expect(codexToml).toContain("[mcp_servers.workmesh]");
+      const claudeJson = JSON.parse(fs.readFileSync(path.join(home, ".claude.json"), "utf8")) as { mcpServers: Record<string, { args: string[] }> };
+      expect(claudeJson.mcpServers.workmesh?.args.at(-1)).toBe("mcp");
       const claude = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8")) as { hooks: object };
       expect(Object.keys(claude.hooks)).toContain("PreToolUse");
       expect(fs.existsSync(path.join(home, ".config", "workmesh", "config.json"))).toBe(false);
@@ -55,6 +61,7 @@ describe("setup --hooks-only", () => {
       else process.env.CODEX_HOME = saved.CODEX_HOME;
       if (saved.XDG === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = saved.XDG;
+      if (saved.CLAUDE !== undefined) process.env.CLAUDE_CONFIG_DIR = saved.CLAUDE;
       fs.rmSync(home, { recursive: true, force: true });
     }
   });

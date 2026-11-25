@@ -4,7 +4,10 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { SessionEvent, SlackStatus, StatusSnapshot } from "@workmesh/core";
 import type { OwnershipSummary } from "../daemon/pusher";
-import type { HubState } from "../daemon/server";
+import type { CoordSummary, HubState } from "../daemon/server";
+import { HOOK_HEADER } from "../daemon/server";
+import type { HookAnswer } from "../daemon/coord-hooks";
+import type { CoordOpRequest, CoordOpResult } from "../daemon/coord-ops";
 import type { Config } from "./config";
 import { readDaemonSecret } from "./daemon-auth";
 import type { SnoozePreset } from "./snooze";
@@ -42,6 +45,7 @@ async function daemonFetch<T>(
   pathname: string,
   method: "GET" | "POST" = "GET",
   body?: unknown,
+  extra: { headers?: Record<string, string>; timeoutMs?: number } = {},
 ): Promise<T> {
   // Re-read per request: a restarted daemon rotates its secret.
   const secret = readDaemonSecret();
@@ -50,9 +54,10 @@ async function daemonFetch<T>(
     headers: {
       ...(secret === undefined ? {} : { authorization: `Bearer ${secret}` }),
       ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...extra.headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(extra.timeoutMs ?? REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     let detail = "";
@@ -67,8 +72,23 @@ async function daemonFetch<T>(
   return (await res.json()) as T;
 }
 
-export function postEvent(port: number, event: SessionEvent): Promise<{ ok: boolean }> {
-  return daemonFetch(port, "/event", "POST", event);
+/**
+ * Sends an event. With `hook` (the agent's hook event name) a v1 daemon answers the hook too: a refusal or context
+ * for the agent (`coord`). An older daemon ignores the header and answers `{ ok: true }`.
+ */
+export function postEvent(port: number, event: SessionEvent, hook?: string): Promise<{ ok: boolean; coord?: HookAnswer }> {
+  return daemonFetch(port, "/event", "POST", event, hook ? { headers: { [HOOK_HEADER]: hook } } : {});
+}
+
+/** Hub calls go through the daemon (it holds the device token); they may take a network round trip. */
+export const COORD_TIMEOUT_MS = 12_000;
+
+export function coordOp(port: number, req: CoordOpRequest): Promise<CoordOpResult> {
+  return daemonFetch(port, "/coord/op", "POST", req, { timeoutMs: COORD_TIMEOUT_MS });
+}
+
+export function getTeamState(port: number): Promise<{ enabled: boolean; coord?: CoordSummary }> {
+  return daemonFetch(port, "/team");
 }
 
 export function getState(port: number): Promise<DaemonState> {

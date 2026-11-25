@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { OUR_COMMAND_RE } from "./names";
-import { legacyPidFilePath, pidFilePath } from "./paths";
+import fs from "node:fs";
+import path from "node:path";
+import { legacyPidFilePath, pidFilePath, stopRequestPath } from "./paths";
 import { isProcessAlive, readPidFile, removePidFile } from "./pidfile";
 import { sleep } from "./ui";
 
@@ -10,6 +12,24 @@ export const STOP_GRACE_MS = 5000;
 const KILL_WAIT_MS = 2000;
 /** How long a starting daemon waits for one that is still shutting down. */
 export const START_EXIT_WAIT_MS = STOP_GRACE_MS + 1000;
+
+/** Tells daemon `pid` that the SIGTERM it is about to get is a stop (SPEC §24: its service then leaves it stopped). */
+export function markStopRequested(pid: number, file = stopRequestPath()): void {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${pid}\n`);
+  } catch {
+    // best effort: the service restarts a daemon it thinks was killed
+  }
+}
+
+/** Whether a stop was requested for `pid` (and forgets the request). */
+export function takeStopRequest(pid: number, file = stopRequestPath()): boolean {
+  const named = readPidFile(file);
+  if (named === undefined) return false;
+  if (named === pid) removePidFile(file);
+  return named === pid;
+}
 
 /** Polls until `pid` is gone. True when it exited within `timeoutMs`. */
 export async function waitForExit(pid: number, timeoutMs: number, pollMs = 100): Promise<boolean> {
@@ -118,6 +138,7 @@ export async function stopDaemon(
       stale ||= hadPid;
       continue;
     }
+    markStopRequested(pid);
     try {
       process.kill(pid, "SIGTERM");
     } catch {

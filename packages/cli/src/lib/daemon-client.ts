@@ -13,6 +13,7 @@ import { readDaemonSecret } from "./daemon-auth";
 import type { SnoozePreset } from "./snooze";
 import { logFilePath, spawnLockPath, startFailedMarkerPath, stateDir } from "./paths";
 import { sleep } from "./ui";
+import { startService } from "./service";
 
 export const REQUEST_TIMEOUT_MS = 1500;
 const SPAWN_LOCK_STALE_MS = 15_000;
@@ -159,6 +160,11 @@ function releaseSpawnLock(): void {
   }
 }
 
+/** Polls /health until the daemon answers or `timeoutMs` passes. */
+export function waitForDaemon(port: number, timeoutMs: number): Promise<boolean> {
+  return waitForHealth(port, timeoutMs);
+}
+
 async function waitForHealth(port: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -236,11 +242,23 @@ export async function spawnDetachedDaemon(config: Config): Promise<boolean> {
   }
 }
 
+/**
+ * Starts the daemon in the background: through its service (launchd, systemd)
+ * when one is installed, so the service keeps owning it (SPEC §24), else as a
+ * detached process.
+ */
+export async function startDaemonInBackground(config: Config): Promise<boolean> {
+  if (startService()) {
+    if (await waitForHealth(config.port, START_WAIT_MS)) return true;
+  }
+  return spawnDetachedDaemon(config);
+}
+
 /** Returns true when the daemon is reachable, auto-starting it if configured. */
 export async function ensureDaemon(config: Config): Promise<boolean> {
   if (await isDaemonUp(config.port)) return true;
   if (!config.autoStartDaemon) return false;
   if (!sinkConfigured(config)) return false;
   if (inStartFailureCooldown()) return false;
-  return spawnDetachedDaemon(config);
+  return startDaemonInBackground(config);
 }

@@ -15,5 +15,7 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     environment: "node",
+    // Never reach the machine's real launchd / systemd from a test (SPEC §24 service).
+    env: { WORKMESH_NO_SERVICE: "1" },
   },
 });

@@ -4,7 +4,7 @@ import { mapHookInput } from "../adapters/claude-code";
 import { mapCodexHookInput, mapNotifyArg } from "../adapters/codex";
 import { fitEventBody } from "../adapters/detail";
 import { loadConfigSafe } from "../lib/config";
-import { ensureDaemon, postEvent } from "../lib/daemon-client";
+import { HOOK_TIMING, ensureDaemon, postEvent } from "../lib/daemon-client";
 
 const STDIN_TIMEOUT_MS = 1000;
 
@@ -61,8 +61,8 @@ export async function runHook(source: string, payload?: string): Promise<void> {
     }
     if (!event) return;
     const config = loadConfigSafe();
-    if (!(await ensureDaemon(config))) return;
-    await postEvent(config.port, fitEventBody(event));
+    if (!(await ensureDaemon(config, HOOK_TIMING))) return;
+    await postEvent(config.port, fitEventBody(event), HOOK_TIMING.requestTimeoutMs);
   } catch {
     // swallow everything — exit 0 below
   } finally {

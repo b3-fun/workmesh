@@ -9,7 +9,7 @@ import {
 } from "@workmesh/protocol";
 import type { HubPairStartResponse, HubProjectRule, HubShareLevel } from "@workmesh/protocol";
 import pkg from "../../package.json";
-import { hubShareLevel, loadConfig, saveConfig } from "../lib/config";
+import { hubShareLevel, hubStickyShare, loadConfig, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { getHubState, isDaemonUp, reloadHub } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
@@ -33,6 +33,23 @@ export const SHARE_LEVEL_SUMMARY: Record<HubShareLevel, string> = {
     "turn took, from every shared session (from the moment it is shared). Secrets are redacted on this machine first; tool " +
     "inputs, tool output and file contents never leave.",
 };
+
+/** How long a session stays shared, in the words the CLI prints. */
+export function stickySummary(sticky: boolean): string {
+  return sticky
+    ? "sticky: once a session touches a shared repo, everything it does after that is shared, including later work " +
+        "outside shared repos in the same session. `workmesh hub sticky off` shares such sessions turn by turn instead."
+    : "per turn: a session whose folder is outside every shared repo is shared only for the turns that touch a shared " +
+        "repo. `workmesh hub sticky on` restores the default.";
+}
+
+/** Parses a `hub sticky` argument. */
+export function parseSticky(input: string): boolean {
+  const v = input.trim().toLowerCase();
+  if (v === "on" || v === "true" || v === "yes") return true;
+  if (v === "off" || v === "false" || v === "no") return false;
+  throw new Error(`unknown value "${input}" — use on or off`);
+}
 
 /** Parses a `--share` / `hub share` argument. */
 export function parseShareLevel(input: string): HubShareLevel {
@@ -258,6 +275,7 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
     excludeDirs: previous?.excludeDirs ?? [],
     pairedAt: Date.now(),
     share,
+    stickyShare: previous?.stickyShare,
     github,
   };
   saveConfig(config);
@@ -272,6 +290,7 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
   );
   console.log(`  sharing level: ${bold(share)} — ${SHARE_LEVEL_SUMMARY[share]}`);
   console.log(dim(`  change it any time: workmesh hub share ${share === "conversation" ? "metadata" : "conversation"}`));
+  console.log(`  sessions: ${stickySummary(hubStickyShare(config.hub))}`);
   const state = await reloadDaemon(config);
   if (state?.enabled) console.log(green("  the daemon is forwarding now"));
   else if (state === undefined) console.log(`  start the daemon: ${bold("workmesh start --detach")}`);
@@ -323,6 +342,7 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
     ["paired as", hub.person ? `${hub.person.name} <${hub.person.email}> on ${hub.machine ?? "this machine"}` : (hub.machine ?? "this machine")],
     ["shares", [...hub.project.include.remotes, ...hub.project.include.dirs, ...hub.includeDirs].join(", ") || "(nothing)"],
     ["level", `${hubShareLevel(hub)} — ${SHARE_LEVEL_SUMMARY[hubShareLevel(hub)]}`],
+    ["sessions", stickySummary(hubStickyShare(hub))],
   ];
   if (hub.github) rows.push(["avatar", `github.com/${hub.github}`]);
   if (hub.excludeDirs.length) rows.push(["never shares", hub.excludeDirs.join(", ")]);
@@ -376,6 +396,22 @@ export async function runHubShare(level?: string): Promise<void> {
   if (next === "conversation" && current !== "conversation") {
     console.log(dim("  text starts from now: nothing written before this moment is sent"));
   }
+  await reloadDaemon(config);
+}
+
+export async function runHubSticky(value?: string): Promise<void> {
+  const config = loadConfig();
+  const hub = requireHub(config);
+  const current = hubStickyShare(hub);
+  if (value === undefined) {
+    console.log(`${bold(current ? "on" : "off")} — ${stickySummary(current)}`);
+    return;
+  }
+  const next = parseSticky(value);
+  config.hub = { ...hub, stickyShare: next };
+  saveConfig(config);
+  console.log(green(`sticky sharing ${next ? "on" : "off"}`));
+  console.log(`  ${stickySummary(next)}`);
   await reloadDaemon(config);
 }
 

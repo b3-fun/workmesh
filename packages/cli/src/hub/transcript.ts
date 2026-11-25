@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { codexHome } from "../lib/paths";
 import { claudeMirrorItems, claudeMirrorLine, claudeModelItem, codexMirrorItems, codexMirrorLine } from "./mirror";
 import type { MirrorItem } from "./mirror";
 
@@ -325,8 +325,7 @@ export function acceptCodexTranscript(file: string | undefined, sessionId: strin
 }
 
 export function defaultCodexSessionsDir(): string {
-  const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-  return path.join(home, "sessions");
+  return path.join(codexHome(), "sessions");
 }
 
 /** Local YYYY/MM/DD dirs to look in for a UUIDv7 thread id (its first 48 bits are epoch ms). */

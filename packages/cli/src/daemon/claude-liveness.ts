@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { AgentSession } from "@workmesh/core";
+import { claudeConfigDir } from "../lib/paths";
 import { isProcessAlive } from "../lib/pidfile";
 
 /**
@@ -26,9 +26,7 @@ export interface ClaudeProcess {
   status?: string;
 }
 
-export function claudeConfigDir(): string {
-  return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
-}
+export { claudeConfigDir };
 
 /**
  * Live Claude Code processes keyed by sessionId (files whose pid is alive).

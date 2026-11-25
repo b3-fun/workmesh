@@ -232,7 +232,17 @@ agent's text updates, grouped tool calls such as "Ran 2 shell commands", turn du
   text, tool descriptions, turn summaries, now lines and waiting reasons from it are cleared, cached digests are
   dropped, and boards get `{type:"purge", deviceId}`.
 - Only shared sessions (§3.3 rules 1–4) send anything. A session that becomes shared mid-way sends conversation text
-  only from that moment on; nothing written before it was shared is ever sent.
+  only from that moment on; nothing written before it was shared is ever sent. At `conversation` this includes a
+  session whose cwd is not shared (§3.3 rule 4): its prompts carry text, and its shell calls go with `desc` and `cmd`
+  even when they name no shared root. Rule 4's "no text" is the `metadata` reading.
+- Sharing is sticky by default: once a session is shared it stays shared for the rest of its life, so a session whose
+  cwd is outside every shared repo (an orchestrator in `~/Documents`) that touched a shared repo once also sends its
+  later turns, including work on other repos. `hub.stickyShare: false` in the relay's config (`workmesh hub sticky
+  off`) makes such a session unshared again at each new prompt; it is shared again only by a turn that touches a
+  shared repo (a file there, or a shell command naming a shared root it has seen), and that turn's prompt, which came
+  first, is not sent. Sessions whose cwd is in a shared repo, and subagents and workflow agents started while their
+  parent was shared, are not affected. Nothing changes on the wire: the session just stops appearing in the relay's
+  heartbeats until it is shared again.
 - Every ingest body carries `share`; the hub stores it per device and drops any text fields from a `metadata` device.
 
 ## 9. Relay additions
@@ -240,8 +250,12 @@ agent's text updates, grouped tool calls such as "Ran 2 shell commands", turn du
 - **Redaction, on the machine, before anything is queued:** API keys and tokens (Anthropic `sk-ant-…`, OpenAI `sk-…`,
   GitHub `ghp_/gho_/ghu_/ghs_/ghr_` and `github_pat_`, Slack `xox?-`, AWS `AKIA…`, npm `npm_…`, Linear `lin_api_…`,
   hub device tokens `bp_…`), JWTs, PEM private key blocks, `Bearer <token>`, `key|secret|token|password = value` pairs, URLs with
-  embedded credentials, and long high-entropy strings next to those words → `[redacted]`. Absolute home paths →
-  `~/…`. A unit-tested list; a privacy test feeds a corpus of real-looking secrets through the whole pipeline.
+  embedded credentials, and long high-entropy strings next to those words → `[redacted]`. Also context-free: long
+  mixed-case alphanumeric runs with real entropy, base64 runs containing `/`, and 48+ bare hex digits unless a hash
+  word labels them (`sha256:`, `commit`, `checksum`) or they are `0x…`; and short mixed letter-and-digit values after
+  a generic name (`key=`, `sig:`, `pass:`). Absolute home paths → `~/…`. A unit-tested list; a privacy test feeds a
+  corpus of real-looking secrets through the whole pipeline. Redaction targets secrets only: names, email addresses,
+  customer details and other personal data in prompts or agent text are not detected and are sent as written.
 - **Prompts:** from UserPromptSubmit `prompt` (Claude Code) and the Codex equivalent. Cap 4,000 chars (`truncated`).
 - **Agent messages:** tail the session transcript (`transcript_path` from the hook payload; Codex rollout file) from
   a saved byte offset, read on every hook event for a shared session and on Stop, and emit each assistant text block

@@ -43,10 +43,17 @@ rolling expiration means a dead daemon clears itself instead of lying.
 
 ```bash
 npm i -g @b3os/workmesh
-workmesh setup --hooks-only        # Claude Code + Codex hooks, nothing else
+workmesh setup --hooks-only        # Claude Code hooks, plus Codex's if Codex is installed
 workmesh start --detach            # the daemon, in the background
 workmesh hub connect <url>         # join your team's board (approve in the browser)
 ```
+
+`setup --hooks-only` hooks the Claude Code profile in `$CLAUDE_CONFIG_DIR`, else
+`~/.claude`; `--claude-dir <path>` picks another. It hooks Codex only when it finds a
+Codex install (`$CODEX_HOME` or `~/.codex`) and says so; `--no-codex` leaves Codex alone,
+`--codex` installs it anyway. The `workmesh` MCP server is registered in the same
+profiles (`--no-mcp` skips it). `workmesh uninstall` takes the hooks and the MCP server
+out again.
 
 Claude Code and Codex sessions appear automatically via their hooks (Codex also keeps
 its notify hook and a session watcher as fallbacks). Anything else can report itself
@@ -217,8 +224,14 @@ workmesh unlink && workmesh setup
 
 ### Claude Code — automatic
 
-`workmesh setup` installs hooks into your Claude Code settings. Nine hook events map
-onto the session lifecycle:
+`workmesh setup` installs hooks into your Claude Code settings: `<dir>/settings.json`,
+where `<dir>` is `--claude-dir`, else `$CLAUDE_CONFIG_DIR`, else `~/.claude`. It merges:
+other hooks and settings stay, and the file as it was is saved next to it as
+`settings.json.workmesh-backup-<timestamp>` each time it changes. `workmesh uninstall`
+(same `--claude-dir`) removes only Workmesh's entries. The daemon reads sessions and
+workflow journals from the same dir (`adapters.claudeCode.configDir` in the config, set by
+an interactive `setup --claude-dir`, else `$CLAUDE_CONFIG_DIR`, else `~/.claude`). Nine
+hook events map onto the session lifecycle:
 
 | Claude Code hook | Event sent |
 |---|---|
@@ -234,6 +247,19 @@ onto the session lifecycle:
 Each hook pipes its JSON to `workmesh hook claude-code`, which forwards a normalized
 event to the daemon. Multiple concurrent sessions just work — each is tracked by its
 session id.
+
+**What a hook costs.** Each hook is a short Node process that Claude Code waits for.
+It always exits 0, so a Workmesh failure never fails a session; on a coordinating hub it
+may refuse an edit to a teammate's leased file or a held session's tool call, or add a
+note for the agent (see [Coordinate](#coordinate-leases-claims-messages-holds)), from
+the daemon's cached state. A refused connection fails
+at once; a hung daemon costs each hook up to 0.75 s; the one hook that starts a stopped
+daemon waits up to 3 s for it, and hooks arriving meanwhile up to 1 s. After a failed
+start, hooks don't try again for 60 s. The command pins the absolute Node path setup ran
+with, because GUI-launched agents don't get your login `PATH`. If that Node comes from a
+version manager (nvm, fnm, Volta, …), setup warns you: after you upgrade or remove that
+version, run `workmesh setup --hooks-only` again. `workmesh doctor` fails if the pinned
+Node is gone.
 
 **"Waiting on me" means waiting on you.** Claude Code's idle reminder fires for every
 finished turn left unanswered. Workmesh reads the end of the session transcript and
@@ -278,10 +304,13 @@ reports them automatically.)
 
 ### Codex — hooks, with notify + watcher as fallbacks
 
-`workmesh setup` merges its hooks into `~/.codex/hooks.json` (`$CODEX_HOME` respected)
-for `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`,
-`PostToolUse`, `Stop` and `SessionEnd`; `workmesh hook codex-hooks` is the entrypoint.
-Other tools' entries are kept, and the original file is backed up once. Codex maps like
+`workmesh setup` merges its hooks into `~/.codex/hooks.json` (`$CODEX_HOME` respected,
+here and for `config.toml` and the session logs) for `SessionStart`, `UserPromptSubmit`,
+`PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop` and `SessionEnd`;
+`workmesh hook codex-hooks` is the entrypoint. Other tools' entries are kept, and each
+file is backed up with a timestamp before every change. `setup --hooks-only` does this
+only when Codex is installed (or with `--codex`); `workmesh uninstall` removes Workmesh's
+hooks and its `notify` line again. Codex maps like
 Claude Code: `apply_patch` shows as "editing <file>", shell calls as "running
 commands", and a question or an approval prompt as waiting on you.
 
@@ -338,9 +367,20 @@ workmesh hub disconnect
 **What is shared.** At pairing the hub sends a rule, e.g. "repos whose `origin`
 contains `github.com/your-org/`". A session is shared once its working directory is
 in such a repo (worktrees count as their main repo), or once it touches a file in one.
-Sessions anywhere else send nothing. A session started outside a shared repo (an
-orchestrator in `~/Documents`) shares its state, prompts (as "sent a message", no
-text), file events in shared repos, and shell commands that name a path inside one.
+Sessions anywhere else send nothing. At `metadata`, a session started outside a shared
+repo (an orchestrator in `~/Documents`) shares its state, prompts (as "sent a message",
+no text), file events in shared repos, and shell commands that name a path inside one.
+At `conversation` it sends its text too (see below).
+
+**Once shared, a session stays shared.** By default a session that touched a shared repo
+once is shared for the rest of its life: if an orchestrator in `~/src` reads one file in a
+shared repo, every later prompt and reply in that session is sent, including work on
+your personal repos. `workmesh hub exclude <dir>` only stops a folder from making a
+session shared; it doesn't unshare one that already is. To share such sessions turn by
+turn instead, run `workmesh hub sticky off`: a session whose working directory is outside
+every shared repo then starts each turn unshared and is shared only by a turn that touches
+a shared repo. That turn's prompt, which comes first, isn't sent. Sessions inside a
+shared repo are unaffected. Or keep personal work in a separate session.
 
 **Sharing levels.** Each machine picks one, at `hub connect` or later with `hub share`:
 
@@ -349,11 +389,14 @@ text), file events in shared repos, and shell commands that name a path inside o
 | `metadata` | Session state and Workmesh's own activity label, tool names, repo-relative paths inside shared repos, `owner/name` and branch, the program and one subcommand of a shell command for a fixed allow list (`cargo test`, `git commit`, `gh pr`), issue ids for the configured keys (`B3-7166`), and PR links on shared repos. |
 | `conversation` | All of the above, plus your prompts, the agent's text replies, a one-line description of each tool call (the Bash `description`, a web search query, a fetched URL's host, the skill or MCP server and tool name), and how long each turn took. |
 
-A pairing without a choice is `metadata`; in a terminal `hub connect` asks, suggesting
-the hub's default. Conversation text comes only from sessions whose working directory
-is in a shared repo (an orchestrator in `~/Documents` that touches a shared repo stays
-metadata-only), and only from the moment a session is shared: Workmesh starts reading
-the session transcript at its current end, so nothing written earlier is ever sent.
+**The default is `conversation`.** In a terminal `hub connect` asks, suggesting your
+earlier choice, else the hub's default (`conversation` on B3's hub). Without a terminal
+or `--share`, and for pairings from before sharing levels existed, it is `conversation`.
+`hub connect`, `hub status` and `setup` print the active level. Pass `--share metadata`, or
+run `workmesh hub share metadata` later, for metadata only. Conversation text comes from
+every shared session, including one whose working directory is outside shared repos,
+and only from the moment the session is shared: Workmesh starts reading the session
+transcript at its current end, so nothing written earlier is ever sent.
 Agent messages are read from the transcript (Claude Code's `transcript_path`, Codex's
 rollout file; Codex threads kept only in its SQLite history fall back to the final
 message of each turn), main thread only, never thinking, tool input or tool output.
@@ -365,9 +408,18 @@ GitHub, Slack, AWS, npm, Linear, Stripe, Google, Hugging Face, Workmesh hub and 
 device tokens, and more), JWTs, PEM private keys, `Bearer`/`Basic` values and auth
 headers, values of secret-named settings (`password=`, `API_KEY:`, `--token`), URLs with
 credentials, webhooks, and long random strings become `[redacted]`; home paths become
-`~/…`. It is tested against a corpus of realistic fake secrets, and against real agent
-text for false positives. It is a safety net, not a guarantee: don't paste secrets into
-a session you share.
+`~/…`. Long bare hex values (48+ digits, unless labelled as a digest, commit or
+checksum, or `0x…`), base64 containing `/`, and short letter-and-digit values after a
+generic name (`key=`, `sig:`, `pass:`) are caught too. It is tested against a corpus of
+realistic fake secrets, and against real agent text for false positives. It is a safety
+net, not a guarantee: don't paste secrets into a session you share.
+
+**What redaction doesn't catch.** It looks for secrets only. Customer names, email
+addresses, phone numbers, IP addresses, internal hostnames, payment details, pasted Slack
+or email threads, and the substance of private work in a prompt or reply are sent as
+written at `conversation`. So are short secrets with no prefix and no label (a bare
+`hunter2`), plain-word passwords after a label (`password: hunter`), and 32-digit hex
+values. If your prompts carry that kind of material, use `metadata`.
 
 **Never, at any level:** tool input or output, file contents, command arguments beyond
 the allow-listed subcommand, environment variables, absolute paths, or anything from a
@@ -430,11 +482,47 @@ up to 30 minutes until a sync confirms it was lifted. Lease paths, claimed issue
 the text of messages and notes you send (redacted first) go to the hub; nothing else
 about your files does.
 
+### What the hub stores, and open questions
+
+> **To be filled in by Sean.** The hub's code is private, so this section can't be checked
+> against code from this repo. The list below comes from the wire contract and
+> [docs/SPEC.md](docs/SPEC.md#privacy-rules); the questions need an answer from the
+> hub's owner.
+
+What the hub receives and keeps, by the contract:
+
+- **Per device:** the device id, the machine name, the person from pairing (name and
+  email), their GitHub login (from `gh`), and the sharing level.
+- **Per session:** state, activity label, repo (`owner/name`), branch, repo-relative
+  paths, issue ids, PR links, subagent structure, model and token counts.
+- **At `conversation`:** prompt text, the agent's text replies, one-line tool
+  descriptions, turn durations, messages agents send each other, Slack links agents
+  posted or read, and the summaries the hub writes from that text (now lines, turn
+  summaries, waiting reasons, digests), which may be generated by a language model
+  (SPEC: OpenRouter, else Cloudflare Workers AI).
+- **Retention and access, as SPEC states them:** events are kept 7 days and shown to
+  the project's signed-in members (on B3's hub, npclabs.org logins through Cloudflare
+  Access). Switching to `metadata` deletes that device's stored text.
+
+Open questions:
+
+- **Who can read conversation text?** Every signed-in member of the project, or only
+  some (the person, their team, admins)? Can anyone outside the project see it, such
+  as Cloudflare Access admins or hub operators reading storage directly?
+- **Retention beyond 7 days.** Does the 7-day limit cover summaries, digests, Durable
+  Object storage, backups and logs too? What does the language-model provider keep
+  from the text it summarizes?
+- **Deleting your own data.** Can a person delete one session, or all their text,
+  without switching the whole machine to `metadata`? What happens to a device's data
+  after `hub disconnect` or revoking it on the board?
+- **Audit.** Is there a record of who viewed a session's conversation?
+
 ## CLI reference
 
 | Command | Does |
 |---|---|
-| `workmesh setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt; `--hooks-only` just installs or refreshes the Claude Code and Codex hooks and the `workmesh` MCP server (`--no-mcp` skips it) |
+| `workmesh setup` | Interactive setup: pick a mode (relay / slack / console) + install agent hooks. Relay mode prompts for the Relay URL (default `https://agentblip.com` — enter your own domain to self-host); `--relay-url <url>` skips the prompt; `--hooks-only` just installs or refreshes the hooks and the `workmesh` MCP server (`--no-mcp` skips it); `--claude-dir <path>` picks the Claude Code profile (default `$CLAUDE_CONFIG_DIR`, else `~/.claude`); `--codex` / `--no-codex` decide about Codex (default: only when installed) |
+| `workmesh uninstall` | Remove Workmesh's hooks and MCP server from Claude Code (`settings.json`, `.claude.json`) and Codex (`hooks.json`, `config.toml`), keeping everything else; backs up each file first (`--claude-dir <path>`, `--no-codex`) |
 | `workmesh start [--detach]` | Run the daemon, foreground or in the background |
 | `workmesh stop` | Stop the background daemon; returns once it has exited (SIGKILL after 5 s). Also stops a daemon started before the rename |
 | `workmesh restart` | Stop the daemon, wait for it to exit, and start it again in the background |
@@ -447,6 +535,7 @@ about your files does.
 | `workmesh unlink` | Revoke this device's token and clear the status |
 | `workmesh hub connect <url>` | Pair this machine with a team hub (device code; `--share conversation\|metadata`, `--no-open`, `--machine <name>`) |
 | `workmesh hub share [level]` | Show or set what this machine shares: `conversation` or `metadata` |
+| `workmesh hub sticky [on\|off]` | Show or set whether a session stays shared after it touches a shared repo (`on`, the default) or is shared turn by turn (`off`) |
 | `workmesh hub status [--json]` | Pairing, sharing level, project, last send, queued/dropped events, shared sessions |
 | `workmesh hub include <dir>` / `exclude <dir>` | Share a folder too / never share a folder |
 | `workmesh hub disconnect` | Stop forwarding and remove the hub token |
@@ -458,7 +547,7 @@ about your files does.
 | `workmesh note <text...>` / `notes` | Leave a note every teammate's agent can read; list the newest |
 | `workmesh whoami` | Your person on the hub, and which agent session a command speaks for |
 | `workmesh mcp` | The coordination tools as an MCP server (stdio); `workmesh setup` registers it with Claude Code (user scope) and Codex |
-| `workmesh doctor [--json]` | Diagnose config, daemon, hooks, MCP registration, hub forward, coordination, and connectivity |
+| `workmesh doctor [--json]` | Diagnose config, daemon, hooks (`--claude-dir <path>` for another profile; fails when a hook's Node binary is gone), MCP registration, hub forward, coordination, and connectivity |
 
 ## Menu bar app (macOS)
 
@@ -498,7 +587,8 @@ Workmesh is agentblip, renamed. Moving over keeps everything:
   that still read the old path keep working.
 - **Hooks.** `workmesh setup --hooks-only` repoints the Claude Code and Codex hooks
   that an agentblip install wrote (by npm package, checkout path or bare command) to
-  this install, in place, without duplicating them. Backups end in `.workmesh-backup`.
+  this install, in place, without duplicating them. Backups end in
+  `.workmesh-backup-<timestamp>`, a new one before each change.
 - **Daemon.** `workmesh restart` stops a daemon started by agentblip as well, then
   starts the new one.
 - **Env vars.** `WORKMESH_*`; `AGENTBLIP_*` still read as fallbacks.

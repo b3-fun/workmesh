@@ -24,6 +24,7 @@ import {
   runHubInclude,
   runHubShare,
   runHubStatus,
+  runHubSticky,
 } from "./commands/hub";
 import { runPause, runResume } from "./commands/pause";
 import { runReport } from "./commands/report";
@@ -32,6 +33,7 @@ import { runServiceInstall, runServiceStatus, runServiceUninstall } from "./comm
 import { runRestart, runStart } from "./commands/start";
 import { runStatus } from "./commands/status";
 import { runStop } from "./commands/stop";
+import { runUninstall } from "./commands/uninstall";
 import { runUnlink } from "./commands/unlink";
 import { migrateLegacyDirs } from "./lib/migrate";
 import { errorMessage, red } from "./lib/ui";
@@ -66,7 +68,10 @@ program
     "--relay-url <url>",
     "relay to pair with (self-hosters: your own Worker URL)",
   )
-  .option("--hooks-only", "only install or refresh Claude Code and Codex hooks and the MCP server (no prompts, config untouched)")
+  .option("--hooks-only", "only install or refresh agent hooks and the MCP server (no prompts, config untouched)")
+  .option("--claude-dir <path>", "Claude Code config dir to hook (default: $CLAUDE_CONFIG_DIR, else ~/.claude)")
+  .option("--codex", "install Codex hooks even when no Codex install is found")
+  .option("--no-codex", "leave Codex's files alone")
   .option("--no-mcp", "don't register the workmesh MCP server with Claude Code and Codex")
   .option("--no-service", "don't run the daemon under launchd / systemd")
   .action(wrap(runSetup));
@@ -92,6 +97,13 @@ service
   .description("Whether the daemon service is installed, loaded and running")
   .option("--json", "machine-readable output")
   .action(wrap(runServiceStatus));
+
+program
+  .command("uninstall")
+  .description("Remove Workmesh's hooks from Claude Code and Codex, keeping every other hook (backs up each file)")
+  .option("--claude-dir <path>", "Claude Code config dir to unhook (default: $CLAUDE_CONFIG_DIR, else ~/.claude)")
+  .option("--no-codex", "leave Codex's files alone")
+  .action(wrap(runUninstall));
 
 program
   .command("start")
@@ -183,6 +195,12 @@ hub
   .description("Show or set what this machine shares: conversation (prompts, agent text, redacted) or metadata")
   .argument("[level]", "conversation | metadata")
   .action(wrap(runHubShare));
+
+hub
+  .command("sticky")
+  .description("Show or set whether a session stays shared after it touches a shared repo (on, the default) or is shared turn by turn (off)")
+  .argument("[value]", "on | off")
+  .action(wrap(runHubSticky));
 
 hub
   .command("status")
@@ -296,6 +314,7 @@ program
   .command("doctor")
   .description("Check config, daemon, relay, and hook installs")
   .option("--json", "machine-readable output")
+  .option("--claude-dir <path>", "Claude Code config dir to check (default: $CLAUDE_CONFIG_DIR, else ~/.claude)")
   .action(wrap(runDoctor));
 
 await program.parseAsync(process.argv);

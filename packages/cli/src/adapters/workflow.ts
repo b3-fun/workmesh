@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { SessionEvent } from "@workmesh/core";
+import { claudeConfigDir } from "../lib/paths";
 
 /**
  * Claude Code writes a per-workflow `journal.jsonl` under
@@ -14,8 +14,9 @@ import type { SessionEvent } from "@workmesh/core";
  * dir or format isn't what we expect.
  */
 
-export function claudeProjectsDir(): string {
-  return path.join(os.homedir(), ".claude", "projects");
+/** <Claude config dir>/projects: $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects. */
+export function claudeProjectsDir(configDir = claudeConfigDir()): string {
+  return path.join(configDir, "projects");
 }
 
 /** Journals untouched for longer than this can't be a live workflow. */

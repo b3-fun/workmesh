@@ -251,24 +251,29 @@ describe("MCP registration (workmesh setup)", () => {
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
   const want = mcpServerCommand();
 
-  it("Claude Code without its CLI: merges ~/.claude.json, backs it up once, keeps everything else", () => {
+  it("Claude Code without its CLI: merges ~/.claude.json, backs it up before each change, keeps everything else", () => {
     const file = path.join(dir, ".claude.json");
     const original = { numStartups: 7, projects: { "/x": { allowedTools: [] } }, mcpServers: { other: { type: "stdio", command: "other" } } };
     fs.writeFileSync(file, JSON.stringify(original));
-    expect(installClaudeMcp({ file, claudeBin: null })).toMatchObject({ result: "installed", via: "file", backupPath: `${file}.workmesh-backup` });
+    const first = installClaudeMcp({ file, claudeBin: null });
+    expect(first).toMatchObject({ result: "installed", via: "file" });
+    expect(first.backupPath).toMatch(/\.claude\.json\.workmesh-backup-\d{8}T\d{9}Z/);
     const doc = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown> & { mcpServers: Record<string, unknown> };
     expect(doc.numStartups).toBe(7);
     expect(doc.projects).toEqual(original.projects);
     expect(doc.mcpServers.other).toEqual(original.mcpServers.other);
     expect(doc.mcpServers.workmesh).toEqual({ type: "stdio", command: want.command, args: want.args, env: {} });
-    expect(JSON.parse(fs.readFileSync(`${file}.workmesh-backup`, "utf8"))).toEqual(original);
+    expect(JSON.parse(fs.readFileSync(first.backupPath!, "utf8"))).toEqual(original);
     expect(isClaudeMcpInstalled(file)).toBe(true);
     expect(installClaudeMcp({ file, claudeBin: null }).result).toBe("already-installed");
     // An older install path is repointed.
     doc.mcpServers.workmesh = { type: "stdio", command: "/old/node", args: ["/old/workmesh/dist/index.js", "mcp"] };
     fs.writeFileSync(file, JSON.stringify(doc));
-    expect(installClaudeMcp({ file, claudeBin: null }).result).toBe("updated");
-    expect(JSON.parse(fs.readFileSync(`${file}.workmesh-backup`, "utf8"))).toEqual(original); // backup kept from the first change
+    const second = installClaudeMcp({ file, claudeBin: null });
+    expect(second.result).toBe("updated");
+    expect(second.backupPath).not.toBe(first.backupPath); // a new backup, of the state just before
+    expect(JSON.parse(fs.readFileSync(second.backupPath!, "utf8"))).toEqual(doc);
+    expect(JSON.parse(fs.readFileSync(first.backupPath!, "utf8"))).toEqual(original);
   });
 
   it("Claude Code with its CLI: claude mcp add -s user (remove first when repointing)", () => {
@@ -302,7 +307,9 @@ describe("MCP registration (workmesh setup)", () => {
     const file = path.join(dir, "config.toml");
     const original = 'model = "gpt-5.4"\nnotify = ["node", "/x/workmesh/dist/index.js", "hook", "codex"]\n\n[mcp_servers.linear]\ncommand = "npx"\nargs = ["linear-mcp"]\n';
     fs.writeFileSync(file, original);
-    expect(installCodexMcp(file)).toMatchObject({ result: "installed", backupPath: `${file}.workmesh-backup` });
+    const installed = installCodexMcp(file);
+    expect(installed.result).toBe("installed");
+    expect(installed.backupPath).toMatch(/config\.toml\.workmesh-backup-\d{8}T\d{9}Z/);
     const text = fs.readFileSync(file, "utf8");
     expect(text.startsWith(original)).toBe(true);
     expect(text).toContain(`[mcp_servers.workmesh]\ncommand = ${JSON.stringify(want.command)}\nargs = [${want.args.map((a) => JSON.stringify(a)).join(", ")}]\n`);

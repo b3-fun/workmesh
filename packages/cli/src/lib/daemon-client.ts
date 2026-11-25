@@ -21,6 +21,36 @@ const START_WAIT_MS = 5000;
 /** After a failed autostart, don't re-spawn (5s of dead hook time) for this long. */
 export const START_FAILURE_COOLDOWN_MS = 60_000;
 
+/** How long a caller waits on the daemon: the CLI's commands use the defaults. */
+export interface DaemonTiming {
+  /** Per request (health check, POST). */
+  requestTimeoutMs: number;
+  /** After spawning a daemon, for it to answer /health. */
+  startWaitMs: number;
+  /** When another process holds the spawn lock (it is starting one). */
+  lockWaitMs: number;
+}
+
+export const DEFAULT_TIMING: DaemonTiming = {
+  requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  startWaitMs: START_WAIT_MS,
+  lockWaitMs: START_WAIT_MS,
+};
+
+/**
+ * Hooks run synchronously on every tool call, so they wait less. The daemon is
+ * on loopback and answers in milliseconds; a refused connection fails at
+ * once, so these limits only bite when it is hung or starting. Worst case per
+ * hook: 0.75 s with the daemon hung, 0.75 + 3 + 0.75 s for the one hook that
+ * starts it, 0.75 + 1 s for hooks that arrive while it starts (they don't
+ * wait the whole start out).
+ */
+export const HOOK_TIMING: DaemonTiming = {
+  requestTimeoutMs: 750,
+  startWaitMs: 3000,
+  lockWaitMs: 1000,
+};
+
 export interface DaemonState {
   snapshot: StatusSnapshot;
   formatted: SlackStatus | null;
@@ -77,8 +107,13 @@ async function daemonFetch<T>(
  * Sends an event. With `hook` (the agent's hook event name) a v1 daemon answers the hook too: a refusal or context
  * for the agent (`coord`). An older daemon ignores the header and answers `{ ok: true }`.
  */
-export function postEvent(port: number, event: SessionEvent, hook?: string): Promise<{ ok: boolean; coord?: HookAnswer }> {
-  return daemonFetch(port, "/event", "POST", event, hook ? { headers: { [HOOK_HEADER]: hook } } : {});
+export function postEvent(
+  port: number,
+  event: SessionEvent,
+  hook?: string,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<{ ok: boolean; coord?: HookAnswer }> {
+  return daemonFetch(port, "/event", "POST", event, { ...(hook ? { headers: { [HOOK_HEADER]: hook } } : {}), timeoutMs });
 }
 
 /** Hub calls go through the daemon (it holds the device token); they may take a network round trip. */
@@ -115,13 +150,13 @@ export function reloadHub(port: number): Promise<HubState> {
   return daemonFetch(port, "/hub/reload", "POST");
 }
 
-export function getHealth(port: number): Promise<DaemonHealth> {
-  return daemonFetch(port, "/health");
+export function getHealth(port: number, timeoutMs = REQUEST_TIMEOUT_MS): Promise<DaemonHealth> {
+  return daemonFetch(port, "/health", "GET", undefined, { timeoutMs });
 }
 
-export async function isDaemonUp(port: number): Promise<boolean> {
+export async function isDaemonUp(port: number, timeoutMs = REQUEST_TIMEOUT_MS): Promise<boolean> {
   try {
-    return (await getHealth(port)).ok;
+    return (await getHealth(port, timeoutMs)).ok;
   } catch {
     return false;
   }
@@ -165,10 +200,12 @@ export function waitForDaemon(port: number, timeoutMs: number): Promise<boolean>
   return waitForHealth(port, timeoutMs);
 }
 
-async function waitForHealth(port: number, timeoutMs: number): Promise<boolean> {
+async function waitForHealth(port: number, timeoutMs: number, requestTimeoutMs = REQUEST_TIMEOUT_MS): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await isDaemonUp(port)) return true;
+    const left = deadline - Date.now();
+    if (await isDaemonUp(port, Math.max(50, Math.min(requestTimeoutMs, left)))) return true;
+    if (Date.now() + 250 >= deadline) break;
     await sleep(250);
   }
   return false;
@@ -219,8 +256,8 @@ export function sinkConfigured(config: Config): boolean {
  * guards against concurrent hooks racing to start multiple daemons. Failed
  * starts leave a cooldown marker so hooks stop re-spawning a crashing daemon.
  */
-export async function spawnDetachedDaemon(config: Config): Promise<boolean> {
-  if (!acquireSpawnLock()) return waitForHealth(config.port, START_WAIT_MS);
+export async function spawnDetachedDaemon(config: Config, timing: DaemonTiming = DEFAULT_TIMING): Promise<boolean> {
+  if (!acquireSpawnLock()) return waitForHealth(config.port, timing.lockWaitMs, timing.requestTimeoutMs);
   let up = false;
   try {
     fs.mkdirSync(stateDir(), { recursive: true });
@@ -233,7 +270,7 @@ export async function spawnDetachedDaemon(config: Config): Promise<boolean> {
     child.on("error", () => {});
     child.unref();
     fs.closeSync(out);
-    up = await waitForHealth(config.port, START_WAIT_MS);
+    up = await waitForHealth(config.port, timing.startWaitMs, timing.requestTimeoutMs);
     return up;
   } finally {
     if (up) clearStartFailure();
@@ -247,18 +284,18 @@ export async function spawnDetachedDaemon(config: Config): Promise<boolean> {
  * when one is installed, so the service keeps owning it (SPEC §24), else as a
  * detached process.
  */
-export async function startDaemonInBackground(config: Config): Promise<boolean> {
+export async function startDaemonInBackground(config: Config, timing: DaemonTiming = DEFAULT_TIMING): Promise<boolean> {
   if (startService()) {
-    if (await waitForHealth(config.port, START_WAIT_MS)) return true;
+    if (await waitForHealth(config.port, timing.startWaitMs, timing.requestTimeoutMs)) return true;
   }
-  return spawnDetachedDaemon(config);
+  return spawnDetachedDaemon(config, timing);
 }
 
 /** Returns true when the daemon is reachable, auto-starting it if configured. */
-export async function ensureDaemon(config: Config): Promise<boolean> {
-  if (await isDaemonUp(config.port)) return true;
+export async function ensureDaemon(config: Config, timing: DaemonTiming = DEFAULT_TIMING): Promise<boolean> {
+  if (await isDaemonUp(config.port, timing.requestTimeoutMs)) return true;
   if (!config.autoStartDaemon) return false;
   if (!sinkConfigured(config)) return false;
   if (inStartFailureCooldown()) return false;
-  return startDaemonInBackground(config);
+  return startDaemonInBackground(config, timing);
 }

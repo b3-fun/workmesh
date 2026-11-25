@@ -129,10 +129,13 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - Pairing: `workmesh hub connect <url>` (device code). Token + project rule live in `config.json` (0600) under `hub`;
   a malformed `hub` section reads as unpaired instead of breaking the Slack config.
 - Codex: `workmesh setup` merges `~/.codex/hooks.json`; `hook codex-hooks` maps it. Codex needs `/hooks` trust once.
-- Sharing level (0.7.0, SPEC §8-10): `hub.share` in config (absent = `metadata`), set by `hub connect --share` (a
-  terminal asks, suggesting the earlier choice, else the project's `defaultShare`, else metadata; no terminal keeps
-  the earlier choice or metadata) and `hub share <level>`. Every ingest body carries `share`.
-- At `conversation`, only for shared sessions whose cwd is in a shared repo (rule-4 orchestrators stay metadata):
+- Sharing level (0.7.0, SPEC §8-10): `hub.share` in config (absent = `conversation`, Sean 11-24), set by
+  `hub connect --share` (a terminal asks, suggesting the earlier choice, else the project's `defaultShare`, else
+  conversation; no terminal keeps the earlier choice or conversation) and `hub share <level>`. Every ingest body
+  carries `share`. `hub.stickyShare` (absent = true; `hub sticky off`) decides whether a session outside every shared
+  repo stays shared after it touched one, or is shared turn by turn.
+- At `conversation`, for every shared session, rule-4 orchestrators included (da9fbe1, Sean 11-24: "default max
+  sharing"; the 0.7.0 rule that kept their text home is gone):
   prompt `text` (from UserPromptSubmit), `message` events (assistant text blocks tailed from the transcript),
   `desc` on tool events, `turn` events with `durationMs`. `hub/redact.ts` scrubs every text and desc before it is
   queued; home paths become `~`. Caps: text 4,000 (`truncated`), desc 200.

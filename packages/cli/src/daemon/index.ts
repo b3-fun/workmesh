@@ -6,7 +6,7 @@ import { codexSessionsDir, createCodexWatcher } from "../adapters/codex";
 import type { CodexWatcher } from "../adapters/codex";
 import { claudeProjectsDir, createWorkflowWatcher } from "../adapters/workflow";
 import type { WorkflowWatcher } from "../adapters/workflow";
-import { formatOptionsFromConfig, hubShareLevel, readHubConfig, safeConfig, saveConfig } from "../lib/config";
+import { formatOptionsFromConfig, hubShareLevel, hubStickyShare, readHubConfig, safeConfig, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
 import { TeamPoller } from "../hub/team";
@@ -23,7 +23,7 @@ import { findRunningDaemon, takeStopRequest } from "../lib/daemon-control";
 import { SERVICE_ENV } from "../lib/service";
 import { readPidFile, removePidFile, writePidFile } from "../lib/pidfile";
 import { createSink } from "../sinks";
-import { ClaudeLiveness, readLiveClaudeSessions } from "./claude-liveness";
+import { ClaudeLiveness, claudeConfigDir, readLiveClaudeSessions } from "./claude-liveness";
 import type { ClaudeProcess } from "./claude-liveness";
 import { Pusher } from "./pusher";
 import { createDaemonServer } from "./server";
@@ -117,6 +117,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       getSession: (key) => store.get(key),
       log,
       share: hubShareLevel(hub),
+      stickyShare: hubStickyShare(hub),
       codexSessionsDir: config.adapters.codex.sessionsDir,
       github: githubLogin ?? hub.github,
       // v0.10 liveness and persistence (SPEC §24)
@@ -349,7 +350,10 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     }
 
     let wfWatcher: WorkflowWatcher | undefined;
-    const projectsDir = config.adapters.workflow.projectsDir ?? claudeProjectsDir();
+    // One Claude Code config dir for workflows and liveness: the config's
+    // (`setup --claude-dir`), else $CLAUDE_CONFIG_DIR, else ~/.claude.
+    const claudeDir = config.adapters.claudeCode.configDir ?? claudeConfigDir();
+    const projectsDir = config.adapters.workflow.projectsDir ?? claudeProjectsDir(claudeDir);
     if (config.adapters.workflow.enabled && fs.existsSync(projectsDir)) {
       wfWatcher = createWorkflowWatcher(projectsDir, applyEvent, log);
       log(`watching Claude Code workflows in ${projectsDir}`);
@@ -363,7 +367,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       const liveness = new ClaudeLiveness();
       const checkLiveness = (): void => {
         const now = Date.now();
-        const live = readLiveClaudeSessions();
+        const live = readLiveClaudeSessions(claudeDir);
         liveClaude = live;
         const actions = liveness.step(store.list(), live, now);
         for (const [key, name] of actions.names) store.annotate(key, { name });

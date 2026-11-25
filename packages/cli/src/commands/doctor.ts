@@ -2,6 +2,7 @@ import fs from "node:fs";
 import {
   areClaudeHooksInstalled,
   claudeSettingsPath,
+  staleClaudeHookNodes,
 } from "../adapters/claude-code";
 import {
   areCodexHooksInstalled,
@@ -16,6 +17,7 @@ import { getHealth, getHubState, getTeamState, sinkConfigured } from "../lib/dae
 import { configPath, hubForwardStatePath } from "../lib/paths";
 import { serviceKind, serviceStatus } from "../lib/service";
 import { createSink } from "../sinks";
+import { resolveClaudeDir } from "./setup";
 import {
   dim,
   errorMessage,
@@ -39,6 +41,8 @@ const fail = (name: string, detail: string): CheckResult => ({ name, status: "fa
 
 export interface DoctorOptions {
   json?: boolean;
+  /** Claude Code config dir to check (default $CLAUDE_CONFIG_DIR, else ~/.claude). */
+  claudeDir?: string;
 }
 
 export async function runDoctor(opts: DoctorOptions): Promise<void> {
@@ -221,10 +225,16 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
         : warn("hub state", "not saved yet (written by a v0.10+ daemon once it forwards)"),
     );
   }
+  const claudeDir = opts.claudeDir ? resolveClaudeDir(opts.claudeDir) : undefined;
+  const settingsPath = claudeSettingsPath(claudeDir);
+  const claudeJson = claudeJsonPath(claudeDir);
+  const staleNodes = staleClaudeHookNodes(settingsPath);
   checks.push(
-    areClaudeHooksInstalled()
-      ? ok("claude code hooks", claudeSettingsPath())
-      : warn("claude code hooks", "not installed — run `workmesh setup`"),
+    staleNodes.length > 0
+      ? fail("claude code hooks", `${settingsPath} runs ${staleNodes.join(", ")}, which no longer exists — run \`workmesh setup --hooks-only\``)
+      : areClaudeHooksInstalled(settingsPath)
+        ? ok("claude code hooks", settingsPath)
+        : warn("claude code hooks", `not installed in ${settingsPath} — run \`workmesh setup\``),
   );
   checks.push(
     areCodexHooksInstalled()
@@ -232,8 +242,8 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
       : warn("codex hooks", "not installed — run `workmesh setup`"),
   );
   checks.push(
-    isClaudeMcpInstalled()
-      ? ok("claude code mcp", `workmesh in ${claudeJsonPath()} (user scope)`)
+    isClaudeMcpInstalled(claudeJson)
+      ? ok("claude code mcp", `workmesh in ${claudeJson} (user scope)`)
       : warn("claude code mcp", "not registered — run `workmesh setup --hooks-only`"),
   );
   if (fs.existsSync(codexConfigPath())) {

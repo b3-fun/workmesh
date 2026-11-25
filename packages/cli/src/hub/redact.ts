@@ -108,6 +108,23 @@ export function looksRandom(v: string, minLength = 16): boolean {
   return entropy(v) >= 3;
 }
 
+/**
+ * A short value after a generic secret name (`key=Xk29fj3Lq`, `sig: ab12cd34`,
+ * `pass: hunter2`): letters and digits mixed, no punctuation that marks an id,
+ * path or URL, not an issue id, env var name or dashed name.
+ */
+function shortSecret(v: string, name: string): boolean {
+  const min = nameWords(name).at(-1) === "pass" ? 6 : 8;
+  if (v.length < min || v.length > 64 || benign(v) || codeLike(v, name)) return false;
+  if (!/^[A-Za-z0-9+=_!#%^&*~-]+$/.test(v)) return false; // ids like claude-code:s1, paths, URLs
+  const c = counts(v);
+  if (c.upper + c.lower < 2 || c.digit < 1) return false;
+  if (/^[A-Z][A-Z0-9]*-\d+$/.test(v)) return false; // an issue id: B3-7166
+  if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(v)) return false; // an env var name
+  if (/^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(v)) return false; // a dashed name: arm64-linux, b3os-ci-v2
+  return true;
+}
+
 /** A value after a strong secret word in prose or `key: value` form: not a plain word. */
 function secretish(v: string): boolean {
   if (benign(v) || placeholder(v)) return false;
@@ -265,6 +282,23 @@ const PROSE =
 /** Context-free: long mixed-case alphanumeric runs with real entropy (a pasted API key). */
 const LONG_RUN = /(?<![A-Za-z0-9_+=-])[A-Za-z0-9_+-]{32,}={0,2}(?![A-Za-z0-9_+=-])/g;
 
+/**
+ * Context-free: base64 with a `/` in it, which LONG_RUN's class splits into
+ * pieces. Not inside a URL, path or dotted name (no `/ : . @ =` right before
+ * it, no `.word` right after it).
+ */
+const B64_SLASH = /(?<![A-Za-z0-9_+/=.:@-])[A-Za-z0-9+/]{32,}={0,2}(?![A-Za-z0-9_+/=-])(?!\.\w)/g;
+
+/**
+ * Context-free: 48+ hex digits on their own (`openssl rand -hex 32`, an admin
+ * token or HMAC key). Git SHAs (40) are shorter; a digest is kept when a hash
+ * word labels it (`sha256:…`, `checksum = "…"`, `commit …`) or when it starts a
+ * `sha256sum` line (`<hex>  file`). `0x…` values (transaction hashes) are public.
+ */
+const LONG_HEX = /(?<![A-Za-z0-9_+/=.-])[0-9a-fA-F]{48,}(?![A-Za-z0-9_+/=-])/g;
+const HASH_LABEL =
+  /(?:sha-?(?:1|224|256|384|512)(?:sum)?|blake2b?|blake3|md5|digest|checksum|hash|commit|tree|blob|object|integrity|fingerprint|etag|oid)\W{0,4}$/i;
+
 /** Document ids in links on these hosts are access-controlled names, not credentials. */
 const DOC_HOSTS =
   /https?:\/\/(?:docs\.google\.com|drive\.google\.com|sheets\.google\.com|slides\.google\.com|(?:www\.)?figma\.com|linear\.app|github\.com|(?:www\.)?notion\.so|claude\.ai)\/\S*$/;
@@ -301,7 +335,7 @@ function redactAssignmentValue(name: string, spaced: boolean, sep: string, quote
   if (!strength) return false;
   const value = quoted ?? bare ?? "";
   if (placeholder(value)) return false;
-  if (strength === "generic") return looksRandom(value);
+  if (strength === "generic") return looksRandom(value) || shortSecret(value, name);
   if (quoted !== undefined) return true;
   if (benign(value)) return false;
   if (sep === ":" || spaced) return secretish(value) && !codeLike(value, name);
@@ -371,6 +405,24 @@ const RULES: Rule[] = [
     }
     return `${word}${sep}${quote}${REDACTED}${raw!.slice(value.length)}`;
   }),
+  (t) =>
+    t.replace(LONG_HEX, (run: string, offset: number, all: string) => {
+      if (!/\d/.test(run) || !/[a-f]/i.test(run) || entropy(run) < 3.3) return run;
+      const before = all.slice(Math.max(0, offset - 40), offset);
+      if (HASH_LABEL.test(before)) return run;
+      if (/^(?: {2}| \*)\S/.test(all.slice(offset + run.length))) return run; // `sha256sum` output: <hex>  file
+      const word = before.slice(before.search(/\S*$/));
+      if (/https?:\/\//.test(word)) return run;
+      return REDACTED;
+    }),
+  (t) =>
+    t.replace(B64_SLASH, (run: string, offset: number, all: string) => {
+      if (!run.includes("/") || !randomRun(run.replace(/[+/=]/g, ""))) return run;
+      const before = all.slice(Math.max(0, offset - 300), offset);
+      const word = before.slice(before.search(/\S*$/));
+      if (/https?:\/\//.test(word) || DOC_HOSTS.test(word) || PUBLIC_KEY_PREFIX.test(before)) return run;
+      return REDACTED;
+    }),
   (t) =>
     t.replace(LONG_RUN, (run: string, offset: number, all: string) => {
       if (!randomRun(run) || /^0x[0-9a-f]+$/i.test(run)) return run;

@@ -97,7 +97,9 @@ How we work:
 
 Privacy rules:
 
-- Only sessions in `github.com/b3-fun/` repos are shared, and only from the moment a session touches one.
+- Only sessions in `github.com/b3-fun/` repos are shared, and only from the moment a session touches one. From then
+  on the whole session is shared, including later work outside b3-fun repos, unless the machine runs
+  `workmesh hub sticky off`.
 - Each machine picks its level at `workmesh hub connect`: `conversation` (default: prompts, agent messages, tool
   descriptions, turn durations) or `metadata` (tools, repo-relative paths, program + subcommand, issue ids, PR links).
   `workmesh hub share <level>` changes it; switching to metadata deletes that machine's stored text on the hub.

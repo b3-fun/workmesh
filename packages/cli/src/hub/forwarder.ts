@@ -116,8 +116,15 @@ export interface HubForwarderOptions {
   requestTimeoutMs?: number;
   git?: GitResolver;
   homeDir?: string;
-  /** SPEC §8 sharing level. Default `metadata`. */
+  /** SPEC §8 sharing level. Default `conversation` (Sean, 11-24: "default max sharing"). */
   share?: HubShareLevel;
+  /**
+   * SPEC §8: a session stays shared once it touched a shared repo (default
+   * true). False: a session whose cwd is outside every shared repo is
+   * unshared again at each new turn, and shared again only by a turn that
+   * touches a shared repo.
+   */
+  stickyShare?: boolean;
   /** Where Codex keeps rollout files (default ~/.codex/sessions). */
   codexSessionsDir?: string;
   /** How long a Stop waits for the transcript's turn-duration record. Default 5 s. */
@@ -405,6 +412,7 @@ export class HubForwarder {
   private readonly listSessions: () => readonly AgentSession[];
   private readonly getSession: (key: string) => AgentSession | undefined;
   private readonly share: HubShareLevel;
+  private readonly stickyShare: boolean;
   private readonly codexSessionsDir: string;
   private readonly turnRecordWaitMs: number;
   private readonly maxReadBytes: number;
@@ -490,6 +498,7 @@ export class HubForwarder {
     this.listSessions = opts.listSessions;
     this.getSession = opts.getSession;
     this.share = opts.share ?? "conversation";
+    this.stickyShare = opts.stickyShare ?? true;
     this.codexSessionsDir = opts.codexSessionsDir ?? defaultCodexSessionsDir();
     this.turnRecordWaitMs = opts.turnRecordWaitMs ?? 5000;
     this.maxReadBytes = opts.maxReadBytes ?? MAX_READ_BYTES;
@@ -694,6 +703,19 @@ export class HubForwarder {
     const live = this.getSession(key);
     if (live) t.last = live;
     if (event.cwd) this.setCwd(t, event.cwd);
+    // Not sticky: a session outside every shared repo starts each turn
+    // unshared; only a shared file or root touched in this turn shares it.
+    if (
+      !this.stickyShare &&
+      t.shared &&
+      !t.cwdTarget &&
+      !t.sub &&
+      !d?.agentId &&
+      (d?.hookEvent === "UserPromptSubmit" || d?.hookEvent === "InjectedPrompt")
+    ) {
+      t.shared = false;
+      this.forgetConversation(t);
+    }
     this.noteStructure(event, t);
     if (lifecycle) {
       this.subagentLifecycle(event, t);
@@ -1101,21 +1123,32 @@ export class HubForwarder {
     return scrubbed.length > HUB_DESC_MAX ? `${truncateHead(scrubbed, HUB_DESC_MAX - 1)}…` : scrubbed;
   }
 
+  /**
+   * Left the shared repo, or never in it: forget the tail so text resumes
+   * only from the moment it is shared again.
+   */
+  private forgetConversation(t: Tracked): void {
+    t.tail = undefined;
+    t.convoSince = undefined;
+    t.pendingTurn = undefined;
+    t.promptAt = undefined;
+  }
+
   /** Transcript, turn and fallback bookkeeping for one observed event. */
   private conversationStep(event: SessionEvent, t: Tracked): void {
     if (!this.conversationShared(t)) {
-      // Left the shared repo, or never in it: forget the tail so text resumes
-      // only from the moment it is shared again.
+      if (!t.shared) {
+        this.forgetConversation(t);
+        return;
+      }
+      // Shared at the metadata level: forget the turn so text resumes only
+      // from the moment conversation is shared again, but keep the tail.
+      // v0.11 (SPEC §26) still reads the transcript for the mirror's states
+      // and counts (mode, model, task notices without their titles);
+      // handleItem sends nothing else from it.
       t.convoSince = undefined;
       t.pendingTurn = undefined;
       t.promptAt = undefined;
-      if (!t.shared) {
-        t.tail = undefined;
-        return;
-      }
-      // v0.11 (SPEC §26): a shared session at the metadata level still reads
-      // its transcript for the mirror's states and counts (mode, model, task
-      // notices without their titles); handleItem sends nothing else from it.
       this.attachTranscript(event, t);
       t.tailDirty = true;
       this.schedulePump();

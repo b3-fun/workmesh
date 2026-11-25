@@ -5,7 +5,7 @@ import { mapHookInput } from "../adapters/claude-code";
 import { mapCodexHookInput, mapNotifyArg } from "../adapters/codex";
 import { fitEventBody } from "../adapters/detail";
 import { loadConfigSafe } from "../lib/config";
-import { ensureDaemon, postEvent } from "../lib/daemon-client";
+import { HOOK_TIMING, ensureDaemon, postEvent } from "../lib/daemon-client";
 import type { HookAnswer } from "../daemon/coord-hooks";
 
 const STDIN_TIMEOUT_MS = 1000;
@@ -94,8 +94,9 @@ export async function runHook(source: string, payload?: string): Promise<void> {
     }
     if (!event) return;
     const config = loadConfigSafe();
-    if (!(await ensureDaemon(config))) return;
-    const res = await postEvent(config.port, fitEventBody(event), hook);
+    if (!(await ensureDaemon(config, HOOK_TIMING))) return;
+    // The daemon answers from cached state (fails open), so the hook's short timeout costs no answer that matters.
+    const res = await postEvent(config.port, fitEventBody(event), hook, HOOK_TIMING.requestTimeoutMs);
     const out = hookOutput(hook, res.coord);
     // Synchronous: the process exits right after, and a pipe write could be cut short.
     if (out) fs.writeSync(1, `${out}\n`);

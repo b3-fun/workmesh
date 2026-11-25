@@ -5,11 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { OUR_COMMAND_RE } from "../lib/names";
 import { codexConfigPath } from "./codex";
+import { writeBackup } from "../lib/hook-files";
 
 /**
  * Registers `workmesh mcp` with Claude Code (user scope) and Codex (docs/SPEC.md §23). Merge, never overwrite: another
- * server named `workmesh` that isn't ours is left alone, a file that doesn't parse is left alone, and the original is
- * backed up once before the first change.
+ * server named `workmesh` that isn't ours is left alone, a file that doesn't parse is left alone, and the file is
+ * backed up (timestamped, lib/hook-files.ts) before each change.
  */
 
 export const MCP_SERVER_NAME = "workmesh";
@@ -19,10 +20,15 @@ export function mcpServerCommand(): { command: string; args: string[] } {
   return { command: process.execPath, args: [fileURLToPath(import.meta.url), "mcp"] };
 }
 
-/** Claude Code's user config: `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`. */
-export function claudeJsonPath(): string {
-  const dir = process.env.CLAUDE_CONFIG_DIR;
-  return dir ? path.join(dir, ".claude.json") : path.join(os.homedir(), ".claude.json");
+/**
+ * Claude Code's user config for a config dir: `<dir>/.claude.json`, except the default `~/.claude`, whose user
+ * config is `~/.claude.json`. Without a dir: `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`.
+ */
+export function claudeJsonPath(configDir = process.env.CLAUDE_CONFIG_DIR): string {
+  if (!configDir || path.resolve(configDir) === path.join(os.homedir(), ".claude")) {
+    return path.join(os.homedir(), ".claude.json");
+  }
+  return path.join(configDir, ".claude.json");
 }
 
 export type McpInstallResult = "installed" | "updated" | "already-installed" | "manual";
@@ -105,11 +111,21 @@ function writeAtomic(file: string, text: string): void {
   fs.renameSync(tmp, file);
 }
 
+/** A timestamped copy of `file` as it is now (lib/hook-files.ts), when it exists. */
 function backupOnce(file: string): string | undefined {
   if (!fs.existsSync(file)) return undefined;
-  const backup = `${file}.workmesh-backup`;
-  if (!fs.existsSync(backup)) fs.copyFileSync(file, backup);
-  return backup;
+  return writeBackup(file, fs.readFileSync(file, "utf8"));
+}
+
+/** Takes our `workmesh` entry out of Claude Code's user config (`mcpServers`); another server by that name stays. */
+export function removeClaudeMcp(file = claudeJsonPath()): { removed: boolean; path: string; backupPath?: string } {
+  const current = readClaudeEntry(file);
+  if (current.error || !current.entry || !isOurs(current.entry)) return { removed: false, path: file };
+  const doc = JSON.parse(fs.readFileSync(file, "utf8")) as { mcpServers: Record<string, unknown> };
+  delete doc.mcpServers[MCP_SERVER_NAME];
+  const backupPath = backupOnce(file);
+  writeAtomic(file, `${JSON.stringify(doc, null, 2)}\n`);
+  return { removed: true, path: file, backupPath };
 }
 
 export interface ClaudeMcpOptions {
@@ -225,4 +241,20 @@ export function installCodexMcp(file = codexConfigPath()): McpInstallReport {
   const backupPath = backupOnce(file);
   writeAtomic(file, next);
   return { result: "installed", path: file, backupPath };
+}
+
+/** Takes our `[mcp_servers.workmesh]` table (and the comment install put above it) out of Codex's config.toml. */
+export function removeCodexMcp(file = codexConfigPath()): { removed: boolean; path: string; backupPath?: string } {
+  if (!fs.existsSync(file)) return { removed: false, path: file };
+  const text = fs.readFileSync(file, "utf8");
+  const table = findCodexTable(text);
+  if (!table || !OUR_COMMAND_RE.test(table.body) || !/"mcp"/.test(table.body)) return { removed: false, path: file };
+  // Install appended "\n# workmesh: …\n[mcp_servers.workmesh]…\n": take exactly that back out.
+  let head = text.slice(0, table.start).replace(/# workmesh: team coordination tools for Codex[^\n]*\n$/, "");
+  const tail = text.slice(table.end);
+  if (tail === "" && head.endsWith("\n\n")) head = head.slice(0, -1);
+  const next = `${head}${tail}`;
+  const backupPath = backupOnce(file);
+  writeAtomic(file, next);
+  return { removed: true, path: file, backupPath };
 }

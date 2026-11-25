@@ -4,13 +4,16 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { configSchema } from "../src/lib/config";
 import type { Config } from "../src/lib/config";
+import net from "node:net";
+import type { AddressInfo } from "node:net";
 import {
+  HOOK_TIMING,
   START_FAILURE_COOLDOWN_MS,
   ensureDaemon,
   inStartFailureCooldown,
   sinkConfigured,
 } from "../src/lib/daemon-client";
-import { logFilePath, startFailedMarkerPath } from "../src/lib/paths";
+import { logFilePath, spawnLockPath, startFailedMarkerPath } from "../src/lib/paths";
 
 // port 1 is never listening — isDaemonUp fails immediately
 const DEAD_PORT = 1;
@@ -87,5 +90,42 @@ describe("ensureDaemon", () => {
     const result = await ensureDaemon(config({ autoStartDaemon: false }));
     expect(result).toBe(false);
     expect(fs.existsSync(logFilePath())).toBe(false);
+  });
+});
+
+describe("hook timing (a hook runs on every tool call)", () => {
+  it("gives up on a hung daemon after the hook's short timeout, not the CLI's", async () => {
+    // Accepts the connection and never answers: the case where every hook pays the full timeout.
+    const sockets: net.Socket[] = [];
+    const server = net.createServer((socket) => sockets.push(socket));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const started = Date.now();
+      expect(await ensureDaemon(config({ port, autoStartDaemon: false }), HOOK_TIMING)).toBe(false);
+      const took = Date.now() - started;
+      expect(took).toBeGreaterThanOrEqual(HOOK_TIMING.requestTimeoutMs - 50);
+      expect(took).toBeLessThan(1400); // the CLI's 1.5 s health timeout would not fit
+    } finally {
+      for (const s of sockets) s.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("doesn't sit out another hook's whole daemon start", async () => {
+    // Another hook holds the spawn lock (it is starting the daemon), which never comes up.
+    fs.mkdirSync(path.dirname(spawnLockPath()), { recursive: true });
+    fs.writeFileSync(spawnLockPath(), "12345");
+    const started = Date.now();
+    expect(await ensureDaemon(config({ mode: "console" }), HOOK_TIMING)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(HOOK_TIMING.lockWaitMs + 900); // not the 5 s START_WAIT_MS
+    expect(fs.existsSync(logFilePath())).toBe(false); // no second daemon spawned
+    expect(fs.existsSync(spawnLockPath())).toBe(true); // the other hook's lock is left alone
+  });
+
+  it("keeps every hook wait well under the old ~8 s worst case", () => {
+    const worst = HOOK_TIMING.requestTimeoutMs * 2 + HOOK_TIMING.startWaitMs;
+    expect(worst).toBeLessThanOrEqual(4500);
+    expect(HOOK_TIMING.lockWaitMs).toBeLessThan(HOOK_TIMING.startWaitMs);
   });
 });

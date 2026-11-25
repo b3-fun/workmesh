@@ -219,8 +219,14 @@ describe("mapHookInput", () => {
     },
   );
 
-  it.each(["Stop", "SubagentStop"])("maps %s to idle", (name) => {
-    expect(mapHookInput(input({ hook_event_name: name }))?.kind).toBe("idle");
+  it("maps Stop to idle", () => {
+    expect(mapHookInput(input({ hook_event_name: "Stop" }))?.kind).toBe("idle");
+  });
+
+  it("maps SubagentStop to a heartbeat for the parent: its state is not the subagent's", () => {
+    const event = mapHookInput(input({ hook_event_name: "SubagentStop", agent_id: "a0123456789abcdef", agent_type: "Explore" }));
+    expect(event?.kind).toBe("heartbeat");
+    expect(event?.detail).toMatchObject({ hookEvent: "SubagentStop", agentId: "a0123456789abcdef", agentType: "Explore" });
   });
 
   it("maps SessionEnd to end", () => {

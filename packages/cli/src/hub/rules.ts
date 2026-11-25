@@ -182,6 +182,29 @@ export function extractPr(
   return { url: m[0], repo: `${m[1]}/${m[2]}` };
 }
 
+const GH_PR_ANY = /(?:^|[\s;&|(])gh\s+pr\s+[a-z]+\b/;
+const GH_ISSUE_ANY = /(?:^|[\s;&|(])gh\s+issue\s+[a-z]+\b/;
+const ISSUE_URL = /https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)/;
+
+/**
+ * v0.6 links (SPEC §15): the PR or issue a `gh pr …` / `gh issue …` call is
+ * about, from its output or, failing that, its arguments. Only the URL and
+ * its "owner/name" come back; the caller decides whether that repo is shared.
+ */
+export function extractGithubLink(
+  command: string | undefined,
+  responseText: string | undefined,
+): { type: "github_pr" | "github_issue"; url: string; repo: string; number: number } | undefined {
+  if (!command) return undefined;
+  const pr = GH_PR_ANY.test(command);
+  const issue = !pr && GH_ISSUE_ANY.test(command);
+  if (!pr && !issue) return undefined;
+  const re = pr ? PR_URL : ISSUE_URL;
+  const m = (responseText ? re.exec(responseText) : null) ?? re.exec(command);
+  if (!m) return undefined;
+  return { type: pr ? "github_pr" : "github_issue", url: m[0], repo: `${m[1]}/${m[2]}`, number: Number(m[3]) };
+}
+
 /** `p` is `dir` or inside it (both absolute, normalized). */
 export function isUnder(p: string, dir: string): boolean {
   if (!dir) return false;

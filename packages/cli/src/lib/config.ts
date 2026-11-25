@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { DEFAULT_DAEMON_PORT, DEFAULT_DEBOUNCE_MS, DEFAULT_STATUS_TTL_SEC } from "@workmesh/core";
-import { HUB_DEVICE_TOKEN_RE, hubProjectRuleSchema, hubShareLevelSchema } from "@workmesh/protocol";
+import { HUB_DEVICE_TOKEN_RE, HUB_GITHUB_LOGIN_RE, hubProjectRuleSchema, hubShareLevelSchema } from "@workmesh/protocol";
 import type { FormatOptions } from "@workmesh/core";
 import type { HubShareLevel } from "@workmesh/protocol";
 import { envSetting } from "./names";
@@ -44,6 +44,8 @@ export const hubConfigSchema = z.object({
    * never leaves without an explicit choice. An unknown value reads as absent.
    */
   share: hubShareLevelSchema.optional().catch(undefined),
+  /** v0.6: the person's GitHub login, read from `gh` at `hub connect` (an avatar on the board and menu bar). */
+  github: z.string().regex(HUB_GITHUB_LOGIN_RE).optional().catch(undefined),
 });
 export type HubConfig = z.infer<typeof hubConfigSchema>;
 

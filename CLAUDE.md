@@ -99,6 +99,7 @@ Any tool (curl) ───┼─────────────────�
 - `POST /sessions/dismiss {key}` — drops a session (`SessionStore.remove`); it returns with its next event
 - `GET /config` — token-free `safeConfig` view · `POST /config` — live-tune `granularity`/`statusPolicy`/`showProject`/`repoPrefix` (validated by `liveConfigPatchSchema`, applied via `pusher.applyConfig()`, persisted). Used by the menu bar app.
 - `GET /hub` — hub forwarder status (`{enabled:false}` when not paired) · `POST /hub/reload` — re-read the config's `hub` section and restart the forwarder (used by `workmesh hub connect|disconnect|include|exclude`)
+- `GET /team` (v0.5) — the team from the hub's `/relay/team` (polled by `hub/team.ts`), with `hubUrl`, `boardUrl`, `share`, `connected`, `halted`, `available` (false = older hub, 404); `?open=1` = the menu is open (15 s polling). The menu bar's team section reads only this.
 - `/state` sessions are `SessionView`s: `stateSince`, `background`, `cwd`, `name` (local only), `subagents` + `foldedInto` (fan-out folding). Keep it additive: the menu bar app and Sean's desk clock (~/dev/studio-pixbar) both read it.
 
 Wire contracts: `packages/core/src/events.ts` (zod schemas, shared CLI ↔ agentblip.com Worker). Hub wire format:
@@ -139,7 +140,15 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   assistant `output_text`, `event_msg` `task_complete.duration_ms`; threads only in `thread_history_*.sqlite` fall
   back to Stop's `last_assistant_message`.
 - Batching is by size (< 256 KB, ≤ 4 requests per tick while a backlog drains, 16 MB buffer). A hub that 400s the
-  new kinds gets message/turn events held back 10 min while everything else still flows.
+  new kinds gets message/turn/agent_message events held back 10 min while everything else still flows.
+- v0.6 structure (SPEC §15, `hub/agents.ts` readers): SubagentStart/SubagentStop hooks (heartbeats for the parent:
+  Slack unchanged) and the `agent_id` on hooks inside a subagent make `<parent key>/<agentId>` sessions (role,
+  agentType, meta.json title at conversation level, model + tokens from `agent-<id>.jsonl`, status line); sent only
+  while the hub serves `/relay/team` (`setStructured`), else their tool calls stay on the parent. Codex threads read
+  `session_meta` for their parent; workflow runs sum their agents' tokens. `agent_message` from SendMessage (hook),
+  peer messages and Codex sends (transcript tail). Links per event (Linear ids, gh PR/issue on shared repos, Slack
+  at conversation level). `person.github` from `gh api user` (`lib/github.ts`) on heartbeats. Injected prompts
+  (`<task-notification>`, `<cross-session-message>`) map to `InjectedPrompt`: a turn starts, no prompt is sent.
 
 ## The hosted hub (private)
 
@@ -213,6 +222,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 | 2026-11-24 | Hub serves workmesh.b3os.org and bullpen.b3os.org; Worker script stays `bullpen` | Paired relays keep working without re-pairing; a renamed script would orphan the Durable Object |
 | 2026-11-24 | Split (Sean): the hub, board, summaries and B3OS kit move to the private `b3-fun/workmesh-cloud` (with `apps/hub`'s history, same path); this repo keeps the CLI, core, protocol, menu bar app, site, SPEC (protocol + privacy) and the one ROADMAP. workmesh-cloud pins this repo as a submodule for `@workmesh/protocol` | "The platform always remains hosted / by us, while the piece that gets installed on users machine is open source". Public history is not rewritten: the hub's code up to the split stays in it |
 | 2026-11-23 | Menu bar 0.2: grouped live list, SF Symbol template icon (orange only for needs-you), row actions, snooze; all new data via `/state` fields and daemon endpoints | Keeps the thin-client rule; roadmap in apps/menubar/README.md |
+| 2026-11-24 | v0.5/v0.6 relay: daemon polls the hub's `/relay/team` and serves `GET /team` for the menu bar; subagents are hub sessions with `parent`/`role`, sent only once the hub answers `/relay/team`; tokens as Claude Code counts an agent | One capability signal keeps an older hub's board from filling with subagents; Claude Code's own `totalTokens` matched the context + output reading exactly on 5 of 6 real subagents, while a billing sum ran 1.1–6× larger |
 
 ## Cloudflare Resources
 
@@ -244,6 +254,8 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 - [x] Rename to Workmesh (branch `workmesh-rename`): dirs + one-time migration, `WORKMESH_*`, `stop` waits / `restart`, Workmesh.app, site + docs — CLI 478 tests, core 59, worker 62
 - [x] One repo (branch `monorepo`, 0.8.0, not published): hub + board under `apps/hub` with history, `@workmesh/protocol`, one SPEC/CONTRIBUTING, hub on workmesh.b3os.org + bullpen.b3os.org — CLI 478 tests, core 55, protocol 14, hub 105, worker 62
 - [x] Split (branch `split-hosted`): hub, board and B3OS kit moved to the private `b3-fun/workmesh-cloud` with their history; SPEC is the public protocol + privacy rules — CLI 478 tests, core 55, protocol 14, worker 62
+- [x] v0.6 wire (#3, merged): protocol 22 tests
+- [ ] v0.5/v0.6 relay (branch `relay-v06`): subagents, agent messages, links, avatars, `/team`, multiplayer menu bar — CLI 525 tests
 - [x] Landing + /pair + /privacy (RR7 SSR), deployed with custom domain
 - [x] GitHub github.com/b3-fun/workmesh public, CI + push-to-deploy green (secrets set)
 - [x] E2E smoke: daemon lifecycle + live relay pairing/auth verified

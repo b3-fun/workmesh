@@ -201,11 +201,12 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
   it("pairs, stores the token 0600, edits dirs, and disconnects", async () => {
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      await runHubConnect(base, { open: false, machine: "Test-Box.local" });
+      await runHubConnect(base, { open: false, machine: "Test-Box.local", readGithub: async () => "sean-test" });
       const file = path.join(tmp, "config", "workmesh", "config.json");
       expect(fs.statSync(file).mode & 0o777).toBe(0o600);
       const hub = loadConfig(file).hub;
       expect(hub).toMatchObject({ url: base, deviceToken: TOKEN, machine: "test-box", project: PROJECT, person: { name: "Sean" } });
+      expect(hub?.github).toBe("sean-test"); // v0.6: read from gh at connect, for the avatar
       const printed = out.mock.calls.flat().join("\n");
       expect(printed).toContain("WXYZ-0001");
       expect(printed).not.toContain(TOKEN);
@@ -228,13 +229,14 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const file = path.join(tmp, "config", "workmesh", "config.json");
-      await runHubConnect(base, { open: false, share: "conversation" });
+      await runHubConnect(base, { open: false, share: "conversation", readGithub: async () => undefined });
       expect(loadConfig(file).hub?.share).toBe("conversation");
       expect(out.mock.calls.flat().join("\n")).toContain("sharing level: ");
 
       const asked: string[] = [];
       await runHubConnect(base, {
         open: false,
+        readGithub: async () => undefined,
         askShare: async (suggested) => {
           asked.push(suggested);
           return "metadata";
@@ -247,7 +249,7 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
       expect(loadConfig(file).hub?.share).toBe("conversation");
       expect(out.mock.calls.flat().join("\n")).toContain("text starts from now");
       await expect(runHubShare("all")).rejects.toThrow(/conversation or metadata/);
-      await expect(runHubConnect(base, { open: false, share: "loud" })).rejects.toThrow(/unknown sharing level/);
+      await expect(runHubConnect(base, { open: false, share: "loud", readGithub: async () => undefined })).rejects.toThrow(/unknown sharing level/);
       await runHubDisconnect();
     } finally {
       out.mockRestore();

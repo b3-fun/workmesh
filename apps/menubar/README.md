@@ -1,17 +1,19 @@
 # Workmesh menu bar app (macOS)
 
 A tiny native SwiftUI menu bar app — the "on-air light" for your AI agents, on
-your own screen. It's a **thin client of the local daemon**: it holds no logic
-of its own, just polls the daemon's loopback API and renders the blip.
+your own screen, and since 0.5 your team's too. It's a **thin client of the
+local daemon**: it holds no logic of its own, just polls the daemon's loopback
+API and renders the blip.
 
 ```
-menu bar app ──GET /state, /config──▶ workmesh daemon (127.0.0.1:4519) ──▶ Slack
-            ◀──POST /pause /resume /config /sessions/dismiss──
+menu bar app ──GET /state, /config, /team──▶ workmesh daemon (127.0.0.1:4519) ──▶ Slack
+            ◀──POST /pause /resume /config /sessions/dismiss──          └──▶ team hub (/relay/team)
 ```
 
-All the real work — session aggregation, status formatting, the ownership guard
-— stays in `@workmesh/core` and the daemon. The app is presentation + control
-only, so there's zero logic to keep in sync.
+All the real work — session aggregation, status formatting, the ownership guard,
+reading the hub — stays in `@workmesh/core` and the daemon. The daemon polls the
+hub and caches the team view; the app only reads `GET /team` on loopback. The
+app is presentation + control only, so there's zero logic to keep in sync.
 
 ## What it shows
 
@@ -23,17 +25,40 @@ only, so there's zero logic to keep in sync.
 - **Header**: the exact text your Slack status shows (or why it shows nothing:
   snoozed until 9:00 AM, paused, your own status is up), with a snooze menu:
   30 minutes, 1 hour, until tomorrow (9 AM), or pause until you resume.
-- **Sessions**, grouped by what they need from you: **Needs you** (orange,
-  longest wait first), **Working**, **Background** (teal: only waiting on its
-  own shells or subagents), **Idle** (collapsed). Each row leads with the
-  project, then the activity and the agent's session name, a source glyph
-  (Claude, Codex, workflow), `+N` for subagents or workflow agents running under
-  it, and the time in its current state. Hover for the full text and path.
+- **Needs you** (orange, longest wait first): your agents waiting on you, on
+  this Mac and, when you're paired with a hub, on your other machines (marked
+  with a small computer). A wait the hub also lists shows once, with the hub's
+  reason as its line.
+- **Sessions on this Mac**: **Working**, **Background** (teal: only waiting on
+  its own shells or subagents), **Idle** (collapsed). Each row leads with the
+  project, then the activity and the agent's session name, the agent's mark
+  (Anthropic for Claude Code, OpenAI for Codex; SF Symbols for workflows and
+  others), `+N` for subagents or workflow agents running under it, and the time
+  in its current state. Hover for the full text and path. `/state` stays the
+  source of truth for this Mac.
+- **Team** (when paired): each teammate with their GitHub avatar (initials
+  while it loads or without one), a presence dot, and their agents in a few
+  words ("2 working · 1 waiting", "idle", "offline"). People with agents
+  running come first, then whoever's online. Click a person for their sessions
+  (mark, name, what it's doing, repo, `+N`, time in state). A hub without the
+  team view says so in one quiet line; unpaired, the menu shows the
+  `workmesh hub connect` command with a copy button; a hub that rejected this
+  Mac shows the command to pair again.
+- **Footer**: settings, the hub connection ("Connected to b3os.org", "Hub
+  unreachable", "Reconnect needed") over your sharing level, **Open board**,
+  and Quit.
 - **Row actions** (click or right-click): copy the session name or ID, reveal
   the project folder in Finder, dismiss a stale wait or a finished session.
+  Rows from the hub: copy the name, open the board.
+- **Notifications**: one native notification per new wait, from this Mac or
+  the hub, with the hub's reason when it has one. Waits already there when the
+  app starts don't fire. On by default; Settings turns them off.
 - **Settings** (gear): Slack detail level, what to do when your own status is
-  set, lead with the repo name, an opt-in notification when a session newly
-  needs you, and the config file.
+  set, lead with the repo name, notifications, and the config file.
+
+The team view is read every 5 s while the menu is open (with `?open=1`, so the
+daemon reads the hub faster) and every 15 s otherwise; `/state` every 2 s. A
+daemon without `GET /team` (404) hides the team UI.
 
 ## Requirements
 
@@ -49,7 +74,7 @@ only, so there's zero logic to keep in sync.
 ```bash
 cd apps/menubar
 swift build                 # compile
-./scripts/make-app.sh 0.3.0 # → dist/Workmesh.app (a menu-bar agent, LSUIElement)
+./scripts/make-app.sh 0.5.0 # → dist/Workmesh.app (a menu-bar agent, LSUIElement)
 open dist/Workmesh.app
 ```
 
@@ -61,32 +86,74 @@ To start it at login, a LaunchAgent with the label `org.npclabs.workmesh.menubar
 (the bundle id) that runs `Workmesh.app/Contents/MacOS/Workmesh` with `RunAtLoad`
 and `KeepAlive` works until the app offers launch at login itself.
 
+## Develop without a daemon: mock + snapshots
+
+`scripts/mock-daemon.mjs` (plain Node, no deps) serves `/health`, `/state`,
+`/config`, `/hub` and `/team` with fixture data. It writes its secret and port
+under `XDG_STATE_HOME` / `XDG_CONFIG_HOME`, which it requires and which must not
+be your real `~/.config` / `~/.local/state`, so run the app with the same two
+variables and it talks to the mock, never your daemon.
+
+Snapshot mode renders the menu to a PNG and exits: set `WORKMESH_SNAPSHOT` to
+the output path, optionally `WORKMESH_SNAPSHOT_EXPAND=An` (comma-separated
+names) and `WORKMESH_SNAPSHOT_APPEARANCE=dark`. It hosts the menu in an
+off-screen window and draws it at 2x, so real controls render (no
+ImageRenderer placeholders); it adds no menu bar item and posts nothing.
+
+```bash
+export XDG_CONFIG_HOME=/tmp/wm/config XDG_STATE_HOME=/tmp/wm/state
+node scripts/mock-daemon.mjs --port 45190 --scenario team &   # or empty, unpaired, halted, noteam, legacy
+OUT=/tmp/wm/dist BUNDLE_ID=org.npclabs.workmesh.menubar.dev ./scripts/make-app.sh 0.5.0
+WORKMESH_SNAPSHOT=/tmp/wm/team.png WORKMESH_SNAPSHOT_EXPAND=An \
+  /tmp/wm/dist/Workmesh.app/Contents/MacOS/Workmesh
+```
+
+`BUNDLE_ID` gives a dev build its own defaults domain, apart from an installed
+Workmesh.app. Without `WORKMESH_SNAPSHOT` the same command runs the live menu
+against the mock.
+
 ## Layout
 
 ```
 Sources/WorkmeshMenuBar/
   App.swift          # @main MenuBarExtra scene
-  AppModel.swift     # poll loop + control actions (ObservableObject)
+  AppModel.swift     # poll loops (/state 2 s, /team 5 s open / 15 s closed) + actions
   DaemonClient.swift # authed HTTP to the loopback API
-  Models.swift       # Codable mirrors of /state and /config, SessionGroup, BlipState
+  Models.swift       # mirrors of /state, /config, /team (tolerant), needs-you merge, BlipState
   Paths.swift        # XDG-aware secret/config resolution (matches the CLI)
   StatusIcon.swift   # SF Symbol menu bar icon (template, orange for "needs you")
-  MenuContent.swift  # the dropdown: header, grouped list, settings
-  SessionRow.swift   # one session row + its action menu
-  Notifier.swift     # opt-in "needs you" notifications
-scripts/make-app.sh  # bundles the binary into Workmesh.app
+  MenuContent.swift  # the dropdown: header, needs you, this Mac, team, footer
+  SessionRow.swift   # the shared agent row, the local session row, the action menu
+  TeamViews.swift    # avatar, presence dot, person row, teammate session row
+  AgentMark.swift    # Anthropic/OpenAI marks as SwiftUI shapes (tiny SVG path parser)
+  Notifier.swift     # "needs you" notifications, one per wait across both sources
+  SnapshotMode.swift # WORKMESH_SNAPSHOT: render the menu to a PNG and exit
+scripts/make-app.sh      # bundles the binary into Workmesh.app
+scripts/mock-daemon.mjs  # fixture daemon for development and snapshots
 ```
 
 The app stays a thin client. Everything it shows comes from the daemon: the
 state per session, `background`, `stateSince`, the session `name` and `cwd`,
-`subagents`/`foldedInto` for fan-out, `pausedUntil`. Its actions are daemon
-calls (`POST /pause {for}`, `/resume`, `/sessions/dismiss`, `/config`) or local
-ones (copy, reveal in Finder). Grouping is a direct read of `state` and
-`background`; ordering and time formatting are presentation.
+`subagents`/`foldedInto` for fan-out, `pausedUntil`, and the team view
+(`people`, `needsMe`, `sessions`, connection and sharing level). Its actions are
+daemon calls (`POST /pause {for}`, `/resume`, `/sessions/dismiss`, `/config`) or
+local ones (copy, reveal in Finder, open the board). Grouping is a direct read
+of `state` and `background`; showing a wait once when both `/state` and
+`needsMe` list it (the hub key ends with `:` + the local key), ordering and time
+formatting are presentation. Team ages use the hub's `serverNow`.
 
 ## Roadmap
 
-**Now** (shipped in 0.2)
+**Now** (0.5)
+- Team section from the daemon's `GET /team`: people, presence, counts,
+  expandable sessions, GitHub avatars.
+- Needs you across machines, with the hub's reason; one notification per wait,
+  on by default.
+- Hub status and sharing level in the footer, Open board.
+- The agents' real marks (Anthropic, OpenAI) in every row.
+- Mock daemon and snapshot mode for development.
+
+**Shipped in 0.2**
 - Live list redesign: project first, activity and session name, source glyph,
   `+N` fan-out, time in state, full text on hover.
 - Sections: Needs you, Working, Background, Idle (collapsed).
@@ -95,7 +162,7 @@ ones (copy, reveal in Finder). Grouping is a direct read of `state` and
 - Snooze Slack sync for 30 minutes, 1 hour or until tomorrow, with auto-resume
   in the daemon.
 - Settings moved into one gear menu.
-- Opt-in notification when a session newly needs you.
+- Notification when a session newly needs you.
 
 **Next**
 - Jump to the session's terminal. Claude Code's session file carries a `tmux`

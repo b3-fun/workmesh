@@ -35,7 +35,27 @@ export const DETAIL_LIMITS = {
   transcriptPath: 1024,
   desc: 1000,
   lastAssistantMessage: 8000,
+  agentId: 64,
+  agentType: 64,
+  messagePeer: 200,
+  messageText: 8000,
+  slackId: 40,
+  slackLink: 300,
+  slackName: 120,
 } as const;
+
+/**
+ * A Slack message an MCP Slack tool touched (local only, like all of detail):
+ * channel id, message ts, the permalink when the tool's response carried one,
+ * the channel name when the call named it.
+ */
+export const slackRefSchema = z.object({
+  channel: z.string().max(DETAIL_LIMITS.slackId).regex(/^[A-Z0-9]+$/),
+  ts: z.string().max(DETAIL_LIMITS.slackId).regex(/^\d{9,11}\.\d{1,9}$/).optional(),
+  link: z.string().max(DETAIL_LIMITS.slackLink).optional(),
+  name: z.string().max(DETAIL_LIMITS.slackName).optional(),
+});
+export type SlackRef = z.infer<typeof slackRefSchema>;
 
 /**
  * Raw facts about one hook call, filled by the Claude Code and Codex hook
@@ -71,6 +91,24 @@ export const sessionEventDetailSchema = z.object({
   transcriptPath: z.string().max(DETAIL_LIMITS.transcriptPath).optional(),
   /** The turn's final assistant text, when a Stop payload carries it (Codex). */
   lastAssistantMessage: z.string().max(DETAIL_LIMITS.lastAssistantMessage).optional(),
+  // v0.6 (SPEC §15): subagents, agent messages, links.
+  /**
+   * The subagent this hook fired in: Claude Code's `agent_id`, on tool hooks
+   * inside a subagent and on SubagentStart/SubagentStop.
+   */
+  agentId: z.string().max(DETAIL_LIMITS.agentId).regex(/^[\w.-]+$/).optional(),
+  /** That subagent's type: `general-purpose`, `Explore`. */
+  agentType: z.string().max(DETAIL_LIMITS.agentType).optional(),
+  /** SubagentStop: the subagent's own transcript. */
+  agentTranscriptPath: z.string().max(DETAIL_LIMITS.transcriptPath).optional(),
+  /** Stop: background work still running when the turn ended (Claude Code `background_tasks`). */
+  backgroundShells: z.number().int().nonnegative().max(999).optional(),
+  backgroundAgents: z.number().int().nonnegative().max(999).optional(),
+  /** An outbound agent-to-agent message (Claude Code SendMessage): its recipient and text. */
+  messageTo: z.string().max(DETAIL_LIMITS.messagePeer).optional(),
+  messageText: z.string().max(DETAIL_LIMITS.messageText).optional(),
+  /** Slack messages an MCP Slack tool call touched. */
+  slack: z.array(slackRefSchema).max(5).optional(),
 });
 export type SessionEventDetail = z.infer<typeof sessionEventDetailSchema>;
 

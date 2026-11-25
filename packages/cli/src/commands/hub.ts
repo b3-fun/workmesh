@@ -13,6 +13,7 @@ import { hubShareLevel, loadConfig, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { getHubState, isDaemonUp, reloadHub } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
+import { readGithubLogin } from "../lib/github";
 import { bold, cyan, dim, formatDuration, green, red, select, sleep, spinner, yellow } from "../lib/ui";
 import { openBrowser } from "./setup";
 import type { HubState } from "../daemon/server";
@@ -192,6 +193,8 @@ export interface HubConnectOptions {
   share?: string;
   /** Injected for tests: answer the sharing question. */
   askShare?: (suggested: HubShareLevel) => Promise<HubShareLevel>;
+  /** Injected for tests: the GitHub login `gh` reports. */
+  readGithub?: () => Promise<string | undefined>;
 }
 
 function askShareLevel(suggested: HubShareLevel): Promise<HubShareLevel> {
@@ -242,6 +245,8 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
     // else the suggested level (max sharing by default, Sean 11-24).
     share = interactive ? await (opts.askShare ?? askShareLevel)(suggested) : suggested;
   }
+  // v0.6: the avatar on the board and in teammates' menu bars (skipped when gh is absent).
+  const github = (await (opts.readGithub ?? readGithubLogin)()) ?? previous?.github;
   config.hub = {
     url: hubUrl,
     deviceId: result.deviceId,
@@ -253,11 +258,13 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
     excludeDirs: previous?.excludeDirs ?? [],
     pairedAt: Date.now(),
     share,
+    github,
   };
   saveConfig(config);
   const who = result.person ? ` as ${result.person.name} (${result.person.email})` : "";
   console.log(green(`connected ${machine} to ${result.project.name}${who}`));
   console.log(dim(`  token and sharing rule saved to ${configPath()} (0600)`));
+  if (github) console.log(dim(`  avatar: github.com/${github} (from gh)`));
   const remotes = result.project.include.remotes;
   console.log(
     `  shares sessions in repos whose origin contains ${remotes.length ? remotes.map((r) => bold(r)).join(", ") : dim("(none)")}` +
@@ -317,6 +324,7 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
     ["shares", [...hub.project.include.remotes, ...hub.project.include.dirs, ...hub.includeDirs].join(", ") || "(nothing)"],
     ["level", `${hubShareLevel(hub)} — ${SHARE_LEVEL_SUMMARY[hubShareLevel(hub)]}`],
   ];
+  if (hub.github) rows.push(["avatar", `github.com/${hub.github}`]);
   if (hub.excludeDirs.length) rows.push(["never shares", hub.excludeDirs.join(", ")]);
   if (!daemon) {
     rows.push(["daemon", daemonError ? red(daemonError) : yellow("not running — `workmesh start --detach`")]);
@@ -336,6 +344,8 @@ export async function runHubStatus(opts: HubStatusOptions = {}): Promise<void> {
       ["last send", `${ago(daemon.lastSendAt)}${daemon.lastSendOk === false ? red(" (failed)") : ""}`],
       ["last success", ago(daemon.lastSuccessAt)],
       ["shared sessions", String(daemon.sharedSessions)],
+      // v0.6: subagents go as their own sessions once the hub serves /relay/team.
+      ["subagents", daemon.structured ? `${daemon.subagentSessions ?? 0} live, sent as sessions` : "folded into their sessions (hub has no team view)"],
       ["queued", String(daemon.queued)],
       ["dropped", String(daemon.dropped)],
     );

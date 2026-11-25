@@ -5,14 +5,19 @@ import path from "node:path";
 import { truncateHead } from "@workmesh/core";
 import {
   HUB_DESC_MAX,
+  HUB_MAX_LINKS,
+  HUB_STATUS_LINE_MAX,
+  HUB_TITLE_MAX,
   HUB_MAX_BODY_BYTES,
   HUB_MAX_DURATION_MS,
   HUB_MAX_EVENTS_PER_REQUEST,
   HUB_MAX_SESSIONS_PER_REQUEST,
   HUB_TEXT_MAX,
   HUB_WIRE_VERSION,
+  HUB_GITHUB_LOGIN_RE,
   hubActivityEventSchema,
   hubIngestRequestSchema,
+  hubLinkSchema,
   hubSessionUpsertSchema,
   isRepoRelativePath,
 } from "@workmesh/protocol";
@@ -20,6 +25,7 @@ import type { AgentSession, SessionEvent } from "@workmesh/core";
 import type {
   HubActivityEvent,
   HubEventKind,
+  HubLink,
   HubProjectRule,
   HubSessionUpsert,
   HubShareLevel,
@@ -36,9 +42,20 @@ import {
   readTail,
   startTail,
 } from "./transcript";
-import type { TranscriptItem, TranscriptTail } from "./transcript";
+import type { AgentMessageItem, TranscriptItem, TranscriptTail } from "./transcript";
+import {
+  ClaudeUsageReader,
+  backgroundStatusLine,
+  claudeSubagentsDir,
+  codexTaskTitle,
+  readClaudeSubagentMeta,
+  readCodexThreadMeta,
+  readCodexUsage,
+} from "./agents";
+import type { CodexThreadMeta, Usage } from "./agents";
 import {
   extractCmd,
+  extractGithubLink,
   extractIssues,
   extractPr,
   hubLabel,
@@ -101,6 +118,14 @@ export interface HubForwarderOptions {
   maxReadBytes?: number;
   /** Queued event bytes kept while the hub is unreachable. Default 16 MB. */
   maxBufferBytes?: number;
+  /** v0.6: the person's GitHub login (`gh api user`), sent on heartbeats as `person.github`. */
+  github?: string;
+  /**
+   * v0.6: the hub reads session structure (it serves `/relay/team`): send
+   * subagents as their own sessions under their parent. Off until the team
+   * poller says so, so an older hub never shows each subagent as a session.
+   */
+  structured?: boolean;
 }
 
 export interface HubForwarderStatus {
@@ -130,6 +155,10 @@ export interface HubForwarderStatus {
   conversationSessions: number;
   /** The hub refused message/turn events (an older hub): they are held back until this time. */
   conversationHeldUntil?: number;
+  /** v0.6: subagents go to the hub as their own sessions (the hub reads structure). */
+  structured?: boolean;
+  /** v0.6: subagent sessions tracked (live or ending). */
+  subagentSessions?: number;
 }
 
 /** A shared place a path resolved to. */
@@ -173,6 +202,47 @@ interface Tracked {
   turnRecord?: { durationMs: number; ts?: number };
   /** Transcript text blocks already sent (ids), bounded. */
   sentMessages?: Set<string>;
+  // v0.6 structure (SPEC §15)
+  /** Links already sent for this session (type|id|url), bounded. */
+  sentLinks?: Set<string>;
+  /** Set when this entry is a Claude Code subagent (not a store session). */
+  sub?: SubState;
+  /** A main session's subagent keys. */
+  subs?: Set<string>;
+  /** Background work the last Stop reported (Claude Code `background_tasks`). */
+  bg?: { shells: number; agents: number };
+  /** Codex: the thread's rollout file, from a hook or the watcher. */
+  rollout?: string;
+  /** Codex: who spawned this thread (read once from the rollout's session_meta). */
+  codexMeta?: { state: "pending" | "done"; meta?: CodexThreadMeta; tries: number; nextAt: number };
+  /** Workflow sessions: the run's dir (journal + agent transcripts). */
+  workflowDir?: string;
+  /** Token totals and model, refreshed off the hook path. */
+  usage?: Usage;
+  usageReaders?: Map<string, ClaudeUsageReader>;
+  usageDirty?: boolean;
+  usageNextAt?: number;
+  usagePending?: boolean;
+}
+
+/** A Claude Code subagent, tracked from its hooks and transcript (SPEC §15). */
+interface SubState {
+  parentKey: string;
+  agentId: string;
+  agentType?: string;
+  /** The task it was given (meta.json `description`), raw: redacted at send time, conversation level only. */
+  title?: string;
+  state: "working" | "idle";
+  startedAt: number;
+  updatedAt: number;
+  stateSince: number;
+  /** Last activity label as the hub may see it. */
+  label?: string;
+  /** `agent-<id>.jsonl`, for token totals and the model. */
+  transcript?: string;
+  meta: "none" | "pending" | "done";
+  /** When it stopped (SubagentStop, or its parent went away). */
+  ended?: number;
 }
 
 const SESSION_REQUIRED = new Set(["key", "source", "state", "startedAt", "updatedAt", "stateSince"]);
@@ -187,7 +257,15 @@ const BODY_MARGIN_BYTES = 2048;
 const DEFAULT_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 /** After a hub refuses message/turn events, try again this much later. */
 const CONVERSATION_HOLD_MS = 10 * 60_000;
-const CONVERSATION_KINDS: ReadonlySet<string> = new Set(["message", "turn"]);
+/** Kinds an older hub may refuse (its enum predates them): held back after a 400 that had them. */
+const CONVERSATION_KINDS: ReadonlySet<string> = new Set(["message", "turn", "agent_message"]);
+/** A subagent with no hook or transcript activity for this long is over (its SubagentStop was missed). */
+const SUBAGENT_IDLE_END_MS = 30 * 60_000;
+/** Usage (tokens, model) re-read at most this often per session. */
+const USAGE_REFRESH_MS = 5000;
+/** Agent transcripts read per workflow run. */
+const MAX_WORKFLOW_TRANSCRIPTS = 64;
+const AGENT_ID_SHAPE = /^a[0-9a-f]{8,32}$/;
 /** Transcript message ids remembered per session (dedupe across re-reads). */
 const MAX_SENT_MESSAGE_IDS = 2000;
 
@@ -291,6 +369,10 @@ export class HubForwarder {
   private dropped = 0;
   private rejected = 0;
   private accepted = 0;
+  private github: string | undefined;
+  private structured: boolean;
+  /** A Slack workspace host seen in a permalink (`b3.slack.com`), to link messages read by id. */
+  private slackHost: string | undefined;
 
   constructor(opts: HubForwarderOptions) {
     this.url = opts.url.replace(/\/+$/, "");
@@ -331,6 +413,21 @@ export class HubForwarder {
     this.turnRecordWaitMs = opts.turnRecordWaitMs ?? 5000;
     this.maxReadBytes = opts.maxReadBytes ?? MAX_READ_BYTES;
     this.maxBufferBytes = opts.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
+    this.github = opts.github && HUB_GITHUB_LOGIN_RE.test(opts.github) ? opts.github : undefined;
+    this.structured = opts.structured ?? false;
+  }
+
+  /** v0.6: the person's GitHub login changed (read from `gh` after start). */
+  setGithub(login: string | undefined): void {
+    this.github = login && HUB_GITHUB_LOGIN_RE.test(login) ? login : undefined;
+  }
+
+  /**
+   * v0.6: whether the hub reads session structure. Turning it off (an older
+   * hub) folds subagents back into their parents from the next send.
+   */
+  setStructured(on: boolean): void {
+    this.structured = on;
   }
 
   // --- lifecycle -------------------------------------------------------------
@@ -382,6 +479,8 @@ export class HubForwarder {
       share: this.share,
       conversationSessions: [...this.sessions.values()].filter((t) => this.conversationShared(t)).length,
       conversationHeldUntil: this.conversationHeldUntil > this.now() ? this.conversationHeldUntil : undefined,
+      structured: this.structured,
+      subagentSessions: [...this.sessions.values()].filter((t) => t.sub && t.sub.ended === undefined).length,
     };
   }
 
@@ -468,14 +567,23 @@ export class HubForwarder {
   }
 
   private observeUnsafe(event: SessionEvent): void {
-    if (this.halted || event.kind === "heartbeat") return;
+    if (this.halted) return;
+    const d = event.detail;
+    const lifecycle = d?.hookEvent === "SubagentStart" || d?.hookEvent === "SubagentStop";
+    if (event.kind === "heartbeat" && !lifecycle) return;
     const key = `${event.source}:${event.sessionId}`;
     const t = this.track(key);
     const live = this.getSession(key);
     if (live) t.last = live;
     if (event.cwd) this.setCwd(t, event.cwd);
+    this.noteStructure(event, t);
+    if (lifecycle) {
+      this.subagentLifecycle(event, t);
+      return;
+    }
+    // A hook that fired inside a subagent: its tool calls are the subagent's.
+    const sub = d?.agentId ? this.subagentFor(t, d.agentId, d.agentType, event.ts ?? this.now()) : undefined;
 
-    const d = event.detail;
     const files = d ? [...new Set([d.filePath, ...(d.filePaths ?? [])].filter((f): f is string => !!f))] : [];
     const fileTargets = files.map((file) => ({ file, target: this.classify(file) }));
     const sharedFiles = fileTargets.filter(
@@ -500,13 +608,193 @@ export class HubForwarder {
       toolNames,
     });
     if (event.activity) t.label = { raw: event.activity, hub: label };
+    if (sub) {
+      const st = this.sessions.get(sub.key)!.sub!;
+      st.label = label ?? st.label;
+      if (st.state !== "working") st.stateSince = event.ts ?? this.now();
+      st.state = "working";
+      st.ended = undefined;
+      st.updatedAt = Math.max(st.updatedAt, event.ts ?? this.now());
+      const dir = claudeSubagentsDir(acceptClaudeTranscript(d?.transcriptPath));
+      if (dir && d?.agentId) st.transcript ??= path.join(dir, `agent-${d.agentId}.jsonl`);
+      this.sessions.get(sub.key)!.usageDirty = true;
+    }
 
     if (!t.shared) return; // rule 3: unshared sessions send nothing
     // Conversation bookkeeping first: a prompt that makes the session shared
     // starts its conversation, so its own text is "from that moment on".
     this.conversationStep(event, t);
-    const ev = this.buildEvent(event, t, { sharedFiles, anyFiles: files.length > 0, ids, label });
-    if (ev) this.enqueue(ev);
+    const links = this.linksFor(t, d, ids);
+    const ev = this.buildEvent(event, t, { sharedFiles, anyFiles: files.length > 0, ids, label, hasLinks: links.length > 0 });
+    // Subagent work goes under the subagent once the hub reads structure;
+    // until then it stays on the parent's timeline, as before v0.6.
+    const evKey = sub && this.structured ? sub.key : t.key;
+    if (ev) this.enqueue({ ...ev, key: evKey, links: links.length > 0 ? links : undefined });
+    if (d?.tool === "SendMessage" && d.hookEvent === "PreToolUse" && d.messageTo) {
+      this.enqueueAgentMessage(t, {
+        key: evKey,
+        ts: event.ts ?? this.now(),
+        from: evKey,
+        to: this.peerName(d.messageTo, t.key),
+        channel: "claude-session",
+        text: d.messageText,
+      });
+    }
+  }
+
+  // --- structure (SPEC §15) ----------------------------------------------------
+
+  /** Rollout paths, workflow dirs, background counts: the bookkeeping v0.6's upserts read. */
+  private noteStructure(event: SessionEvent, t: Tracked): void {
+    const d = event.detail;
+    if (event.source === "codex") {
+      const file = acceptCodexTranscript(d?.transcriptPath, event.sessionId);
+      if (file) t.rollout = file;
+      t.usageDirty = true;
+      t.codexMeta ??= { state: "pending", tries: 0, nextAt: 0 };
+      return;
+    }
+    if (event.source === "workflow") {
+      const journal = d?.transcriptPath;
+      if (journal && path.isAbsolute(journal) && path.basename(journal) === "journal.jsonl") {
+        t.workflowDir = path.dirname(journal);
+      }
+      t.usageDirty = true;
+      return;
+    }
+    if (!d || d.agentId) return;
+    if (d.hookEvent === "Stop") {
+      const shells = d.backgroundShells ?? 0;
+      const agents = d.backgroundAgents ?? 0;
+      t.bg = shells + agents > 0 ? { shells, agents } : undefined;
+    } else if (d.hookEvent === "UserPromptSubmit" || d.hookEvent === "InjectedPrompt" || d.hookEvent === "PreToolUse") {
+      t.bg = undefined;
+    }
+  }
+
+  /** The subagent `agentId` of a session, tracked as its own entry (`<parent key>/<agentId>`). */
+  private subagentFor(parent: Tracked, agentId: string, agentType: string | undefined, ts: number): { key: string } {
+    const key = `${parent.key}/${agentId}`;
+    let t = this.sessions.get(key);
+    if (!t?.sub) {
+      t = {
+        key,
+        shared: parent.shared,
+        roots: parent.roots,
+        issues: [],
+        cwd: parent.cwd,
+        cwdTarget: parent.cwdTarget,
+        lastTarget: parent.lastTarget,
+        sub: { parentKey: parent.key, agentId, agentType, state: "working", startedAt: ts, updatedAt: ts, stateSince: ts, meta: "none" },
+      };
+      this.sessions.set(key, t);
+      (parent.subs ??= new Set()).add(key);
+    }
+    if (agentType && !t.sub!.agentType) t.sub!.agentType = agentType;
+    return { key };
+  }
+
+  /** SubagentStart / SubagentStop (Claude Code), as a heartbeat for the parent. */
+  private subagentLifecycle(event: SessionEvent, parent: Tracked): void {
+    const d = event.detail!;
+    if (!d.agentId || d.agentType === "workflow-subagent") return; // workflow agents: the workflow watcher's
+    const ts = event.ts ?? this.now();
+    const { key } = this.subagentFor(parent, d.agentId, d.agentType, ts);
+    const t = this.sessions.get(key)!;
+    const sub = t.sub!;
+    const dir = claudeSubagentsDir(acceptClaudeTranscript(d.transcriptPath));
+    if (dir) sub.transcript ??= path.join(dir, `agent-${d.agentId}.jsonl`);
+    if (d.hookEvent === "SubagentStart") {
+      if (sub.ended !== undefined || sub.state !== "working") sub.stateSince = ts;
+      sub.ended = undefined;
+      sub.state = "working";
+      sub.label = "thinking";
+    } else {
+      const file = d.agentTranscriptPath;
+      if (file && path.isAbsolute(file) && file.endsWith(".jsonl")) sub.transcript = path.normalize(file);
+      sub.ended = ts;
+      sub.label = undefined;
+    }
+    sub.updatedAt = Math.max(sub.updatedAt, ts);
+    t.usageDirty = true;
+  }
+
+  /** A recipient as the hub may see it: an agent id becomes its session key; local addresses are not sent. */
+  private peerName(raw: string, parentKey: string): string {
+    const to = raw.trim();
+    if (AGENT_ID_SHAPE.test(to)) return `${parentKey}/${to}`;
+    if (/^[a-z]+:\//i.test(to) || to.includes("/") || to.includes("\\")) return "another session";
+    return scrubText(to, { home: this.home })?.text.slice(0, 200) || "another session";
+  }
+
+  private enqueueAgentMessage(
+    t: Tracked,
+    m: { key: string; ts: number; from: string; to: string; channel: "claude-session" | "codex-mail"; text?: string },
+  ): void {
+    // Text only at the conversation level, redacted; at metadata the event says who wrote to whom.
+    const text = this.conversationShared(t) ? scrubText(m.text, { home: this.home, max: HUB_TEXT_MAX }) : undefined;
+    this.enqueue({
+      key: m.key,
+      ts: Math.round(m.ts),
+      kind: "agent_message",
+      from: scrubText(m.from, { home: this.home })?.text.slice(0, 200),
+      to: scrubText(m.to, { home: this.home })?.text.slice(0, 200),
+      channel: m.channel,
+      text: text?.text,
+      truncated: text?.truncated || undefined,
+      repo: (t.cwdTarget ?? t.lastTarget)?.repo,
+      branch: (t.cwdTarget ?? t.lastTarget)?.branch,
+    });
+  }
+
+  /** A transcript's agent message (peer message in, Codex send out). */
+  private handleAgentMessage(t: Tracked, item: AgentMessageItem): void {
+    const ts = item.ts ?? this.now();
+    if (item.direction === "in") {
+      const from = item.fromAgentId ? `${t.key}/${item.fromAgentId}` : (item.from ?? "another session");
+      this.enqueueAgentMessage(t, { key: t.key, ts, from, to: t.key, channel: item.channel, text: item.text });
+      return;
+    }
+    this.enqueueAgentMessage(t, { key: t.key, ts, from: t.key, to: item.to ?? "another agent", channel: item.channel, text: item.text });
+  }
+
+  /**
+   * v0.6 links for one event (SPEC §15): its Linear ids, the PR or issue a
+   * `gh` call is about (shared repos only), and at the conversation level the
+   * Slack messages a Slack tool touched. Each link once per session.
+   */
+  private linksFor(t: Tracked, d: SessionEvent["detail"], ids: readonly string[]): HubLink[] {
+    const out: HubLink[] = [];
+    const seen = (t.sentLinks ??= new Set());
+    const add = (link: HubLink): void => {
+      const id = `${link.type}|${link.id ?? ""}|${link.url ?? ""}`;
+      if (seen.has(id) || out.length >= HUB_MAX_LINKS) return;
+      const ok = hubLinkSchema.safeParse(link);
+      if (!ok.success) return;
+      seen.add(id);
+      if (seen.size > 500) seen.delete(seen.values().next().value as string);
+      out.push(ok.data);
+    };
+    for (const id of ids) add({ type: "linear", id });
+    if (!d) return out;
+    const gh = extractGithubLink(d.command, d.toolResponseText);
+    if (gh && this.repoShared(gh.repo)) add({ type: gh.type, id: `${gh.repo}#${gh.number}`, url: gh.url });
+    if (d.slack && this.conversationShared(t)) {
+      for (const ref of d.slack) {
+        const host = ref.link ? /^https:\/\/([\w-]+\.slack\.com)\//.exec(ref.link)?.[1] : undefined;
+        if (host) this.slackHost = host;
+        const url =
+          ref.link ??
+          (ref.ts && this.slackHost ? `https://${this.slackHost}/archives/${ref.channel}/p${ref.ts.replace(".", "")}` : undefined);
+        add({
+          type: "slack",
+          id: ref.ts ? `${ref.channel}/${ref.ts}` : ref.channel,
+          url,
+          label: ref.name ? `#${ref.name.replace(/^#/, "")}`.slice(0, 120) : undefined,
+        });
+      }
+    }
+    return out;
   }
 
   private buildEvent(
@@ -517,6 +805,8 @@ export class HubForwarder {
       anyFiles: boolean;
       ids: string[];
       label: string | undefined;
+      /** This event carries new links (a Slack permalink, a PR or issue). */
+      hasLinks?: boolean;
     },
   ): Omit<HubActivityEvent, "id"> | undefined {
     const d = event.detail;
@@ -541,6 +831,7 @@ export class HubForwarder {
     }
     if (event.kind !== "working" || !d) return undefined; // watcher/liveness chatter: upserts cover it
 
+    if (d.hookEvent === "InjectedPrompt") return undefined; // a task notice or another agent's message: no person spoke
     if (d.hookEvent === "UserPromptSubmit" || d.prompt !== undefined) {
       // The person sent a message. Metadata level (and rule-4 sessions): the
       // text never leaves, the ids may. Conversation level: redacted text.
@@ -562,7 +853,7 @@ export class HubForwarder {
     const prShared = pr !== undefined && this.repoShared(pr.repo);
     // One line per tool call: PreToolUse carries it; PostToolUse only adds a
     // line when it has news (a PR link, or a failure).
-    if (post && !prShared && d.ok !== false) return undefined;
+    if (post && !prShared && d.ok !== false && !ctx.hasLinks) return undefined;
 
     const tool = {
       ...base,
@@ -679,7 +970,7 @@ export class HubForwarder {
     t.convoSince ??= ts;
     const d = event.detail;
     this.attachTranscript(event, t);
-    if (d?.hookEvent === "UserPromptSubmit") {
+    if (d?.hookEvent === "UserPromptSubmit" || d?.hookEvent === "InjectedPrompt") {
       // A turn still waiting for its duration record ends now, with the fallback.
       if (t.pendingTurn) t.pendingTurn.deadline = now;
       t.promptAt = ts;
@@ -764,6 +1055,14 @@ export class HubForwarder {
 
   private handleItem(t: Tracked, item: TranscriptItem): void {
     if (!this.conversationShared(t)) return;
+    if (item.kind === "agentMessage") {
+      const seen = (t.sentMessages ??= new Set());
+      if (seen.has(item.id)) return;
+      seen.add(item.id);
+      if (seen.size > MAX_SENT_MESSAGE_IDS) seen.delete(seen.values().next().value as string);
+      this.handleAgentMessage(t, item);
+      return;
+    }
     if (item.kind === "message") {
       const seen = (t.sentMessages ??= new Set());
       if (seen.has(item.id)) return;
@@ -892,9 +1191,207 @@ export class HubForwarder {
         startedAt: s.startedAt,
         updatedAt: ended ?? s.updatedAt,
         stateSince: ended ?? s.stateSince,
+        ...this.structureFields(s, t, ended !== undefined),
       },
       SESSION_REQUIRED,
     );
+  }
+
+  /** v0.6 upsert fields of a store session: role, parent, agent type, title, model, tokens, status line. */
+  private structureFields(s: AgentSession, t: Tracked, ended: boolean): Partial<HubSessionUpsert> {
+    const usage = t.usage
+      ? { model: t.usage.model, tokensIn: t.usage.tokensIn || undefined, tokensOut: t.usage.tokensOut || undefined }
+      : {};
+    if (s.source === "workflow") {
+      const parent = s.orchestrator && this.sessions.get(s.orchestrator)?.shared ? s.orchestrator : undefined;
+      return { role: "workflow", parent, agentType: "workflow", ...usage };
+    }
+    const meta = t.codexMeta?.meta;
+    if (s.source === "codex" && meta?.parentThreadId) {
+      const parentKey = `codex:${meta.parentThreadId}`;
+      return {
+        role: "subagent",
+        parent: this.sessions.get(parentKey)?.shared ? parentKey : undefined,
+        agentType: meta.agentRole,
+        title: this.conversationShared(t) ? this.titleOf(codexTaskTitle(meta.agentPath)) : undefined,
+        ...usage,
+      };
+    }
+    let statusLine: string | undefined;
+    if (!ended) {
+      const liveSubs = [...(t.subs ?? [])].filter((k) => {
+        const st = this.sessions.get(k)?.sub;
+        return st !== undefined && st.ended === undefined;
+      }).length;
+      const shells = t.bg?.shells ?? 0;
+      const agents = Math.max(t.bg?.agents ?? 0, this.structured ? liveSubs : 0);
+      // "waiting on 1 shell": only while the session itself waits on that work.
+      const waitingOnIt = s.state !== "working" || s.background === true || s.activity === "delegating to subagents";
+      if (waitingOnIt) statusLine = backgroundStatusLine(shells, agents)?.slice(0, HUB_STATUS_LINE_MAX);
+    }
+    return { role: "main", statusLine, ...usage };
+  }
+
+  /** A title the hub may see: redacted, one line, ≤ 200 chars. */
+  private titleOf(raw: string | undefined): string | undefined {
+    const scrubbed = scrubText(raw?.replace(/\s+/g, " ").trim(), { home: this.home })?.text;
+    if (!scrubbed) return undefined;
+    return scrubbed.length > HUB_TITLE_MAX ? `${truncateHead(scrubbed, HUB_TITLE_MAX - 1)}…` : scrubbed;
+  }
+
+  /** A subagent's upsert (it has no store session of its own). */
+  private buildSubUpsert(t: Tracked, parent: Tracked | undefined): HubSessionUpsert | undefined {
+    const sub = t.sub!;
+    const ended = sub.ended !== undefined;
+    const target = parent?.cwdTarget ?? parent?.lastTarget;
+    const source = sub.parentKey.slice(0, sub.parentKey.indexOf(":")) || "claude-code";
+    return conform(
+      hubSessionUpsertSchema,
+      {
+        key: t.key,
+        source,
+        state: ended ? "ended" : sub.state,
+        activity: ended ? undefined : sub.label,
+        statusLine: ended ? undefined : sub.label?.slice(0, HUB_STATUS_LINE_MAX),
+        repo: target?.repo,
+        branch: target?.branch,
+        startedAt: sub.startedAt,
+        updatedAt: sub.ended ?? sub.updatedAt,
+        stateSince: sub.ended ?? sub.stateSince,
+        parent: sub.parentKey,
+        role: "subagent",
+        agentType: sub.agentType,
+        title: parent && this.conversationShared(parent) ? this.titleOf(sub.title) : undefined,
+        model: t.usage?.model,
+        tokensIn: t.usage?.tokensIn || undefined,
+        tokensOut: t.usage?.tokensOut || undefined,
+      },
+      SESSION_REQUIRED,
+    );
+  }
+
+  /** Keeps a subagent entry in line with its parent: shared with it, ended with it. */
+  private reconcileSub(t: Tracked, live: ReadonlyMap<string, AgentSession>, now: number): void {
+    const sub = t.sub!;
+    const parent = this.sessions.get(sub.parentKey);
+    if (parent) {
+      t.shared = parent.shared;
+      t.cwdTarget = parent.cwdTarget;
+      t.lastTarget = parent.lastTarget;
+    }
+    if (sub.ended === undefined) {
+      const quiet = now - sub.updatedAt > SUBAGENT_IDLE_END_MS;
+      if (!parent || !live.has(sub.parentKey) || quiet) sub.ended = Math.min(now, quiet ? sub.updatedAt + SUBAGENT_IDLE_END_MS : now);
+    }
+    // Never sent (older hub, or not shared): nothing to end on the hub.
+    if (sub.ended !== undefined && (!this.structured || !t.shared) && t.sentJson === undefined) {
+      this.dropSub(t);
+      return;
+    }
+    t.current = t.shared ? this.buildSubUpsert(t, parent) : undefined;
+  }
+
+  private dropSub(t: Tracked): void {
+    this.sessions.delete(t.key);
+    if (t.sub) this.sessions.get(t.sub.parentKey)?.subs?.delete(t.key);
+  }
+
+  /**
+   * Off the hook path, before each send: subagent task titles (meta.json),
+   * Codex thread parents (session_meta), token totals and models. Each read is
+   * small or incremental, and each session at most every 5 s.
+   */
+  private async refreshAgents(now: number): Promise<void> {
+    let budget = 24;
+    for (const t of [...this.sessions.values()]) {
+      if (budget <= 0) break;
+      // Shared sessions, subagents, and workflow runs (shared through their orchestrator at reconcile).
+      if (!t.shared && !t.sub && !t.workflowDir) continue;
+      if (t.sub && t.sub.meta === "none" && t.sub.transcript) {
+        budget--;
+        t.sub.meta = "pending";
+        const meta = await readClaudeSubagentMeta(t.sub.transcript.replace(/\.jsonl$/, ".meta.json"));
+        if (meta?.inWorkflowRun) {
+          this.dropSub(t); // a workflow's agent: the workflow session covers it
+          continue;
+        }
+        t.sub.meta = "done";
+        if (meta?.description) t.sub.title = meta.description;
+        if (meta?.agentType && !t.sub.agentType) t.sub.agentType = meta.agentType;
+      }
+      const cm = t.codexMeta;
+      if (cm?.state === "pending" && now >= cm.nextAt && cm.tries < 5) {
+        budget--;
+        cm.tries++;
+        const file = t.rollout ?? (await findCodexRollout(this.codexSessionsDir, t.key.slice("codex:".length)));
+        if (file) t.rollout = file;
+        const meta = file ? await readCodexThreadMeta(file) : undefined;
+        if (meta) {
+          cm.meta = meta;
+          cm.state = "done";
+        } else {
+          cm.nextAt = now + 30_000;
+        }
+      }
+      const working = t.sub ? t.sub.ended === undefined : t.last?.state === "working";
+      if (!t.usageDirty && !working) continue;
+      if (now < (t.usageNextAt ?? 0) || t.usagePending) continue;
+      budget--;
+      t.usagePending = true;
+      t.usageDirty = false; // a read that stopped at its cap sets it again
+      try {
+        const usage = await this.readUsage(t);
+        if (usage) t.usage = usage;
+      } finally {
+        t.usagePending = false;
+        t.usageNextAt = now + USAGE_REFRESH_MS;
+      }
+    }
+  }
+
+  private async readUsage(t: Tracked): Promise<Usage | undefined> {
+    if (t.sub?.transcript) {
+      const readers = (t.usageReaders ??= new Map());
+      let r = readers.get(t.sub.transcript);
+      if (!r) {
+        readers.clear();
+        r = new ClaudeUsageReader(t.sub.transcript, this.maxReadBytes);
+        readers.set(t.sub.transcript, r);
+      }
+      const got = await r.read();
+      if (got?.more) t.usageDirty = true;
+      return got ? { tokensIn: got.tokensIn, tokensOut: got.tokensOut, model: got.model } : undefined;
+    }
+    if (t.key.startsWith("codex:") && t.rollout) return readCodexUsage(t.rollout);
+    if (t.workflowDir) {
+      let names: string[];
+      try {
+        names = (await fs.promises.readdir(t.workflowDir))
+          .filter((f) => f.startsWith("agent-") && f.endsWith(".jsonl"))
+          .slice(0, MAX_WORKFLOW_TRANSCRIPTS);
+      } catch {
+        return undefined;
+      }
+      const readers = (t.usageReaders ??= new Map());
+      let tokensIn = 0;
+      let tokensOut = 0;
+      let model: string | undefined;
+      for (const name of names) {
+        const file = path.join(t.workflowDir, name);
+        let r = readers.get(file);
+        if (!r) {
+          r = new ClaudeUsageReader(file, this.maxReadBytes);
+          readers.set(file, r);
+        }
+        const got = (await r.read()) ?? r.totals();
+        if ("more" in got && got.more) t.usageDirty = true;
+        tokensIn += got.tokensIn;
+        tokensOut += got.tokensOut;
+        model ??= got.model;
+      }
+      return names.length > 0 ? { tokensIn, tokensOut, model } : undefined;
+    }
+    return undefined;
   }
 
   /** Brings every tracked session's upsert in line with the store. */
@@ -915,6 +1412,10 @@ export class HubForwarder {
     }
     for (const [key, t] of this.sessions) {
       if (live.has(key)) continue;
+      if (t.sub) {
+        this.reconcileSub(t, live, now);
+        continue;
+      }
       if (!t.shared || !t.last) {
         this.sessions.delete(key);
         continue;
@@ -945,12 +1446,14 @@ export class HubForwarder {
     if ([...this.sessions.values()].some((t) => t.tailDirty || t.pendingTurn)) await this.pump();
     const now = this.now();
     if (now < this.retryAt) return;
+    await this.refreshAgents(now);
     this.reconcile(now);
     for (let round = 0; round < MAX_REQUESTS_PER_TICK; round++) {
       const full = round === 0 && now - this.lastFullAt >= this.heartbeatMs;
       const changed: Array<[Tracked, string]> = [];
       for (const t of this.sessions.values()) {
         if (!t.shared || !t.current) continue;
+        if (t.sub && !this.structured) continue; // an older hub would show each subagent as a session
         const json = JSON.stringify(t.current);
         if (json !== t.sentJson || (full && t.current.state !== "ended")) changed.push([t, json]);
       }
@@ -1016,6 +1519,8 @@ export class HubForwarder {
       v: HUB_WIRE_VERSION,
       sentAt: now,
       share: this.share,
+      // v0.6: the avatar rides on heartbeats.
+      ...(full && this.github ? { person: { github: this.github } } : {}),
       full,
       sessions: batchSessions.map(([t]) => t.current),
       events: ordered,
@@ -1056,7 +1561,8 @@ export class HubForwarder {
       for (const [t, json] of batchSessions) {
         t.sentJson = json;
         if (t.current?.state === "ended") {
-          this.sessions.delete(t.key);
+          if (t.sub) this.dropSub(t);
+          else this.sessions.delete(t.key);
         }
       }
       if (full) this.lastFullAt = now;

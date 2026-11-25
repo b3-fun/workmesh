@@ -217,7 +217,7 @@ workmesh unlink && workmesh setup
 
 ### Claude Code — automatic
 
-`workmesh setup` installs hooks into your Claude Code settings. Seven hook events map
+`workmesh setup` installs hooks into your Claude Code settings. Nine hook events map
 onto the session lifecycle:
 
 | Claude Code hook | Event sent |
@@ -229,6 +229,7 @@ onto the session lifecycle:
 | `Notification` | `waiting` for permission prompts and dialogs; for the 60s idle reminder, see below |
 | `Stop` | `idle` |
 | `SessionEnd` | `end` |
+| `SubagentStart` / `SubagentStop` | `heartbeat` (the session's state is unchanged; a team hub sees each subagent) |
 
 Each hook pipes its JSON to `workmesh hook claude-code`, which forwards a normalized
 event to the daemon. Multiple concurrent sessions just work — each is tracked by its

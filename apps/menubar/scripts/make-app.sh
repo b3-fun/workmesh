@@ -6,7 +6,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP_NAME="Workmesh"
-BUNDLE_ID="org.npclabs.workmesh.menubar"
+# BUNDLE_ID overrides the id, e.g. a dev build that keeps its own defaults.
+BUNDLE_ID="${BUNDLE_ID:-org.npclabs.workmesh.menubar}"
 VERSION="${1:-0.1.0}"
 OUT="${OUT:-dist}"
 

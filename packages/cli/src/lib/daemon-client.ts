@@ -123,6 +123,15 @@ export function coordOp(port: number, req: CoordOpRequest): Promise<CoordOpResul
   return daemonFetch(port, "/coord/op", "POST", req, { timeoutMs: COORD_TIMEOUT_MS });
 }
 
+/** v2 (SPEC §31): one long-poll for an idle session's next waking message. */
+export function wakeWait(
+  port: number,
+  session: string,
+  timeoutMs: number,
+): Promise<{ wake?: string; end?: boolean; reason?: string }> {
+  return daemonFetch(port, "/wake/wait", "POST", { session, timeoutMs }, { timeoutMs: timeoutMs + 5000 });
+}
+
 export function getTeamState(port: number): Promise<{ enabled: boolean; coord?: CoordSummary }> {
   return daemonFetch(port, "/team");
 }

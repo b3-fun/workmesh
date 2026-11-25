@@ -1,8 +1,14 @@
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { HUB_LEASE_TTL_DEFAULT_SEC, HUB_LEASE_TTL_MAX_SEC, HUB_LEASE_TTL_MIN_SEC, normalizeLeasePath } from "@workmesh/protocol";
-import type { HubLeaseAccepted, HubMessageTo } from "@workmesh/protocol";
+import {
+  HUB_GATE_ACTIONS,
+  HUB_LEASE_TTL_DEFAULT_SEC,
+  HUB_LEASE_TTL_MAX_SEC,
+  HUB_LEASE_TTL_MIN_SEC,
+  normalizeLeasePath,
+} from "@workmesh/protocol";
+import type { HubGateAction, HubHandoffAccepted, HubLeaseAccepted, HubMessageTo } from "@workmesh/protocol";
 import type { AgentSession } from "@workmesh/core";
 import { CoordClient } from "../hub/coord";
 import type { CoordResult } from "../hub/coord";
@@ -28,6 +34,11 @@ export const COORD_OPS = [
   "leases",
   "note",
   "notes",
+  // v2 Delegate (SPEC §31)
+  "handoff",
+  "handoffs",
+  "gates",
+  "approvals",
 ] as const;
 export type CoordOp = (typeof COORD_OPS)[number];
 
@@ -71,6 +82,10 @@ export interface CoordOpsDeps {
   isShared: (key: string) => boolean;
   /** Live Claude Code processes by session id (`~/.claude/sessions`). */
   claudeSessions: () => ReadonlyMap<string, { pid: number; sessionId: string }> | undefined;
+  /** v2: an accepted handoff for this machine (start it now rather than at the next sync). */
+  onAccepted?: (h: HubHandoffAccepted) => void;
+  /** v2: handoff ids running on this machine. */
+  runningHandoffs?: () => ReadonlySet<string>;
   now?: () => number;
   home?: string;
 }
@@ -407,7 +422,157 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       );
       return { ok: true, text: lines.join("\n"), data: { notes } };
     }
+
+    // --- v2 Delegate (SPEC §31) -------------------------------------------------------
+
+    case "handoff": {
+      if (unavailable) return unavailable;
+      const toRaw = str(a.to, 200);
+      const task = scrubText(str(a.task, 16_000), { home, max: 4000 })?.text;
+      if (!toRaw) return fail("`handoff` needs `to`: a person (name, email or GitHub login), or `me` for one of your other machines.");
+      if (!task) return fail("`handoff` needs `task`: what to do, in a few sentences.");
+      const me = coord.me() ?? hub.person?.name;
+      const person = /^(me|myself|self)$/i.test(toRaw) ? me : personOf(toRaw, st);
+      if (!person) return fail(`Workmesh doesn't know who ${toRaw} is on this team (\`roster\` lists people).`);
+      const repoArg = str(a.repo, 200);
+      const repo = repoArg ?? (cwd ? deps.classify(cwd)?.repo : undefined);
+      if (repo && !/^[\w.-]+\/[\w.-]+$/.test(repo)) return fail("`repo` is owner/name, e.g. b3-fun/workmesh.");
+      const issue = str(a.issue, 24)?.toUpperCase();
+      if (issue && !/^[A-Z][A-Z0-9]{0,9}-\d{1,6}$/.test(issue)) return fail("`issue` is a Linear issue id, like B3-123.");
+      const context = scrubText(str(a.context, 16_000), { home, max: 4000 })?.text;
+      const r = await coord.handoff({
+        action: "create",
+        ...(key ? { from: CoordClient.family(key) } : {}),
+        to: { person },
+        task,
+        ...(repo ? { repo } : {}),
+        ...(issue ? { issue } : {}),
+        ...(context ? { context } : {}),
+      });
+      if (!r.ok) return delegateError(r);
+      if (!r.body.ok) return fail(`Workmesh: ${r.body.error || "the hub didn't take the handoff"}`);
+      const h = r.body.handoff;
+      const self = me !== undefined && person.toLowerCase() === me.toLowerCase();
+      return {
+        ok: true,
+        text: self
+          ? `Handed to yourself (handoff ${h.id}${repo ? `, ${repo}` : ""}): one of your machines starts an agent for it if its policy allows, else it waits for your Accept on the board or in the menu bar.`
+          : `Handed to ${person} (handoff ${h.id}${repo ? `, ${repo}` : ""}). It waits for ${person}'s Accept on the board or in their menu bar; you'll get a message here when they take it and when it's done.`,
+        data: { handoff: h },
+      };
+    }
+
+    case "handoffs": {
+      if (unavailable) return unavailable;
+      const action = str(a.action, 20) ?? "list";
+      if (action === "accept" || action === "decline") {
+        const id = str(a.id, 64);
+        if (!id) return fail(`\`handoffs\` ${action} needs \`id\` (\`handoffs\` lists them).`);
+        const note = str(a.note, 500);
+        const r = await coord.handoff({ action, id, ...(key ? { sessionKey: CoordClient.family(key) } : {}), ...(note ? { note } : {}) });
+        if (!r.ok) return delegateError(r);
+        if (!r.body.ok) return fail(`Workmesh: ${r.body.error || `the hub didn't ${action} it`}`, r.body);
+        if (action === "accept") deps.onAccepted?.(r.body.handoff);
+        return {
+          ok: true,
+          text: action === "accept" ? `Accepted ${id}: this machine starts an agent for it.` : `Declined ${id}.`,
+          data: { handoff: r.body.handoff },
+        };
+      }
+      if (action !== "list") return fail("`handoffs` takes action list, accept or decline.");
+      if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
+      if (st.handoffs === undefined) return fail("This team's hub has no handoffs yet (it predates Workmesh v2).");
+      const me = coord.me()?.toLowerCase();
+      const running = deps.runningHandoffs?.() ?? new Set<string>();
+      if (st.handoffs.length === 0) return { ok: true, text: "No handoffs.", data: { handoffs: [] } };
+      const lines = st.handoffs.slice(0, 30).map((h) => {
+        const dir = me !== undefined && h.to.person.toLowerCase() === me ? `from ${h.from.person}` : `to ${h.to.person}`;
+        const where = [h.repo, h.issue].filter(Boolean).join(", ");
+        const here = running.has(h.id) ? " [running here]" : "";
+        return `- ${h.id} · ${h.status} · ${dir}${where ? ` · ${where}` : ""}${here}: ${h.task.replace(/\s+/g, " ").slice(0, 160)}${h.note ? ` (${h.note.slice(0, 120)})` : ""}`;
+      });
+      return { ok: true, text: lines.join("\n"), data: { handoffs: st.handoffs } };
+    }
+
+    case "gates": {
+      if (unavailable) return unavailable;
+      const me = coord.me() ?? hub.person?.name;
+      const set = a.set;
+      if (set !== undefined) {
+        if (key) return fail("Approval gates are your person's to set, from their own terminal or the board, not an agent's.");
+        const raw = set === "off" || set === "none" ? [] : strList(set, 10) ?? [];
+        const actions = [...new Set(raw.flatMap((x) => x.split(",")).map((x) => x.trim().toLowerCase().replace(/-/g, "_")).filter(Boolean))];
+        const bad = actions.filter((x) => !(HUB_GATE_ACTIONS as readonly string[]).includes(x));
+        if (bad.length > 0) return fail(`Unknown gate${bad.length === 1 ? "" : "s"}: ${bad.join(", ")}. Gates: ${HUB_GATE_ACTIONS.join(", ")}.`);
+        const r = await coord.setGates({ actions: actions as HubGateAction[] });
+        if (!r.ok) return delegateError(r);
+        if (!r.body.ok) return fail(`Workmesh: ${r.body.error || "the hub didn't take the gates"}`);
+        return {
+          ok: true,
+          text:
+            actions.length === 0
+              ? "Approval gates off: your agents merge, deploy and publish without asking."
+              : `Your agents now ask before they ${actions.map((x) => x.replace("_", "-")).join(", ")} (approve on the board or in the menu bar).`,
+          data: { gates: r.body.gates ?? { owner: me, actions } },
+        };
+      }
+      if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
+      if (st.gates === undefined) return fail("This team's hub has no approval gates yet (it predates Workmesh v2).");
+      const mine = st.gates.find((g) => me !== undefined && g.owner.toLowerCase() === me.toLowerCase());
+      const others = st.gates.filter((g) => g !== mine && g.actions.length > 0);
+      const lines = [
+        mine && mine.actions.length > 0
+          ? `Your agents ask before they: ${mine.actions.join(", ")}${mine.approvers?.length ? ` (approved by ${mine.approvers.join(" or ")})` : ""}.`
+          : "No approval gates on your agents (`workmesh gates set merge,deploy` turns some on).",
+        ...others.map((g) => `${g.owner}: ${g.actions.join(", ")}`),
+      ];
+      return { ok: true, text: lines.join("\n"), data: { gates: st.gates } };
+    }
+
+    case "approvals": {
+      if (unavailable) return unavailable;
+      const action = str(a.action, 20) ?? "list";
+      if (action === "approve" || action === "deny") {
+        if (key) return fail("Approvals are decided by a person, on the board, in the menu bar or in their own terminal, not by an agent.");
+        const id = str(a.id, 64);
+        if (!id) return fail(`\`approvals ${action}\` needs an id (\`workmesh approvals\` lists them).`);
+        const note = str(a.note, 500);
+        const r = await coord.approval({ action, id, ...(note ? { note } : {}) });
+        if (!r.ok) return delegateError(r);
+        if (!r.body.ok) return fail(`Workmesh: ${r.body.error || `the hub didn't ${action} it`}`);
+        return { ok: true, text: `${action === "approve" ? "Approved" : "Denied"}: ${r.body.approval.detail}.`, data: { approval: r.body.approval } };
+      }
+      if (action !== "list") return fail("`approvals` takes action list, approve or deny.");
+      if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
+      if (st.approvals === undefined) return fail("This team's hub has no approvals yet (it predates Workmesh v2).");
+      if (st.approvals.length === 0) return { ok: true, text: "No approvals.", data: { approvals: [] } };
+      const lines = st.approvals.slice(0, 30).map((ap) => {
+        const local = coord.localKey(ap.sessionKey);
+        const s0 = local ? deps.getSession(CoordClient.family(local)) : undefined;
+        const who = local ? `this machine's ${s0?.name ?? local}` : (ap.owner ?? "a teammate");
+        const decided = ap.status === "pending" ? "" : ` by ${ap.by ?? "?"}${ap.note ? `: ${ap.note}` : ""}`;
+        return `- ${ap.id} · ${ap.status}${decided} · ${ap.gate} · ${ap.detail} · ${who}`;
+      });
+      return { ok: true, text: lines.join("\n"), data: { approvals: st.approvals } };
+    }
   }
+}
+
+/** A v2 hub answer that failed. */
+function delegateError(r: Extract<CoordResult<unknown>, { ok: false }>): CoordOpResult {
+  return fail(r.unavailable ? "This team's hub has no delegation yet (it predates Workmesh v2); nothing was sent." : `Workmesh: ${r.error}`);
+}
+
+/** A `to` string → the person the roster names (display name, GitHub login), else the string itself. */
+export function personOf(
+  to: string,
+  st: { roster: ReadonlyArray<{ person: string; github?: string }> } | undefined,
+): string | undefined {
+  const low = to.toLowerCase();
+  for (const p of st?.roster ?? []) {
+    if (p.person.toLowerCase() === low || p.github?.toLowerCase() === low) return p.person;
+  }
+  return to.includes("@") || /^[\w .'-]{1,120}$/.test(to) ? to : undefined;
 }
 
 /** A `to` string → the wire recipient, using the roster to tell people from agents. */

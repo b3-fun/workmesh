@@ -119,12 +119,43 @@ export const MCP_TOOLS: readonly ToolDef[] = [
     description: "The team's newest shared notes.",
     inputSchema: { type: "object", properties: { tag: s("Only notes with this tag (optional).") }, additionalProperties: false },
   },
+  // v2 Delegate (SPEC §31). Approvals and gates are a person's to decide and set: no tools for them here.
+  {
+    name: "handoff",
+    description:
+      "Hand a task to a teammate, or to `me` (one of your person's other machines). Once accepted, their machine starts a new agent for it in a fresh worktree of the repo; you get a message when it is taken and when it is done.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: s("A person (name, email or GitHub login), or `me`."),
+        task: s("What to do, self-contained (up to 4,000 characters): the agent that takes it starts from nothing else."),
+        repo: s("owner/name (default: this session's repo)."),
+        issue: s("A Linear issue id, e.g. B3-123 (optional)."),
+        context: s("Anything else it needs: links, decisions, where to start (optional, up to 4,000 characters)."),
+      },
+      required: ["to", "task"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "handoffs",
+    description: "Handoffs offered to your person and sent by them; accept or decline one for your person when they asked you to.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "accept", "decline"], description: "Default list." },
+        id: s("The handoff id (accept, decline)."),
+        note: s("Why (decline; optional)."),
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 export const MCP_INSTRUCTIONS =
   "Workmesh connects this session to your team's agents. Claim the Linear issue you work on, lease files before larger " +
   "edits (edits to another session's leased files are refused), read your inbox, and message a file's holder with " +
-  "`send` instead of editing around them.";
+  "`send` instead of editing around them. `handoff` gives a task to a teammate's (or your other machine's) agent.";
 
 export interface McpServerOptions {
   input: NodeJS.ReadableStream;

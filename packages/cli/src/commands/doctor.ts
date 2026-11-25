@@ -2,6 +2,7 @@ import fs from "node:fs";
 import {
   areClaudeHooksInstalled,
   claudeSettingsPath,
+  isClaudeWakeInstalled,
   staleClaudeHookNodes,
 } from "../adapters/claude-code";
 import {
@@ -11,7 +12,7 @@ import {
   isCodexNotifyInstalled,
 } from "../adapters/codex";
 import { claudeJsonPath, isClaudeMcpInstalled, isCodexMcpInstalled } from "../adapters/mcp-install";
-import { hubShareLevel, loadConfig, loadConfigSafe } from "../lib/config";
+import { delegateSettings, hubShareLevel, loadConfig, loadConfigSafe } from "../lib/config";
 import type { Config } from "../lib/config";
 import { getHealth, getHubState, getTeamState, sinkConfigured } from "../lib/daemon-client";
 import { configPath, hubForwardStatePath } from "../lib/paths";
@@ -202,6 +203,23 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
       } else if (c) {
         checks.push(warn("coordination", "not synced with the hub yet"));
       }
+      // v2 (SPEC §31): handoffs, approval gates, wake.
+      const d = (team as { delegate?: { available: boolean; handoffs: unknown[]; approvals: unknown[] } }).delegate;
+      if (c?.available === true) {
+        if (team.enabled && d === undefined) {
+          checks.push(warn("delegation", "the running daemon predates handoffs and approvals — restart it: `workmesh restart`"));
+        } else if (d?.available) {
+          const s = delegateSettings(cfg);
+          checks.push(
+            ok(
+              "delegation",
+              `on: handoffs ${s.accept}${s.roots.length ? `, roots ${s.roots.join(", ")}` : ""}; wake ${s.wake ? "on" : "off"}${d.approvals.length ? `; ${d.approvals.length} approval(s) pending` : ""}`,
+            ),
+          );
+        } else if (d) {
+          checks.push(warn("delegation", "this hub has no handoffs or approvals yet (it predates Workmesh v2); agents work as before"));
+        }
+      }
     } catch {
       // daemon down or older: reported above
     }
@@ -236,6 +254,13 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
         ? ok("claude code hooks", settingsPath)
         : warn("claude code hooks", `not installed in ${settingsPath} — run \`workmesh setup\``),
   );
+  if (areClaudeHooksInstalled(settingsPath)) {
+    checks.push(
+      isClaudeWakeInstalled(settingsPath)
+        ? ok("claude code wake", "asyncRewake Stop hook installed (idle shared sessions wake for messages)")
+        : warn("claude code wake", "not installed — run `workmesh setup --hooks-only` (or it was turned off with --no-wake)"),
+    );
+  }
   checks.push(
     areCodexHooksInstalled()
       ? ok("codex hooks", `${codexHooksPath()} (trust them in Codex with /hooks)`)

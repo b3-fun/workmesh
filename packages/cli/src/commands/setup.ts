@@ -137,6 +137,8 @@ export interface SetupOptions {
   mcp?: boolean;
   /** Run the daemon under launchd / systemd (default true; `--no-service` skips it). SPEC §24. */
   service?: boolean;
+  /** Install the asyncRewake Stop hook that wakes idle sessions for messages (default true; `--no-wake`). SPEC §31. */
+  wake?: boolean;
 }
 
 /** `--claude-dir`, else $CLAUDE_CONFIG_DIR, else ~/.claude. */
@@ -249,12 +251,12 @@ function installCodex(opts: { mcp?: boolean } = {}): void {
 
 /** `workmesh setup --hooks-only`: (re)install Claude Code hooks, and Codex's when found or asked for. */
 export function installHooksOnly(
-  opts: Pick<SetupOptions, "claudeDir" | "codex" | "mcp"> & { claudeBin?: string | null } = {},
+  opts: Pick<SetupOptions, "claudeDir" | "codex" | "mcp" | "wake"> & { claudeBin?: string | null; title?: string } = {},
 ): void {
-  console.log(bold("workmesh setup --hooks-only"));
+  console.log(bold(opts.title ?? "workmesh setup --hooks-only"));
   const settingsPath = claudeSettingsPath(resolveClaudeDir(opts.claudeDir));
   try {
-    const result = installClaudeHooks(settingsPath);
+    const result = installClaudeHooks(settingsPath, { wake: opts.wake });
     console.log(
       `  claude code: ${result.changed ? green(`hooks installed in ${settingsPath}`) : dim(`already installed in ${settingsPath}`)}` +
         (result.backupPath ? dim(` (backup: ${result.backupPath})`) : ""),
@@ -370,7 +372,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
   if (opts.claudeDir) config.adapters.claudeCode.configDir = claudeDir;
   if (wantClaude) {
     try {
-      const result = installClaudeHooks(settingsPath);
+      const result = installClaudeHooks(settingsPath, { wake: opts.wake });
       console.log(
         result.changed
           ? `  ${green("hooks installed")}${result.backupPath ? dim(` (backup: ${result.backupPath})`) : ""}`

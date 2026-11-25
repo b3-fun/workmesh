@@ -119,6 +119,37 @@ export const configSchema = z.object({
     }),
   autoStartDaemon: z.boolean().default(true),
   /**
+   * v2 Delegate (SPEC §31): handoffs this machine takes. Absent = the defaults below. A malformed section reads as
+   * absent.
+   */
+  handoffs: z
+    .object({
+      /**
+       * `auto-self` (default): a handoff you sent yourself runs on one of your machines at once; others' wait for
+       * your Accept. `ask`: every handoff waits for your Accept. `never`: this machine runs no handoffs.
+       */
+      accept: z.enum(["ask", "auto-self", "never"]).optional().catch(undefined),
+      /** The agent CLI that runs handoffs (default: claude when found, else codex). */
+      agent: z.enum(["claude", "codex"]).optional().catch(undefined),
+      /** Dirs whose git repos count as checkouts for handoffs (`workmesh roots add <dir>`). */
+      roots: z.array(z.string()).default([]).catch([]),
+      /** Run each handoff in a new git worktree on its own branch (default true). */
+      worktree: z.boolean().optional().catch(undefined),
+      maxRunning: z.number().int().min(0).max(10).optional().catch(undefined),
+      /** Claude Code `--permission-mode` for a handoff's session (default `auto`). */
+      permissionMode: z.enum(["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"]).optional().catch(undefined),
+      maxMinutes: z.number().int().min(5).max(24 * 60).optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+  /** v2: wake an idle session when a message for it arrives (default true; `workmesh wake off`). */
+  wake: z.boolean().optional().catch(undefined),
+  /** v2: the person's own patterns for the `custom` approval gate (case-insensitive regexes over a shell command). */
+  gates: z
+    .object({ custom: z.array(z.string().max(300)).max(50).default([]).catch([]) })
+    .optional()
+    .catch(undefined),
+  /**
    * Present once paired with a hub (`workmesh hub connect`). A malformed
    * section reads as "not paired" instead of invalidating the Slack config.
    */
@@ -253,6 +284,32 @@ export function readHubConfig(file = configPath()): HubConfig | undefined | "unr
   } catch {
     return "unreadable";
   }
+}
+
+/** The v2 settings with their defaults (SPEC §31). */
+export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {
+  wake: boolean;
+  accept: "ask" | "auto-self" | "never";
+  agent?: "claude" | "codex";
+  roots: string[];
+  worktree: boolean;
+  maxRunning: number;
+  permissionMode: string;
+  maxMinutes: number;
+  customGates: string[];
+} {
+  const h = config.handoffs;
+  return {
+    wake: config.wake ?? true,
+    accept: h?.accept ?? "auto-self",
+    agent: h?.agent,
+    roots: h?.roots ?? [],
+    worktree: h?.worktree ?? true,
+    maxRunning: h?.maxRunning ?? 2,
+    permissionMode: h?.permissionMode ?? "auto",
+    maxMinutes: h?.maxMinutes ?? 120,
+    customGates: config.gates?.custom ?? [],
+  };
 }
 
 export function formatOptionsFromConfig(config: Config): FormatOptions {

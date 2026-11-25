@@ -32,6 +32,22 @@ export function claudeHookCommand(): string {
   return `"${process.execPath}" "${fileURLToPath(import.meta.url)}" hook claude-code`;
 }
 
+/**
+ * v2 wake (SPEC §31): the `asyncRewake` Stop hook that waits for an idle session's next message. Its own command
+ * (`wake-wait`, not `hook`), so the main hook's refresh never repoints it.
+ */
+export function claudeWakeCommand(): string {
+  return `"${process.execPath}" "${fileURLToPath(import.meta.url)}" wake-wait claude-code`;
+}
+
+/** How long one wake waiter may run: Claude Code enforces `timeout` on asyncRewake hooks (the waiter leaves first). */
+export const WAKE_WINDOW_SEC = 3600;
+
+/** Our wake hook command, under any of our names and any install path. */
+export function isOurWakeHook(command: unknown): command is string {
+  return typeof command === "string" && OUR_COMMAND_RE.test(command) && command.includes("wake-wait claude-code");
+}
+
 /** PreToolUse/PostToolUse hook entries take a matcher; the rest don't. */
 const MATCHER_EVENTS = ["PreToolUse", "PostToolUse"] as const;
 const PLAIN_EVENTS = [
@@ -738,7 +754,7 @@ export interface HookInstallResult {
  * preserved, and the file as it was is backed up (a new timestamped copy each
  * time it changes).
  */
-export function installClaudeHooks(settingsPath = claudeSettingsPath()): HookInstallResult {
+export function installClaudeHooks(settingsPath = claudeSettingsPath(), opts: { wake?: boolean } = {}): HookInstallResult {
   let settings: Record<string, unknown> = {};
   let original: string | undefined;
   if (fs.existsSync(settingsPath)) {
@@ -778,6 +794,9 @@ export function installClaudeHooks(settingsPath = claudeSettingsPath()): HookIns
     changed = true;
   }
 
+  // v2 wake: one asyncRewake Stop hook (on by default; `--no-wake` takes it out).
+  if (ensureWakeHook(hooks, opts.wake !== false)) changed = true;
+
   let backupPath: string | undefined;
   if (changed) {
     if (original !== undefined) backupPath = writeBackup(settingsPath, original);
@@ -785,6 +804,59 @@ export function installClaudeHooks(settingsPath = claudeSettingsPath()): HookIns
     fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
   }
   return { changed, settingsPath, backupPath };
+}
+
+/** Adds, refreshes or (want=false) removes our asyncRewake Stop hook. Returns whether anything changed. */
+function ensureWakeHook(hooks: Record<string, unknown>, want: boolean): boolean {
+  const command = claudeWakeCommand();
+  const existing = hooks.Stop;
+  if (existing !== undefined && !Array.isArray(existing)) return false; // not ours to manage
+  const entries = (existing ?? []) as unknown[];
+  let found = false;
+  let changed = false;
+  for (const entry of entries) {
+    const list = (entry as { hooks?: unknown } | null)?.hooks;
+    if (!Array.isArray(list)) continue;
+    for (const hook of list) {
+      const h = hook as Record<string, unknown> | null;
+      if (!h || !isOurWakeHook(h.command)) continue;
+      found = true;
+      if (!want) continue;
+      if (h.command !== command || h.asyncRewake !== true || h.timeout !== WAKE_WINDOW_SEC || h.type !== "command") {
+        h.type = "command";
+        h.command = command;
+        h.asyncRewake = true;
+        h.timeout = WAKE_WINDOW_SEC;
+        changed = true;
+      }
+    }
+  }
+  if (!want) {
+    if (!found) return false;
+    removeOurHooks(hooks, isOurWakeHook);
+    return true;
+  }
+  if (found) return changed;
+  entries.push({ hooks: [{ type: "command", command, asyncRewake: true, timeout: WAKE_WINDOW_SEC }] });
+  hooks.Stop = entries;
+  return true;
+}
+
+/** Whether our asyncRewake Stop hook is installed. */
+export function isClaudeWakeInstalled(settingsPath = claudeSettingsPath()): boolean {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as { hooks?: Record<string, unknown> };
+    const entries = parsed.hooks?.Stop;
+    return (
+      Array.isArray(entries) &&
+      entries.some((e) => {
+        const list = (e as { hooks?: unknown } | null)?.hooks;
+        return Array.isArray(list) && list.some((h) => isOurWakeHook((h as { command?: unknown } | null)?.command));
+      })
+    );
+  } catch {
+    return false;
+  }
 }
 
 export interface HookRemoveResult {
@@ -810,7 +882,7 @@ export function removeClaudeHooks(settingsPath = claudeSettingsPath()): HookRemo
   const settings = parsed as Record<string, unknown>;
   const hooks = settings.hooks;
   if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) return { removed: 0, settingsPath };
-  const removed = removeOurHooks(hooks as Record<string, unknown>, isOurClaudeHook);
+  const removed = removeOurHooks(hooks as Record<string, unknown>, (c) => isOurClaudeHook(c) || isOurWakeHook(c));
   if (removed === 0) return { removed, settingsPath };
   if (Object.keys(hooks).length === 0) delete settings.hooks;
   const backupPath = writeBackup(settingsPath, original);
@@ -833,7 +905,7 @@ export function staleClaudeHookNodes(settingsPath = claudeSettingsPath()): strin
         if (!Array.isArray(hooks)) continue;
         for (const hook of hooks) {
           const command = (hook as { command?: unknown } | null)?.command;
-          if (!isOurClaudeHook(command)) continue;
+          if (!isOurClaudeHook(command) && !isOurWakeHook(command)) continue;
           const node = hookNodePath(command);
           if (node && !fs.existsSync(node)) stale.add(node);
         }

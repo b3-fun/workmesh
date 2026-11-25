@@ -116,3 +116,39 @@ export function runNotes(opts: CoordCliOptions & { tag?: string }): Promise<void
 export function runWhoami(opts: CoordCliOptions): Promise<void> {
   return runOp("whoami", {}, opts);
 }
+
+// --- v2 Delegate (SPEC §31) -----------------------------------------------------------
+
+export function runHandoff(
+  to: string,
+  words: string[],
+  opts: CoordCliOptions & { repo?: string; issue?: string; context?: string },
+): Promise<void> {
+  return runOp(
+    "handoff",
+    {
+      to,
+      task: words.join(" "),
+      ...(opts.repo ? { repo: opts.repo } : {}),
+      ...(opts.issue ? { issue: opts.issue } : {}),
+      ...(opts.context ? { context: opts.context } : {}),
+    },
+    opts,
+  );
+}
+
+export function runHandoffs(action: string | undefined, id: string | undefined, opts: CoordCliOptions & { note?: string }): Promise<void> {
+  return runOp("handoffs", { action: action ?? "list", ...(id ? { id } : {}), ...(opts.note ? { note: opts.note } : {}) }, opts);
+}
+
+export function runGates(action: string | undefined, list: string | undefined, opts: CoordCliOptions): Promise<void> {
+  if (action === undefined || action === "list" || action === "show") return runOp("gates", {}, opts);
+  if (action === "off" || action === "clear") return runOp("gates", { set: "off" }, opts);
+  if (action === "set") return runOp("gates", { set: list ?? "off" }, opts);
+  // `workmesh gates merge,deploy` reads as `set`.
+  return runOp("gates", { set: action }, opts);
+}
+
+export function runApprovals(action: string | undefined, id: string | undefined, opts: CoordCliOptions & { note?: string }): Promise<void> {
+  return runOp("approvals", { action: action ?? "list", ...(id ? { id } : {}), ...(opts.note ? { note: opts.note } : {}) }, opts);
+}

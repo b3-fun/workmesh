@@ -47,7 +47,7 @@ describe("removeClaudeHooks", () => {
     installClaudeHooks(settingsPath);
 
     const result = removeClaudeHooks(settingsPath);
-    expect(result.removed).toBe(CLAUDE_HOOK_EVENTS.length);
+    expect(result.removed).toBe(CLAUDE_HOOK_EVENTS.length + 1); // + the v2 wake hook
     expect(JSON.parse(fs.readFileSync(settingsPath, "utf8"))).toEqual(original);
     expect(result.backupPath && fs.readFileSync(result.backupPath, "utf8")).toContain("hook claude-code");
 

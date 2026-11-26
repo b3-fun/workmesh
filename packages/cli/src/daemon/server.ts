@@ -195,6 +195,18 @@ function isAuthorized(req: http.IncomingMessage, secret: string): boolean {
   return secretsEqual(header.slice("Bearer ".length), secret);
 }
 
+/** A name a program on this machine calls the daemon by, in any case, with any port or none. */
+const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+
+/**
+ * Whether a request's Host header names this machine. A browser sends the name its page used, so a page that
+ * reached the daemon under any other name is turned away. Only the name is compared. The port adds nothing against
+ * such a page, and a caller behind a port forward sends the port it dialed, not the daemon's.
+ */
+export function isLoopbackHost(host: string | undefined): boolean {
+  return host !== undefined && LOOPBACK_HOST.test(host);
+}
+
 /** Loopback HTTP API — the single integration surface for all adapters. */
 export function createDaemonServer(deps: DaemonServerDeps): http.Server {
   const startedAt = Date.now();
@@ -206,6 +218,18 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
     const method = req.method ?? "GET";
     const url = req.url ?? "/";
     try {
+      // Who is calling is checked first, for every endpoint. The daemon's callers are programs on this machine:
+      // they call it by a loopback name and send no Origin header. A web page is not one of them. A browser sends
+      // the name the page used as Host. From a page on another site it also adds Origin to every write, and to
+      // each read the page asks to see. No CORS header is sent anywhere, so such a page cannot read an answer.
+      if (!isLoopbackHost(req.headers.host)) {
+        json(res, 421, { ok: false, error: "host not allowed: use 127.0.0.1 or localhost" });
+        return;
+      }
+      if (req.headers.origin !== undefined) {
+        json(res, 403, { ok: false, error: "requests with an Origin header are not allowed" });
+        return;
+      }
       if (method === "GET" && url === "/health") {
         json(res, 200, {
           ok: true,

@@ -36,7 +36,7 @@ apps/menubar/      Workmesh.app, the SwiftUI menu bar client of the daemon
 docs/guide/        the teammate guide
 docs/reference/    CLI and MCP references (generated), config and environment
 docs/SPEC.md       the relay ↔ hub contract; INTEGRATIONS.md, SELF_HOSTING.md
-scripts/           smoke tests, docs-ref.mjs
+scripts/           smoke tests, docs-ref.mjs, sign-release.mjs (signs a release's file list)
 ```
 
 ## Checks
@@ -101,7 +101,8 @@ None of these touch your own install: each uses its own HOME, port and config.
 ## Releasing
 
 A release is an npm publish and a GitHub release carrying the menu bar app. Publishing runs as the `npclabs` npm
-account, which needs a maintainer's security key twice: once to log in, once to publish.
+account, which needs a maintainer's security key twice: once to log in, once to publish. The GitHub release also
+carries a list of its files that a maintainer signs ([Release signing](#release-signing), below).
 
 1. Bump the version in a PR and merge it:
    `npm version 0.12.1 -w @b3os/workmesh --no-git-tag-version` (changes `packages/cli/package.json` and the lockfile).
@@ -116,18 +117,65 @@ account, which needs a maintainer's security key twice: once to log in, once to 
    the app with an ad hoc signature (no Developer ID), writes `dist/Workmesh-menubar-macos.zip` and prints its SHA-256.
    Never zip a downloaded copy: ditto keeps its quarantine flags. A change to the updater runs
    `scripts/test-self-update.sh` first (headless, temp copies only).
-5. Create the GitHub release with the zip attached under exactly that name, since installed menu bar apps update
-   themselves from it and check its digest:
+5. Sign the release's files with your release key:
+   ```bash
+   node scripts/sign-release.mjs --key <your key file> apps/menubar/dist/Workmesh-menubar-macos.zip
+   ```
+   It writes two files next to the zip. The first, `workmesh-release.json`, lists the version, the creation time, and
+   the zip's name, SHA-256 and size. The second, `workmesh-release.json.sig`, is the signature over the first. The
+   version comes from `packages/cli/package.json` (or `--version`) and must be the release tag without its `v`. Once
+   a key is pinned, the script stops if yours is not one of the pinned keys. Don't edit `workmesh-release.json`
+   afterwards: the signature covers its exact bytes.
+6. Create the GitHub release with the zip and the two signing files attached under exactly these names. Installed menu
+   bar apps update themselves from the release, after the daemon has checked it:
    ```bash
    gh release create v0.12.1 -R b3-fun/workmesh --title "v0.12.1: …" --notes-file notes.md \
-     apps/menubar/dist/Workmesh-menubar-macos.zip
+     apps/menubar/dist/Workmesh-menubar-macos.zip \
+     apps/menubar/dist/workmesh-release.json apps/menubar/dist/workmesh-release.json.sig
    ```
    End the notes with the upgrade line: `workmesh update` (or `npm i -g @b3os/workmesh@latest && workmesh update` from
-   0.11 or older), and that the menu bar app is unsigned.
-6. Check `npm view @b3os/workmesh version` (npm can take a few minutes to serve a new version), run `workmesh update`
-   on your own machine, and run `workmesh doctor`. Teammates see "update available" in `doctor`, `status` and the menu
-   bar within hours.
-7. Move the item in `ROADMAP.md` and comment on the Linear issue.
+   0.11 or older), and that the menu bar app has no Apple Developer ID.
+7. Check `npm view @b3os/workmesh version` (npm can take a few minutes to serve a new version), run `workmesh update`
+   on your own machine, and run `workmesh doctor`. On a Mac its `release signing` line must not warn. Run by hand,
+   `workmesh update` installs the release at once. Teammates' machines wait until it is 24 hours old
+   (`update.waitHours`). Only then do `doctor`, `status` and the menu bar say "update available", and only then does
+   auto-update install it. That day is the time to pull a bad release.
+8. Move the item in `ROADMAP.md` and comment on the Linear issue.
+
+### Release signing
+
+Installed menu bar apps update themselves from the GitHub release. Whoever can publish a GitHub release controls both
+the zip and the SHA-256 GitHub shows for it, and the app has no Apple Developer ID to check. So a maintainer signs a
+list of the release's files with a key that GitHub never sees, and the client trusts only the public keys pinned in
+`packages/cli/src/lib/release-keys.ts`. The format and the checks are in [docs/SPEC.md](docs/SPEC.md) §41.
+
+**The key.** Make one, once, outside the repo:
+
+```bash
+node scripts/sign-release.mjs --new-key /Volumes/keys/workmesh-release.pem
+```
+
+It writes the private key to that file (mode 600) and prints the public key. Keep the private key off GitHub: in an
+offline file, such as an encrypted drive you plug in only to sign, or on a hardware security key. It never goes in the
+repo, a CI secret, an environment variable, a chat or a log. The script refuses a key file inside the repo or one that
+other users can read. It reads the key only from the path you give, and never prints it.
+
+The script signs from a key file. A key that can't leave a hardware security key needs that key's own tool. Write the
+list with `--list-only`, then sign its exact bytes with a plain Ed25519 signature. Put the base64 of the 64 signature
+bytes in `workmesh-release.json.sig`.
+
+**Switching signing on.** The pinned list ships empty, so signing is off: clients check the zip against the SHA-256
+GitHub lists, and ignore the two signing files. To switch it on:
+
+1. Add the public key to `packages/cli/src/lib/release-keys.ts` in a PR, one key per line.
+2. Sign the next release, which is the one that ships the key, and every release after it. A client on that version
+   offers the menu bar app only from a signed release. An unsigned release offers nothing, and `workmesh doctor` says
+   why.
+
+**Another key later.** Add its public key in a PR the same way. Sign the release that ships it with a key that
+installed clients already trust, when you still have one. A client that doesn't trust a release's key yet holds that
+release's app. It trusts the key once `workmesh update` gives it the version that pins it: the CLI comes from npm,
+which this signing doesn't cover. To retire a key, remove its line.
 
 ## The team hub (B3)
 

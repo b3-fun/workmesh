@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  HUB_DEVICE_WHERE_MAX,
   HUB_LEASE_MAX_PATHS,
   HUB_LEASE_TTL_MAX_SEC,
   HUB_LEASE_TTL_MIN_SEC,
+  HUB_MACHINE_NAME_MAX,
+  HUB_SYNC_MAX_NEW_DEVICES,
   hubClaimRequestAcceptSchema,
   hubClaimRequestSchema,
   hubClaimResponseAcceptSchema,
@@ -284,5 +287,54 @@ describe("sync (SPEC §21)", () => {
     expect(read.notes).toEqual([]);
     expect(read.edits).toEqual([]);
     expect(hubSyncAcceptSchema.parse({})).toMatchObject({ leases: [], holds: [], inbox: [], claims: [], roster: [], notes: [], edits: [] });
+  });
+});
+
+describe("new machines on sync (SPEC §46)", () => {
+  const laptop = { id: "dev_01JD0000000000000000000002", machine: "sams-laptop", pairedAt: T, where: "Lisbon, Portugal (Example Telecom)" };
+  const box = { id: "dev_01JD0000000000000000000003", machine: "sams-box", pairedAt: T + 1000 };
+
+  it("what the hub builds, the relay reads unchanged", () => {
+    const built = hubSyncResponseSchema.parse({ ...sync, newDevices: [laptop, box] });
+    expect(built.newDevices).toEqual([laptop, box]);
+    const read = hubSyncAcceptSchema.parse(built);
+    expect(read.newDevices).toEqual(built.newDevices);
+  });
+
+  it("is optional: an older hub sends no list, and the relay reads none", () => {
+    expect(hubSyncResponseSchema.parse(sync).newDevices).toBeUndefined();
+    expect(hubSyncAcceptSchema.parse(sync).newDevices).toBeUndefined();
+    expect(hubSyncAcceptSchema.parse({ ...sync, newDevices: null }).newDevices).toBeUndefined();
+    expect(hubSyncAcceptSchema.parse({ ...sync, newDevices: [] }).newDevices).toEqual([]);
+  });
+
+  it("strict: an id, a name of 1..120, a time, a place of at most 200, at most 50 machines", () => {
+    const bad = (d: unknown) => hubSyncResponseSchema.safeParse({ ...sync, newDevices: [d] }).success;
+    expect(bad({ ...laptop, id: "" })).toBe(false);
+    expect(bad({ ...laptop, machine: "" })).toBe(false);
+    expect(bad({ ...laptop, machine: "m".repeat(HUB_MACHINE_NAME_MAX + 1) })).toBe(false);
+    expect(bad({ ...laptop, pairedAt: "today" })).toBe(false);
+    expect(bad({ ...laptop, where: "w".repeat(HUB_DEVICE_WHERE_MAX + 1) })).toBe(false);
+    const many = Array.from({ length: HUB_SYNC_MAX_NEW_DEVICES + 1 }, (_, i) => ({ ...box, id: `d${i}` }));
+    expect(hubSyncResponseSchema.safeParse({ ...sync, newDevices: many }).success).toBe(false);
+  });
+
+  it("accept: a machine with an id is kept even when its other fields can't be read; the rest are dropped or cut", () => {
+    const read = hubSyncAcceptSchema.parse({
+      ...sync,
+      newDevices: [
+        { id: "d1", machine: 7, pairedAt: "today", where: { city: "Lisbon" } },
+        { machine: "no-id", pairedAt: T },
+        "nope",
+        { id: "d2", machine: "m".repeat(300), pairedAt: T + 0.4, where: "w".repeat(300), extra: true },
+      ],
+    });
+    expect(read.newDevices).toEqual([
+      { id: "d1", machine: "", pairedAt: 0, where: undefined },
+      { id: "d2", machine: "m".repeat(HUB_MACHINE_NAME_MAX), pairedAt: T, where: "w".repeat(HUB_DEVICE_WHERE_MAX) },
+    ]);
+    expect(hubSyncAcceptSchema.parse({ ...sync, newDevices: "none" }).newDevices).toEqual([]);
+    const many = Array.from({ length: HUB_SYNC_MAX_NEW_DEVICES + 20 }, (_, i) => ({ ...box, id: `d${i}` }));
+    expect(hubSyncAcceptSchema.parse({ ...sync, newDevices: many }).newDevices).toHaveLength(HUB_SYNC_MAX_NEW_DEVICES);
   });
 });

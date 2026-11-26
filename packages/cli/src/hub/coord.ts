@@ -46,6 +46,7 @@ import type {
   HubMemoryRequest,
   HubMemoryResponseAccepted,
   HubMessageRequest,
+  HubNewDeviceAccepted,
   HubNoteRequest,
   HubRecallRequest,
   HubRecallResponseAccepted,
@@ -54,6 +55,7 @@ import type {
 import type { z } from "zod";
 import { emailKey, gateOwner, samePerson } from "../lib/person";
 import type { PersonRef } from "../lib/person";
+import { cleanText, label, oneLine } from "../lib/untrusted";
 import { parseRetryAfter } from "./forwarder";
 
 /**
@@ -111,6 +113,11 @@ export interface CoordClientOptions {
   onSync?: (next: HubSyncAccepted, previous: HubSyncAccepted | undefined) => void;
   /** v3 (SPEC §36): the brief is fetched at most this often (default 10 s). */
   briefMinMs?: number;
+  /**
+   * SPEC §47: the machines a sync names as new on this person's account, with the hub's clock. They go here and
+   * nowhere else: the cached state that hooks and agents' calls read never holds them.
+   */
+  onNewDevices?: (list: readonly HubNewDeviceAccepted[], hubNow: number) => void;
 }
 
 /** v3 Memory (SPEC §35): one accepted memory as the brief carries it. */
@@ -133,6 +140,7 @@ const MAX_DELIVERED = 2000;
 /**
  * Ids of notices the daemon writes itself (an approval decided, a handoff finished): never acked to the hub. Not
  * `wm_`: the hub's own message ids are `wm_<ULID>`, and a teammate's message must never read as the daemon's notice.
+ * Only `notify` writes this prefix: a sync item that carries it is refused (`withoutLocalIds`).
  */
 const LOCAL_ID_PREFIX = "wmn_";
 
@@ -141,6 +149,8 @@ export function isLocalNotice(id: string): boolean {
   return id.startsWith(LOCAL_ID_PREFIX);
 }
 const MAX_LOCAL = 500;
+/** Refused sync items are logged once each, for at most this many ids. */
+const MAX_REFUSED_LOGGED = 200;
 /** An undelivered message the hub stopped listing is kept this long (its session may come back). */
 const INBOX_KEEP_MS = 24 * 60 * 60_000;
 
@@ -188,7 +198,10 @@ export class CoordClient {
   /** v2: notices for this device's sessions that the daemon wrote itself, by id. */
   private readonly local = new Map<string, HubSyncInboxItem>();
   private localSeq = 0;
+  /** Ids of sync items refused for carrying the daemon's own notice prefix (each is logged once). */
+  private readonly refusedIds = new Set<string>();
   private readonly onSync: CoordClientOptions["onSync"];
+  private readonly onNewDevices: CoordClientOptions["onNewDevices"];
   /** v2 endpoints this hub answered 404 to, and until when that is remembered. */
   private readonly v2Absent = new Map<string, number>();
   /** Teammates' messages handed to this device's sessions, newest last, for telling a reply from new chatter. */
@@ -233,6 +246,7 @@ export class CoordClient {
     this.holdGraceMs = opts.holdGraceMs ?? 30 * 60_000;
     this.staleMs = opts.staleMs ?? 90_000;
     this.onSync = opts.onSync;
+    this.onNewDevices = opts.onNewDevices;
     this.briefMinMs = opts.briefMinMs ?? 10_000;
   }
 
@@ -474,7 +488,8 @@ export class CoordClient {
       id,
       to: localKey,
       from: { person: opts.from ?? "Workmesh", sessionName: undefined, sessionKey: undefined },
-      text: text.slice(0, 4000),
+      // A notice is printed as Workmesh's own words: nothing unseen stays in it, whatever went into it.
+      text: cleanText(text).slice(0, 4000),
       ts: this.now(),
       thread: undefined,
       wake: opts.wake ?? true,
@@ -655,8 +670,28 @@ export class CoordClient {
     this.apply(parsed.data, now, started);
   }
 
+  /**
+   * A sync without the inbox items whose id starts with the daemon's own notice prefix. Only this daemon writes such
+   * ids (`notify`), and an item with one would be printed as Workmesh's own notice, so one from the hub is refused: it
+   * is never stored, delivered or acked, and the daemon log names it once.
+   */
+  private withoutLocalIds(s: HubSyncAccepted): HubSyncAccepted {
+    const inbox = s.inbox.filter((i) => !isLocalNotice(i.id));
+    if (inbox.length === s.inbox.length) return s;
+    for (const i of s.inbox) {
+      if (!isLocalNotice(i.id) || this.refusedIds.has(i.id) || this.refusedIds.size >= MAX_REFUSED_LOGGED) continue;
+      this.refusedIds.add(i.id);
+      this.log(`hub: ignored an inbox item whose id is one of this daemon's own (${oneLine(i.id, 64)}, from ${label(i.from.person)})`);
+    }
+    return { ...s, inbox };
+  }
+
   /** Takes in a good sync answer (exposed for tests). */
-  apply(s: HubSyncAccepted, now = this.now(), sentAt = now): void {
+  apply(sync: HubSyncAccepted, now = this.now(), sentAt = now): void {
+    // New machines on the person's account (SPEC §47) are for the person, not for agents: the list is handed to
+    // `onNewDevices` below and left out of the state kept here, which hooks and agents' calls read.
+    const newDevices = sync.newDevices;
+    const s: HubSyncAccepted = { ...this.withoutLocalIds(sync), newDevices: undefined };
     const previous = this.state;
     this.state = s;
     this.fetchedAt = now;
@@ -669,7 +704,7 @@ export class CoordClient {
     const holds = new Map<string, { hold: HubSyncHold; seenAt: number }>();
     for (const h of s.holds) holds.set(h.sessionKey, { hold: h, seenAt: now });
     for (const [k, h] of holds) {
-      if (!this.holds.has(k) && this.localKey(k) !== undefined) this.log(`hub: ${k} held by ${h.hold.by}`);
+      if (!this.holds.has(k) && this.localKey(k) !== undefined) this.log(`hub: ${oneLine(k, 300)} held by ${label(h.hold.by)}`);
     }
     this.holds = holds;
     // The hub lists an item until it is acked: one it no longer lists that was delivered is done. One never delivered
@@ -694,6 +729,13 @@ export class CoordClient {
         this.onSync(s, previous);
       } catch (err) {
         this.log(`hub: delegate check failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (newDevices !== undefined && newDevices.length > 0 && this.onNewDevices) {
+      try {
+        this.onNewDevices(newDevices, this.hubNow(now));
+      } catch (err) {
+        this.log(`hub: new machine notice failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }

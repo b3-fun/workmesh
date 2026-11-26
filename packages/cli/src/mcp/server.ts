@@ -1,4 +1,5 @@
 import readline from "node:readline";
+import { PERSON_CLIENTS } from "../daemon/coord-ops";
 import type { CoordCaller, CoordOp, CoordOpResult } from "../daemon/coord-ops";
 
 /**
@@ -232,19 +233,14 @@ export const MCP_TOOLS: readonly ToolDef[] = [
     },
     annotations: TEAM_WRITE,
   },
+  // Listing only. Accepting one starts an agent on the person's machine, so that answer is theirs (SPEC §31): the
+  // daemon refuses accept and decline from every call that comes through this server.
   {
     name: "handoffs",
-    description: "Handoffs offered to your person and sent by them; accept or decline one for your person when they asked you to.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["list", "accept", "decline"], description: "Default list." },
-        id: s("The handoff id (accept, decline)."),
-        note: s("Why (decline; optional)."),
-      },
-      additionalProperties: false,
-    },
-    annotations: TEAM_WRITE,
+    description:
+      "Handoffs offered to your person and sent by them, one line each. Only your person accepts or declines one: on the board, in the menu bar or in their own terminal.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: READ,
   },
   // Ask (SPEC §29): read-only questions to the board's Ask.
   {
@@ -304,7 +300,11 @@ export async function handleMcpMessage(
     case "initialize": {
       const asked = typeof params.protocolVersion === "string" ? params.protocolVersion : undefined;
       const info = params.clientInfo as { name?: unknown } | undefined;
-      if (typeof info?.name === "string") session.client = info.name.slice(0, 80);
+      if (typeof info?.name === "string") {
+        // An MCP client is an agent tool. Its name never passes for one of a person's own surfaces.
+        const name = info.name.slice(0, 76);
+        session.client = PERSON_CLIENTS.includes(name.trim().toLowerCase()) ? `mcp:${name}` : name;
+      }
       const protocolVersion =
         asked && (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(asked) ? asked : MCP_PROTOCOL_VERSIONS[0];
       return reply({

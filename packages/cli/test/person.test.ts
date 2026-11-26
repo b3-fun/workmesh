@@ -4,7 +4,7 @@ import type { HubHandoffAccepted, HubSyncResponse } from "@workmesh/protocol";
 import type { AgentSession, SessionEvent } from "@workmesh/core";
 import { CoordClient } from "../src/hub/coord";
 import { Delegate, decisionText } from "../src/daemon/delegate";
-import type { HandoffRunnerLike } from "../src/daemon/delegate";
+import type { DelegateSettings, HandoffRunnerLike } from "../src/daemon/delegate";
 import { CoordHooks, claimsLine, gateNote, knowledge } from "../src/daemon/coord-hooks";
 import { recipient, runCoordOp } from "../src/daemon/coord-ops";
 import type { CoordOpsDeps } from "../src/daemon/coord-ops";
@@ -115,7 +115,7 @@ class FakeRunner implements HandoffRunnerLike {
 }
 
 /** A relay as the daemon builds it. `paired`: what pairing answered (absent: a config with no person). */
-function relay(opts: { paired?: { name?: string; email?: string }; replies?: Array<{ status: number; body?: unknown }> } = {}) {
+function relay(opts: { paired?: { name?: string; email?: string }; replies?: Array<{ status: number; body?: unknown }>; settings?: Partial<DelegateSettings> } = {}) {
   const paired = opts.paired ?? { name: "Sam Lee", email: SAM };
   const calls: Array<{ url: string; body?: unknown }> = [];
   const replies = [...(opts.replies ?? [])];
@@ -142,7 +142,7 @@ function relay(opts: { paired?: { name?: string; email?: string }; replies?: Arr
     getSession: (k) => (k === LOCAL ? session : undefined),
     isShared: () => true,
     repoOf: (dir) => (dir.startsWith(ROOT) ? "b3-fun/demo" : undefined),
-    settings: () => ({ wake: true, accept: "auto-self", customGates: [] }),
+    settings: () => ({ wake: true, accept: "auto-self", runAccepted: "confirm", customGates: [], ...opts.settings }),
     runner,
     now: () => T,
   });
@@ -231,7 +231,8 @@ describe("handoffs: only this person's own are taken without a click (SPEC §49)
   });
 
   it("one I sent to a namesake is theirs: not offered to me, never accepted or started here", async () => {
-    const x = relay();
+    // `runAccepted: "auto"` starts whatever the hub lists as accepted for this person: only whose it is holds it back.
+    const x = relay({ settings: { runAccepted: "auto" } });
     const mineToThem = handoff({ from: { ...me, sessionKey: MINE }, to: namesake });
     x.sync({ handoffs: [mineToThem] });
     x.sync({ handoffs: [{ ...mineToThem, status: "accepted" }] });

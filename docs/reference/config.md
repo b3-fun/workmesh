@@ -36,12 +36,14 @@ Written by `workmesh hub connect` (or `init`). Don't copy this section between m
 | Key | Default | What it is |
 |---|---|---|
 | `handoffs` | absent | Handoff settings for this machine. Absent means the defaults below. |
-| `handoffs.accept` | `auto-self` | `auto-self` runs handoffs you sent yourself at once and waits for your Accept on teammates'; `ask` waits on all; `never` runs none here (`workmesh handoffs policy`). |
+| `handoffs.accept` | `ask` | `ask` waits for your Accept on every handoff, your own too. `auto-self` starts handoffs you sent yourself with no click and waits on teammates'. It trusts every machine and token of yours: each of them, and any agent running there, can start an agent on this machine. `never` runs none here (`workmesh handoffs policy`). |
+| `handoffs.runAccepted` | `confirm` | What this machine does with a handoff that was accepted somewhere else, such as on the board. `confirm`: it waits here until you say "run it here" (`workmesh handoffs run <id>`, or the menu bar). `auto`: this machine starts it. `auto` trusts the hub's word that you accepted it. |
 | `handoffs.agent` | `claude` when found, else `codex` | The agent CLI that runs a handoff. |
 | `handoffs.roots` | `[]` | Folders whose git repos count as checkouts for handoffs (`workmesh roots add <dir>`). |
 | `handoffs.worktree` | `true` | Run each handoff in a new git worktree on its own branch. |
 | `handoffs.maxRunning` | `2` | Handoffs running at once on this machine (0 to 10). |
-| `handoffs.permissionMode` | `auto` | Claude Code `--permission-mode` for a handoff's session. |
+| `handoffs.permissionMode` | `auto` | Claude Code `--permission-mode` for a handoff's session. The default stays `auto`: `acceptEdits` can't commit in a headless run, and you read the whole handoff and see the mode before you accept. |
+| `handoffs.env` | `[]` | Environment variables a handoff's agent gets although their names look like secrets, for example `["GH_TOKEN"]`. The agent starts without such variables, except what its own tool signs in with. The run's log names what was left out. |
 | `handoffs.model` | the agent's default | The model a handoff runs on, e.g. `sonnet`. |
 | `handoffs.maxMinutes` | `120` | How long a handoff run may take (5 to 1440). |
 | `wake` | `true` | Wake an idle session when a message, approval or handoff result arrives for it (`workmesh wake on\|off`). |
@@ -138,7 +140,9 @@ Set by Workmesh itself, useful when you debug:
 | `~/.local/state/workmesh/daemon.secret` | The bearer secret for the daemon's loopback API (`0600`). |
 | `~/.local/state/workmesh/daemon.log` | The daemon's log when it runs without a service. Under launchd it logs to `~/Library/Logs/workmesh-daemon.log`; under systemd, to the journal (`journalctl --user -u workmesh`). |
 | `~/.local/state/workmesh/hub-forward.json` | Shared sessions and unsent events, so a restart loses nothing (`0600`). |
+| `~/.local/state/workmesh/new-devices.json` | The machines that joined your account and that this machine already told you about, so each is told once (`0600`). |
 | `~/.local/state/workmesh/update.log`, `update/previous/` | The last `workmesh update` run and the copy it rolls back to. |
 | `~/.local/state/workmesh/handoffs/` | Handoff runs on this machine. |
+| `~/.local/state/workmesh/handoffs-accepted.json` | The ids of the handoffs that were accepted on this machine, each with a hash of the text that was accepted (`0600`). Only those are started here, and only while their text is the same. |
 | `~/Library/LaunchAgents/org.npclabs.workmesh.daemon.plist` | The daemon service on macOS. |
 | `~/.config/systemd/user/workmesh.service` | The daemon service on Linux. |

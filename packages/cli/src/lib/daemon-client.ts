@@ -9,6 +9,7 @@ import { CLIENT_HEADER, HOOK_HEADER, START_HEADER, SURFACE_HEADER } from "../dae
 import type { UpdateStatus } from "../daemon/updates";
 import type { HookAnswer } from "../daemon/coord-hooks";
 import type { CoordOpRequest, CoordOpResult } from "../daemon/coord-ops";
+import type { NewDeviceNotice } from "../daemon/new-devices";
 import type { Config } from "./config";
 import { readDaemonSecret } from "./daemon-auth";
 import type { SnoozePreset } from "./snooze";
@@ -149,7 +150,8 @@ export function wakeWait(
   return daemonFetch(port, "/wake/wait", "POST", { session, timeoutMs }, { timeoutMs: timeoutMs + 5000 });
 }
 
-export function getTeamState(port: number): Promise<{ enabled: boolean; coord?: CoordSummary }> {
+/** `newDevices` (SPEC §47) is absent from a daemon that predates it, and when this machine isn't paired. */
+export function getTeamState(port: number): Promise<{ enabled: boolean; coord?: CoordSummary; newDevices?: NewDeviceNotice[] }> {
   return daemonFetch(port, "/team");
 }
 

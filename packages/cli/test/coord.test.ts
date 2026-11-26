@@ -402,11 +402,11 @@ describe("hook decisions", () => {
     h.context(ev({ kind: "start" }), "SessionStart"); // guidance out of the way
     expect(h.context(edit("Read", `${ROOT}/x`), "PreToolUse")).toBeUndefined(); // not at PreToolUse
     const ctx = h.context(ev({ detail: { hookEvent: "PostToolUse", tool: "Read" } }), "PostToolUse")!;
-    expect(ctx).toContain("Message from An (b3iq-strategy): I have the forwarder; take the CLI?");
+    expect(ctx).toContain('<workmesh-message from="An" session="b3iq-strategy">\n│ I have the forwarder; take the CLI?\n</workmesh-message>');
     expect(ctx).not.toContain("for the subagent");
     expect(h.context(ev({ detail: { hookEvent: "PostToolUse", tool: "Read" } }), "PostToolUse")).toBeUndefined();
     const sub = h.context(ev({ detail: { hookEvent: "PostToolUse", tool: "Read", agentId: "a1b2c3d4e5f60718" } }), "PostToolUse")!;
-    expect(sub).toContain("Message from Gio: for the subagent");
+    expect(sub).toContain('<workmesh-message from="Gio">\n│ for the subagent\n</workmesh-message>');
     await new Promise((r) => setTimeout(r, 0));
     const acks = x.hub.calls.filter((k) => k.url.endsWith("/relay/inbox/ack")).flatMap((k) => (k.body as { ids: string[] }).ids);
     expect(acks.sort()).toEqual(["m1", "m2"]);

@@ -4,8 +4,8 @@ import { isLeasePath, LEASE_PATH_MAX } from "./lease-paths.js";
 
 /**
  * v3 Memory (docs/SPEC.md §35): the team's shared knowledge base. Decisions, conventions, gotchas, rules and facts that
- * people and their agents write down for everyone's agents, with a person in the loop: an agent proposes, a person
- * accepts (or their own setting accepts their own agent's), and only accepted memories reach other agents.
+ * people and their agents write down for everyone's agents, with a person in the loop: a relay's write is a proposal,
+ * a person accepts it on the board, and only accepted memories reach other agents.
  *
  * Additive to v1 and v2: new endpoints beside the coordination ones and one optional field on `GET /relay/sync`
  * (`memory.rev`). An older hub answers `404` and sends no `memory`; a relay then keeps v1's notes.
@@ -165,8 +165,9 @@ const retireAccept = z.object({
 
 /**
  * One memory. `status`: `proposed` → `accepted` | `rejected`; an accepted one becomes `superseded` when a memory that
- * names it in `supersedes` is accepted (`supersededBy`), or `retired` when a `forget` is accepted (`retire` holds a
- * pending one). Only accepted memories reach agents (session start, recall, the brief).
+ * names it in `supersedes` is accepted (`supersededBy`), or `retired` when a person retires it on the board (`retire`
+ * holds a pending retire, which a `forget` sets). Only accepted memories reach agents (session start, recall, the
+ * brief).
  */
 export const hubMemorySchema = z.object({
   id: memoryId,
@@ -213,11 +214,10 @@ export type HubMemoryAccepted = z.infer<typeof memoryAccept>;
 // ------------------------------------------------------------------ POST /relay/memories
 
 /**
- * `remember`: a session (or, with no `sessionKey`, the device's person at a terminal) writes a memory. The hub
- * decides its status: a person's own words are accepted; an agent's are proposed, unless its person accepts their own
- * agents' memories (a setting on the hub) and it doesn't supersede someone else's.
- * `forget`: propose retiring an accepted memory (`reason` says why), or withdraw a proposal of one's own; the same
- * policy decides whether it takes effect at once.
+ * `remember`: a session (or, with no `sessionKey`, a terminal on the device) writes a memory. It is `proposed` either
+ * way, and no hub setting accepts it: a person accepts it on the board (§35, "Who decides").
+ * `forget`: propose retiring an accepted memory (`reason` says why), which stays accepted until a person retires it on
+ * the board; or withdraw a proposal of one's own person.
  * `used`: the relay put these accepted memories in a session's context at its start (the board shows which sessions
  * used a memory).
  */

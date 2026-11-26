@@ -4,7 +4,7 @@ import type { CoordCaller, CoordOp, CoordOpResult } from "../daemon/coord-ops";
 import { loadConfigSafe } from "../lib/config";
 import { coordOp, ensureDaemon } from "../lib/daemon-client";
 import { serveMcp } from "../mcp/server";
-import { red, yellow } from "../lib/ui";
+import { confirm, red, yellow } from "../lib/ui";
 
 /**
  * v1 Coordinate from the terminal and as an MCP server (docs/SPEC.md §23). Both go through the daemon, which holds
@@ -63,14 +63,18 @@ export interface CoordCliOptions {
   json?: boolean;
 }
 
-async function runOp(op: CoordOp, args: Record<string, unknown>, opts: CoordCliOptions): Promise<void> {
-  const r = await call(op, args, callerOf("cli"));
+/** Prints one answer the way every coordination command does; a failed one sets exit code 1. */
+function report(r: CoordOpResult, opts: CoordCliOptions, print: (line: string) => void = console.log): void {
   if (opts.json) {
-    console.log(JSON.stringify({ ok: r.ok, ...(r.data === undefined ? {} : { data: r.data }), text: r.text }, null, 2));
+    print(JSON.stringify({ ok: r.ok, ...(r.data === undefined ? {} : { data: r.data }), text: r.text }, null, 2));
   } else {
-    console.log(r.ok ? r.text : (r.text.startsWith("Workmesh") ? yellow(r.text) : red(r.text)));
+    print(r.ok ? r.text : (r.text.startsWith("Workmesh") ? yellow(r.text) : red(r.text)));
   }
   if (!r.ok) process.exitCode = 1;
+}
+
+async function runOp(op: CoordOp, args: Record<string, unknown>, opts: CoordCliOptions): Promise<void> {
+  report(await call(op, args, callerOf("cli")), opts);
 }
 
 export function runLeases(opts: CoordCliOptions & { repo?: string }): Promise<void> {
@@ -126,8 +130,8 @@ export function runAsk(words: string[], opts: CoordCliOptions): Promise<void> {
 // --- v3 Memory (SPEC §36) ---------------------------------------------------------------
 
 /**
- * `workmesh remember <title…>`: from a terminal outside an agent session these are the person's own words (accepted at
- * once); from an agent's shell, the agent's proposal.
+ * `workmesh remember <title…>`: a proposal, from a terminal outside an agent session and from an agent's shell alike
+ * (SPEC §35); a person accepts it on the board. From an agent's shell it carries that session's key.
  */
 export function runRemember(
   words: string[],
@@ -207,8 +211,85 @@ export function runHandoff(
   );
 }
 
-export function runHandoffs(action: string | undefined, id: string | undefined, opts: CoordCliOptions & { note?: string }): Promise<void> {
-  return runOp("handoffs", { action: action ?? "list", ...(id ? { id } : {}), ...(opts.note ? { note: opts.note } : {}) }, opts);
+/** What `workmesh handoffs` needs around it. Tests pass their own. */
+export interface HandoffsDeps {
+  /** One coordination call through the daemon. */
+  call: (op: CoordOp, args: Record<string, unknown>, caller: CoordCaller) => Promise<CoordOpResult>;
+  /** Input and output are a terminal, so a person can be shown the handoff and asked. */
+  isTerminal: () => boolean;
+  /** Asks a yes-or-no question whose default is no. */
+  ask: (question: string) => Promise<boolean>;
+  print: (line: string) => void;
+}
+
+const handoffsDeps: HandoffsDeps = {
+  call,
+  isTerminal: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  ask: (question) => confirm(question, false),
+  print: (line) => console.log(line),
+};
+
+/** The two answers that start an agent on this machine, and the words each one uses. */
+const STARTS = {
+  accept: {
+    can: "canAccept",
+    no: "Not accepted",
+    question: "Accept and start an agent?",
+    elsewhere: { json: "Run it without --json, or accept in the menu bar or on the board.", pipe: "Accept it in your own terminal, in the menu bar or on the board." },
+    notWaiting: (id: string) => `${id} isn't waiting for your answer.`,
+    left: (id: string) => `${id} still waits for you (\`workmesh handoffs decline ${id}\` declines it).`,
+  },
+  run: {
+    can: "canRun",
+    no: "Not started",
+    question: "Run it here and start an agent?",
+    elsewhere: { json: "Run it without --json, or confirm it in the menu bar.", pipe: "Confirm it in your own terminal or in the menu bar." },
+    notWaiting: (id: string) => `${id} isn't waiting to run on this machine.`,
+    left: (id: string) => `${id} still waits: this machine or another of yours can run it.`,
+  },
+} as const;
+
+/**
+ * `workmesh handoffs [list | show <id> | accept <id> | decline <id> | run <id>]`. Accepting starts an agent on this
+ * machine with someone else's text as its instructions. So does `run`, for a handoff that was accepted somewhere
+ * else. Both always print the whole handoff and what will start, then ask. No option skips the question. Without a
+ * terminal to ask in, nothing starts here: the menu bar shows the handoff too.
+ */
+export async function runHandoffs(
+  action: string | undefined,
+  id: string | undefined,
+  opts: CoordCliOptions & { note?: string },
+  deps: HandoffsDeps = handoffsDeps,
+): Promise<void> {
+  const caller = callerOf("cli");
+  const args = { action: action ?? "list", ...(id ? { id } : {}), ...(opts.note ? { note: opts.note } : {}) };
+  const send = async (): Promise<void> => report(await deps.call("handoffs", args, caller), opts, deps.print);
+  if (action !== "accept" && action !== "run") return send();
+  const words = STARTS[action];
+  if (!id) return report({ ok: false, text: `\`workmesh handoffs ${action}\` needs the handoff's id (\`workmesh handoffs\` lists them).` }, opts, deps.print);
+  if (opts.json || !deps.isTerminal()) {
+    const why = opts.json ? "--json leaves no room for the question" : "there is no terminal to ask in";
+    return report(
+      {
+        ok: false,
+        text: `${words.no}: ${why}. \`workmesh handoffs ${action}\` shows the whole handoff and asks before it starts an agent. ${opts.json ? words.elsewhere.json : words.elsewhere.pipe}`,
+      },
+      opts,
+      deps.print,
+    );
+  }
+  const view = await deps.call("handoffs", { action: "show", id }, caller);
+  if (!view.ok) return report(view, opts, deps.print);
+  deps.print(view.text);
+  deps.print("");
+  if ((view.data as Record<string, unknown> | undefined)?.[words.can] !== true) {
+    return report({ ok: false, text: `${words.no}: ${words.notWaiting(id)}` }, opts, deps.print);
+  }
+  if (!(await deps.ask(words.question))) {
+    deps.print(`${words.no}. ${words.left(id)}`);
+    return;
+  }
+  return send();
 }
 
 export function runGates(action: string | undefined, list: string | undefined, opts: CoordCliOptions): Promise<void> {

@@ -307,6 +307,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
           checks.push(warn("delegation", "this hub has no handoffs or approvals yet (it predates Workmesh v2); agents work as before"));
         }
       }
+      checks.push(...newMachineChecks(team.newDevices));
     } catch {
       // daemon down or older: reported above
     }
@@ -394,6 +395,15 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
     }
   }
   if (failed) process.exitCode = 1;
+}
+
+/**
+ * SPEC §47: one line per machine that joined this person's account, as the daemon lists them (heard of in the last 24
+ * hours, not dismissed). Nothing when there is none, or from a daemon that predates the list.
+ */
+export function newMachineChecks(notices: readonly { text: string }[] | undefined): CheckResult[] {
+  if (!Array.isArray(notices)) return [];
+  return notices.filter((n) => typeof n?.text === "string" && n.text !== "").map((n) => warn("new machine", n.text));
 }
 
 /** One place a Node path is written: a host's hooks or MCP entry, Codex's notify, the daemon's service. */

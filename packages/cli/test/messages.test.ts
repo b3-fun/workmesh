@@ -216,6 +216,26 @@ describe("who may wake an idle session", () => {
     expect(wakes(y)).toEqual(["wm_named"]);
   });
 
+  it("a reply counts by the email the record keeps: a namesake with another email or with none does not", () => {
+    const x = harness();
+    x.gate.sent(LOCAL, { person: "Sam Lee", email: "sam@example.com" }, { id: "wm_sent1" });
+    // Written to by an agent's name: the roster gave its owner and their email. The agent's name then decides nothing.
+    x.gate.sent(LOCAL, { agent: "auth-refactor" }, { id: "wm_sent2", person: "Sam Lee", email: "sam@example.com" });
+    x.sync({
+      inbox: [
+        message({ id: "wm_same", from: { person: "sam lee", email: "SAM@example.com", sessionName: "docs" } }),
+        message({ id: "wm_other", from: { person: "Sam Lee", email: "sam.lee@example.org", sessionName: "auth-refactor" } }),
+        message({ id: "wm_none", from: { person: "Sam Lee", sessionName: "auth-refactor" } }),
+      ],
+    });
+    expect(wakes(x)).toEqual(["wm_same"]);
+    // A record with no email (from before emails, or the relay knew none): the names decide, as before.
+    const y = harness();
+    y.gate.sent(LOCAL, { person: "Sam Lee" });
+    y.sync({ inbox: [message({ id: "wm_other", from: { person: "Sam Lee", email: "sam.lee@example.org" } })] });
+    expect(wakes(y)).toEqual(["wm_other"]);
+  });
+
   it("a message in a thread this session wrote in is a reply, whoever sends it", () => {
     const x = harness();
     x.gate.sent(LOCAL, { person: "Sam" }, { id: "wm_sent1", thread: "t_7" });
@@ -257,6 +277,27 @@ describe("who may wake an idle session", () => {
     expect(x.gate.records()).toHaveLength(2);
     x.sync({ inbox: [message()] });
     expect(wakes(x)).toEqual(["wm_01"]);
+  });
+
+  it("`send` keeps the email of the person it went to, when the relay knows one", async () => {
+    const x = harness();
+    x.sync({
+      roster: [
+        { person: "Sam", email: "sam@example.com", sessions: [{ hubKey: SAM, name: "auth-refactor", state: "working" }] },
+        { person: "Bo", sessions: [] },
+      ],
+    });
+    await x.op("send", { to: "Sam", text: "hi" });
+    await x.op("send", { to: "auth-refactor", text: "ping" });
+    // An email the roster does not list: the typed email is the one kept.
+    await x.op("send", { to: "kim@example.com", text: "hello" });
+    await x.op("send", { to: "Bo", text: "hi" });
+    expect(x.gate.records().map((r) => [r.person, r.email])).toEqual([
+      ["Sam", "sam@example.com"],
+      ["Sam", "sam@example.com"],
+      ["kim@example.com", "kim@example.com"],
+      ["Bo", undefined],
+    ]);
   });
 
   it("my own messages wake under every rule: my person's, and my other sessions' when they ask", () => {
@@ -321,10 +362,14 @@ describe("the record of who each session wrote to", () => {
     const file = path.join(dir, "state", "messages.json");
     const x = harness({ file });
     x.gate.sent(LOCAL, { person: "Sam" }, { id: "wm_sent1", thread: "t_7" });
+    x.gate.sent(LOCAL, { person: "Bo", email: "bo@example.com" });
     x.gate.flush();
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     const y = harness({ file });
-    expect(y.gate.records()).toEqual([{ session: LOCAL, id: "wm_sent1", thread: "t_7", person: "Sam", at: T }]);
+    expect(y.gate.records()).toEqual([
+      { session: LOCAL, id: "wm_sent1", thread: "t_7", person: "Sam", at: T },
+      { session: LOCAL, person: "Bo", email: "bo@example.com", at: T },
+    ]);
     y.sync({ inbox: [message()] });
     expect(wakes(y)).toEqual(["wm_01"]);
   });
@@ -347,17 +392,25 @@ describe("the record of who each session wrote to", () => {
     const file = path.join(dir, "messages.json");
     fs.writeFileSync(file, "not json");
     expect(harness({ file }).gate.records()).toEqual([]);
-    fs.writeFileSync(file, JSON.stringify({ v: 1, sent: [{ session: LOCAL, person: "Sam", at: T }, { session: 7 }, "x"] }));
+    // A record whose email is not an email was not written by this relay: it is skipped, never read by name.
+    const sent = [{ session: LOCAL, person: "Sam", at: T }, { session: 7 }, "x", { session: LOCAL, person: "Bo", email: "not an email", at: T }];
+    fs.writeFileSync(file, JSON.stringify({ v: 1, sent }));
     expect(harness({ file }).gate.records()).toEqual([{ session: LOCAL, person: "Sam", at: T }]);
   });
 
-  it("names the person a message goes to, from the roster", () => {
+  it("names the person a message goes to, from the roster, with their email when there is one", () => {
     const roster = hubSyncAcceptSchema.parse(BASE).roster;
-    expect(recipientPerson({ person: "Bo" }, roster)).toBe("Bo");
-    expect(recipientPerson({ session: `${SAM}/a1b2c3d4e5f60718` }, roster)).toBe("Sam");
-    expect(recipientPerson({ agent: "AUTH-refactor" }, roster)).toBe("Sam");
+    expect(recipientPerson({ person: "Bo" }, roster)).toEqual({ person: "Bo" });
+    expect(recipientPerson({ session: `${SAM}/a1b2c3d4e5f60718` }, roster)).toEqual({ person: "Sam" });
+    expect(recipientPerson({ agent: "AUTH-refactor" }, roster)).toEqual({ person: "Sam" });
     expect(recipientPerson({ agent: "nobody" }, roster)).toBeUndefined();
     expect(recipientPerson({ session: "dev_x:claude-code:zz" }, undefined)).toBeUndefined();
+    const withEmails = hubSyncAcceptSchema.parse({ ...BASE, roster: [{ ...BASE.roster[0]!, email: "SAM@example.com" }] }).roster;
+    expect(recipientPerson({ session: SAM }, withEmails)).toEqual({ person: "Sam", email: "sam@example.com" });
+    expect(recipientPerson({ agent: "auth-refactor" }, withEmails)).toEqual({ person: "Sam", email: "sam@example.com" });
+    expect(recipientPerson({ person: "Sam", email: "sam@example.com" }, undefined)).toEqual({ person: "Sam", email: "sam@example.com" });
+    // A person named by an email the roster did not know: that email.
+    expect(recipientPerson({ person: "Kim@example.com" }, undefined)).toEqual({ person: "Kim@example.com", email: "kim@example.com" });
   });
 });
 

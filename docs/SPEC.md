@@ -707,12 +707,17 @@ read and drops the rest one by one):
       as a teammate's message would, and it is held for a session with no permission prompts.
     - `replies` also lets a reply pass. A message is a reply when its sender is a person the session wrote to in the
       last 7 days, or one of that person's sessions or agents. It is also a reply when it is in a thread the session
-      wrote in: its `thread` is the id of a message the session sent, or the thread that message carried.
+      wrote in: its `thread` is the id of a message the session sent, or the thread that message carried. The
+      sender is matched by §49's stricter check. When the record keeps that person's email, the sender must carry
+      the same email, and neither a display name nor an agent's session name decides. A record with no email, such
+      as one from before emails, matches by those names.
     - `team` lets anyone on the team pass, as every relay did before this rule. `self` lets nobody else pass. A list
       lets those people pass (**Lists of people**, below).
     - The relay keeps the record this needs. For each message a local session sends, it notes the session, the
       hub's id for the message, its thread, and who it went to: the person named, or the person whose session or
-      agent was named, read from the roster. The record is in the state dir (`messages.json`, 0600). It holds at most
+      agent was named, read from the roster. It keeps that person's email when the relay knows one: the one it
+      resolved or the roster gives, or the name itself when it is an email. The record is in the state dir
+      (`messages.json`, 0600). A record whose email is not an email is skipped when the file is read. It holds at most
       500 messages, and each is dropped after 7 days. A message the person sends from a terminal is not a session's,
       so it is not recorded.
     - The daemon's own notices (§31) wake as before. A message that may not wake is not lost, and its session is
@@ -1807,6 +1812,9 @@ reader, §14).
   - The same check decides whether a message is the person's own (§23). An own message may wake a session, is never
     held, and passes `messages.from: self`. So a message from a teammate with the same display name follows a
     teammate's rules.
+  - It also decides whether a message a session receives is a reply to a person the session wrote to (§23,
+    `replies`). There, the email the relay has for that person takes the place of `me.email`. A reply may wake a
+    session without asking the person.
 - **Everything else keeps the rule above.** An email the hub leaves out never makes the relay stop seeing its own
   lease, claim or gate policy as its own.
 - **A name a person or an agent typed** (`send`, §23; `handoff`, §31). The relay looks it up in the last sync's

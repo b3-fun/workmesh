@@ -292,7 +292,8 @@ when it came from your own email.
 
 Messages work the same way. Your own messages may wake a session, are never held, and pass `messages.from: self`. A
 message counts as yours only when it came from your email or from a session on this machine. A namesake's message is
-a teammate's, so it wakes, is held or is dropped by a teammate's rules.
+a teammate's, so it wakes, is held or is dropped by a teammate's rules. A reply wakes a session only from the email of
+the person that session wrote to, when Workmesh knows it.
 
 The same goes for the lists of people in `messages.wake` and `messages.from`. An email there names one person for
 sure. A name stands for the one person on the team who has it. When two teammates share it, it lets neither

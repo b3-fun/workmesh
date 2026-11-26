@@ -128,7 +128,7 @@ export interface CoordOpsDeps {
    * A session here sent a message the hub took: who to, and in which thread (SPEC §23). The daemon keeps it, so that
    * person's answer counts as a reply.
    */
-  sent?: (localKey: string, to: HubMessageTo, info: { id: string; thread?: string; person?: string }) => void;
+  sent?: (localKey: string, to: HubMessageTo, info: { id: string; thread?: string; person?: string; email?: string }) => void;
   /**
    * The messages held for the person (SPEC §23), and their answers. Only the person reads, delivers or drops them:
    * the operation refuses every caller but a person's own surface (`PERSON_CLIENTS`) before it asks.
@@ -338,7 +338,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       });
       if (!r.ok) return hubError(r);
       if (!r.body.ok) return fail(`Workmesh: ${hubSaid(r.body.error, "the hub didn't take the message")}`);
-      if (key) deps.sent?.(CoordClient.family(key), to, { id: r.body.id, ...(thread ? { thread } : {}), person: recipientPerson(to, st?.roster) });
+      if (key) deps.sent?.(CoordClient.family(key), to, { id: r.body.id, ...(thread ? { thread } : {}), ...recipientPerson(to, st?.roster) });
       const where = "person" in to ? to.person : "agent" in to ? to.agent : to.session;
       return { ok: true, text: `Sent to ${idOf(where)} (message ${idOf(r.body.id)}).`, data: { id: r.body.id, to } };
     }

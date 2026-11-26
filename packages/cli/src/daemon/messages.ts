@@ -1,11 +1,12 @@
 import { z } from "zod";
 import type { SessionEvent } from "@workmesh/core";
+import { hubPersonEmailSchema } from "@workmesh/protocol";
 import type { HubMessageTo } from "@workmesh/protocol";
 import { CoordClient, isLocalNotice } from "../hub/coord";
 import type { HubSyncInboxItem, InboxPolicy } from "../hub/coord";
 import { readStateFile, writeStateFile } from "../hub/persist";
 import type { MessageHoldRule, MessageSettings } from "../lib/config";
-import { emailKey, samePerson } from "../lib/person";
+import { emailKey, samePerson, surelyMe } from "../lib/person";
 import type { PersonRef } from "../lib/person";
 import { cleanText, label } from "../lib/untrusted";
 
@@ -33,6 +34,11 @@ export interface SentRecord {
   thread?: string;
   /** The person it went to: the one named, or the one whose session or agent was named. */
   person?: string;
+  /**
+   * That person's email, when the relay knew one (SPEC §49). A reply then counts only from that email. A record
+   * without one, such as one written before emails, matches by name.
+   */
+  email?: string;
   /** The session it went to (a hub key). */
   toSession?: string;
   /** The agent it went to, by its session name. */
@@ -79,6 +85,8 @@ const sentSchema = z.object({
   id: z.string().min(1).max(64).optional(),
   thread: z.string().min(1).max(64).optional(),
   person: z.string().min(1).max(200).optional(),
+  // This relay writes only emails it checked, so a record with anything else is skipped, never read by name.
+  email: hubPersonEmailSchema.optional(),
   toSession: z.string().min(1).max(300).optional(),
   agent: z.string().min(1).max(120).optional(),
   at: z.number().nonnegative(),
@@ -183,12 +191,15 @@ export class MessageGate implements InboxPolicy {
   // --- what this machine's sessions sent ---------------------------------------------
 
   /** A local session sent a message the hub took: remember who to, so their answer counts as a reply. */
-  sent(localKey: string, to: HubMessageTo, info: { id?: string; thread?: string; person?: string } = {}): void {
+  sent(localKey: string, to: HubMessageTo, info: { id?: string; thread?: string; person?: string; email?: string } = {}): void {
+    // A person named: they and their email come from the message itself. A session or an agent named: the roster's.
+    const who = "person" in to ? recipientPerson(to, undefined) : { person: info.person, email: emailKey(info.email) };
     const record: SentRecord = {
       session: CoordClient.family(localKey),
       ...(info.id ? { id: info.id } : {}),
       ...(info.thread ? { thread: info.thread } : {}),
-      ...("person" in to ? { person: to.person } : info.person ? { person: info.person } : {}),
+      ...(who?.person ? { person: who.person } : {}),
+      ...(who?.email ? { email: who.email } : {}),
       ...("session" in to ? { toSession: to.session } : {}),
       ...("agent" in to ? { agent: to.agent } : {}),
       at: this.now(),
@@ -208,19 +219,22 @@ export class MessageGate implements InboxPolicy {
   /**
    * Whether a message answers something this session sent: its sender is a person (or one of their sessions or
    * agents) the session wrote to in the last 7 days, or it is in a thread the session wrote in.
+   *
+   * A reply wakes a session without asking its person, so the sender is matched by the strict check (`surelyMe`,
+   * SPEC §49). When the record keeps the person's email, the sender must carry the same email, and neither a display
+   * name nor an agent's name decides. Only a record with no email matches by those names, as before emails.
    */
   isReply(item: HubSyncInboxItem, localKey: string): boolean {
     const mine = CoordClient.family(localKey);
     const since = this.now() - SENT_KEEP_MS;
-    const person = item.from.person.toLowerCase();
     const name = item.from.sessionName?.toLowerCase();
     const session = item.from.sessionKey === undefined ? undefined : CoordClient.family(item.from.sessionKey);
     for (const r of this.sentRecords) {
       if (r.session !== mine || r.at < since) continue;
       if (item.thread !== undefined && (r.id === item.thread || r.thread === item.thread)) return true;
-      if (r.person !== undefined && r.person.toLowerCase() === person) return true;
+      if ((r.person !== undefined || r.email !== undefined) && surelyMe({ person: r.person, email: r.email }, item.from)) return true;
       if (session !== undefined && r.toSession !== undefined && CoordClient.family(r.toSession) === session) return true;
-      if (name !== undefined && r.agent !== undefined && r.agent.toLowerCase() === name) return true;
+      if (r.email === undefined && name !== undefined && r.agent !== undefined && r.agent.toLowerCase() === name) return true;
     }
     return false;
   }
@@ -567,20 +581,27 @@ function onePerson(
 }
 
 /**
- * The person a message goes to, as the roster tells it: the one named, the one whose session was named, or the one
- * whose live agent has that session name. Undefined when the roster can't say.
+ * The person a message goes to, with their email when the relay knows one: the one named (the email the relay
+ * resolved, or the name itself when it is an email), the one whose session was named, or the one whose live agent
+ * has that session name (their email from the roster). Undefined when the roster can't say.
  */
 export function recipientPerson(
   to: HubMessageTo,
-  roster: ReadonlyArray<{ person: string; sessions: ReadonlyArray<{ hubKey: string; name: string; state?: string }> }> | undefined,
-): string | undefined {
-  if ("person" in to) return to.person;
+  roster: ReadonlyArray<{ person: string; email?: string; sessions: ReadonlyArray<{ hubKey: string; name: string; state?: string }> }> | undefined,
+): PersonRef | undefined {
+  if ("person" in to) return withEmail(to.person, emailKey(to.email) ?? emailKey(to.person));
   if (!roster) return undefined;
   if ("session" in to) {
     const key = CoordClient.family(to.session);
-    return roster.find((p) => p.sessions.some((s) => CoordClient.family(s.hubKey) === key))?.person;
+    const owner = roster.find((p) => p.sessions.some((s) => CoordClient.family(s.hubKey) === key));
+    return owner && withEmail(owner.person, emailKey(owner.email));
   }
   const name = to.agent.toLowerCase();
   const owners = roster.filter((p) => p.sessions.some((s) => s.state !== "ended" && s.name.toLowerCase() === name));
-  return owners.length === 1 ? owners[0]!.person : undefined;
+  return owners.length === 1 ? withEmail(owners[0]!.person, emailKey(owners[0]!.email)) : undefined;
+}
+
+/** A person, with their email only when there is one. */
+function withEmail(person: string, email: string | undefined): PersonRef {
+  return email ? { person, email } : { person };
 }

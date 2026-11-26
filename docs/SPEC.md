@@ -97,7 +97,7 @@ All relay endpoints live under `/relay/*`, JSON bodies, max 256 KB per request.
 → `{ "code": "ABCD-1234", "deviceId": "dev_<ulid>", "pollSecret": "<32 hex>", "verifyUrl": "https://workmesh.b3os.org/pair?code=ABCD-1234", "expiresInSec": 600 }`
 
 The person opens `verifyUrl` (Access login), sees "Connect *seans-mac-studio* to B3 as *Sean*?", and approves:
-`POST /api/pair/approve { "code": "ABCD-1234" }` (Access-authenticated).
+`POST /api/pair/approve { "code": "ABCD-1234", "confirmRemote"?: true }` (Access-authenticated).
 
 **The relay opens only the hub's own link** (B3-7237). The link is text from the hub's answer, and opening it hands
 it to the system's `open` command. So the relay checks it first (`workmesh hub connect`, `checkPairLink`):
@@ -111,6 +111,18 @@ it to the system's `open` command. So the relay checks it first (`workmesh hub c
 
 Under every code the relay prints one line: approve only a code you see in your own terminal.
 
+**The hub compares the two networks** (B3-7237). A pairing can be started by anyone, so a link with a code in it may
+come from someone else. The hub remembers the network a pairing started on and compares it with the approver's:
+
+- `GET /api/pair/:code` adds `sameNetwork: boolean` and `where: string | null`, a short place and network name for
+  the request. The address itself is never sent.
+- On the same network the page approves in one step, as before.
+- On another network the page says so, shows `where`, drops a code that came in the link and asks the person to type
+  the code from their own terminal and to confirm they started it themselves. `POST /api/pair/approve` then needs
+  `confirmRemote: true` beside the code. Without it the hub answers `403 { error, reason: "other_network", where }`.
+- A person's own request can read as another network (a VPN, or IPv4 in the terminal and IPv6 in the browser). They
+  get the longer flow; nothing is refused.
+
 `POST /relay/pair/poll` `{ "deviceId", "pollSecret" }`
 → `{ "status": "pending" | "complete" | "expired", "deviceToken"?: "bp_…", "person"?: { "email", "name" }, "project"?: { "id": "b3", "name": "B3", "include": {…}, "issueKeys": [...] } }`
 `deviceToken` is returned exactly once, on the first `complete` poll. Codes expire after 10 minutes. Rate limit pair
@@ -119,7 +131,7 @@ starts to 10 per IP per hour (`429` with `Retry-After`).
 Errors: poll with an unknown `deviceId` or a wrong `pollSecret` → `401`. Approve: unknown code `404`, already approved
 by someone else `409`, expired `410`. A code approved in time delivers its token on the next poll. The approve page
 reads the pairing with `GET /api/pair/:code` → `{ code, machine, client, status: "pending" | "approved" | "expired",
-expiresAt, approvedBy }`.
+expiresAt, approvedBy, sameNetwork, where }`.
 
 **A machine paired again retires its older pairing** (0.11.1). When a person completes a pairing for a machine name
 they already have a device for, the hub revokes that older device: its open sessions end, it leaves the board, and its

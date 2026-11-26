@@ -703,7 +703,15 @@ export type HubPairPollResponse = z.infer<typeof hubPairPollResponseSchema>;
 export const hubPairCodeSchema = z.string().trim().toUpperCase().regex(HUB_PAIR_CODE_RE);
 
 /** `POST /api/pair/approve` (the board, behind Access). */
-export const hubPairApproveRequestSchema = z.object({ code: hubPairCodeSchema });
+/**
+ * `POST /api/pair/approve`. `confirmRemote: true` is the person's word that they started this pairing themselves on
+ * another network than the one they approve from (B3-7237); the hub asks for it only then. Anything but `true` reads
+ * as absent.
+ */
+export const hubPairApproveRequestSchema = z.object({
+  code: hubPairCodeSchema,
+  confirmRemote: z.literal(true).optional().catch(undefined),
+});
 
 // ------------------------------------------------------------------ team (v0.5, SPEC §15)
 

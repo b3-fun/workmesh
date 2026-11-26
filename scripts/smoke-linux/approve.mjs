@@ -1,6 +1,8 @@
 // Approves a Workmesh pairing the way the board does (POST /api/pair/approve {code}) once its code shows up in a
 // log file. Only for a local dev hub, which takes the viewer from the x-dev-user-email header (DEV_USER_EMAIL).
 // It sends the hub's own origin as `Origin`, as a browser on the board does: the hub refuses a board write without it.
+// It also sends `confirmRemote: true`: the box that starts the pairing and this script reach the hub from different
+// addresses, and the hub then wants the person's word that they started the pairing themselves (B3-7237).
 // Usage: node approve.mjs <log file> <hub url> <email> [timeout s]
 import fs from "node:fs";
 
@@ -23,7 +25,7 @@ while (Date.now() < deadline) {
     const res = await fetch(`${hub}/api/pair/approve`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-dev-user-email": email, origin: new URL(hub).origin },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, confirmRemote: true }),
     });
     console.log(`approve ${code}: ${res.status} ${await res.text()}`);
     if (res.ok) process.exit(0);

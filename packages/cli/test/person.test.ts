@@ -8,7 +8,7 @@ import type { DelegateSettings, HandoffRunnerLike } from "../src/daemon/delegate
 import { CoordHooks, claimsLine, gateNote, knowledge } from "../src/daemon/coord-hooks";
 import { recipient, runCoordOp } from "../src/daemon/coord-ops";
 import type { CoordOpsDeps } from "../src/daemon/coord-ops";
-import { emailKey, gateApprovers, samePerson } from "../src/lib/person";
+import { emailKey, gateApprovers, samePerson, surelyMe } from "../src/lib/person";
 
 /**
  * People by email (docs/SPEC.md §48, §49). Two people can share a display name. The relay matches a person the hub
@@ -75,6 +75,35 @@ describe("samePerson (SPEC §49)", () => {
     expect(gateApprovers({ owner: "Sam Lee", ownerEmail: SAM, approvers: ["An"] })).toEqual([{ person: "An", email: undefined }]);
     expect(gateApprovers({ owner: "Sam Lee", ownerEmail: SAM })).toEqual([{ person: "Sam Lee", email: SAM }]);
     expect(gateApprovers({ owner: "Sam Lee", approvers: [] })).toEqual([{ person: "Sam Lee", email: undefined }]);
+  });
+});
+
+describe("surelyMe: the strict check, for what the relay does without asking (SPEC §49)", () => {
+  it("with my email, an entry without an email is not me", () => {
+    expect(surelyMe(me, { person: "Sam Lee" })).toBe(false);
+    // An email that can't be read counts as none.
+    expect(surelyMe(me, { person: "Sam Lee", email: "not an email" })).toBe(false);
+    // The lenient rule takes the same entry for me, by name.
+    expect(samePerson(me, { person: "Sam Lee" })).toBe(true);
+  });
+
+  it("with an email on both sides, the emails decide", () => {
+    expect(surelyMe(me, namesake)).toBe(false);
+    expect(surelyMe(me, { person: "Samuel L.", email: "SAM@example.com" })).toBe(true);
+    expect(surelyMe(me, { person: "Sam Lee", email: SAM })).toBe(true);
+  });
+
+  it("without an email of my own, the display name decides", () => {
+    expect(surelyMe({ person: "Sam Lee" }, { person: "sam lee" })).toBe(true);
+    expect(surelyMe({ person: "Sam Lee" }, namesake)).toBe(true);
+    expect(surelyMe({ person: "Sam Lee" }, { person: "An", email: SAM })).toBe(false);
+  });
+
+  it("a missing person matches nobody", () => {
+    expect(surelyMe(undefined, me)).toBe(false);
+    expect(surelyMe(me, undefined)).toBe(false);
+    expect(surelyMe({}, {})).toBe(false);
+    expect(surelyMe({ person: "" }, { person: "" })).toBe(false);
   });
 });
 
@@ -208,6 +237,21 @@ describe("the relay's own person (SPEC §49)", () => {
     const unpaired = relay({ paired: {} });
     expect(unpaired.coord.isMe(me)).toBe(false);
   });
+
+  it("the strict check reads the email the hub sent on sync, and never says yes where isMe says no", () => {
+    const x = relay();
+    x.sync();
+    expect(x.coord.surelyMe({ person: "Sam Lee" })).toBe(false);
+    expect(x.coord.isMe({ person: "Sam Lee" })).toBe(true);
+    expect(x.coord.surelyMe({ person: "Samuel L.", email: SAM })).toBe(true);
+    expect(x.coord.surelyMe(namesake)).toBe(false);
+    // An older hub sends no `me.email`: isMe decides, with the email pairing answered.
+    x.sync({ me: { person: "Sam Lee" } });
+    expect(x.coord.surelyMe({ person: "Sam Lee" })).toBe(true);
+    expect(x.coord.surelyMe({ person: "Samuel L.", email: SAM })).toBe(true);
+    expect(x.coord.surelyMe(namesake)).toBe(false);
+    expect(relay({ paired: {} }).coord.surelyMe(me)).toBe(false);
+  });
 });
 
 describe("handoffs: only this person's own are taken without a click (SPEC §49)", () => {
@@ -219,6 +263,25 @@ describe("handoffs: only this person's own are taken without a click (SPEC §49)
     expect(x.calls).toEqual([]);
     expect(x.runner.ran).toEqual([]);
     expect(x.d.summary(() => undefined)?.handoffs.map((h) => [h.id, h.status])).toEqual([["h_1", "offered"]]);
+  });
+
+  it("a sender with my display name and no email is not me once my hub sends my email", async () => {
+    const x = relay();
+    x.sync({ handoffs: [handoff({ from: { person: "Sam Lee", sessionKey: THEIRS, sessionName: "laptop" } })] });
+    await flush();
+    // Still offered to me, so it waits for my Accept: auto-self does not take it.
+    expect(x.calls).toEqual([]);
+    expect(x.runner.ran).toEqual([]);
+    expect(x.d.summary(() => undefined)?.handoffs.map((h) => [h.id, h.status])).toEqual([["h_1", "offered"]]);
+  });
+
+  it("the same handoff with my email is accepted here and started", async () => {
+    const accepted = { status: 200, body: { ok: true, handoff: handoff({ status: "accepted", device: DEV }) } };
+    const x = relay({ replies: [accepted] });
+    x.sync({ handoffs: [handoff({ from: { person: "Sam Lee", email: SAM, sessionKey: THEIRS, sessionName: "laptop" } })] });
+    await flush();
+    expect(x.calls).toEqual([{ url: "https://hub.test/relay/handoffs", body: { action: "accept", id: "h_1" } }]);
+    expect(x.runner.ran).toEqual(["h_1"]);
   });
 
   it("one I sent from another machine is accepted here and started, whatever name the hub shows for me", async () => {
@@ -355,6 +418,25 @@ describe("leases, edits and claims of a namesake are another person's (SPEC §49
     x.sync();
     await x.coord.claim({ action: "claim", sessionKey: LOCAL, issue: "B3-3" });
     expect(x.coord.view().state?.claims[0]?.holder).toMatchObject(me);
+  });
+});
+
+describe("only what runs without a click is strict: an email the hub left out keeps my own mine (SPEC §49)", () => {
+  it("my lease, claim, gate policy and a handoff to me still read as mine", async () => {
+    const x = relay();
+    x.sync({
+      leases: [{ id: "ls_1", repo: "b3-fun/demo", paths: ["src/**"], holder: { person: "Sam Lee", sessionKey: `${DEV}:codex:t7`, sessionName: "codex-2" }, expiresAt: T + 20 * 60_000 }],
+      claims: [{ issue: "B3-2", holder: { person: "Sam Lee", sessionKey: MINE }, since: T }],
+      gates: [{ owner: "Sam Lee", actions: ["deploy"] }],
+      handoffs: [handoff({ from: { ...namesake, sessionKey: THEIRS, sessionName: "laptop" }, to: { person: "Sam Lee" } })],
+    });
+    expect(x.hooks.refuse(edit(`${ROOT}/src/api.ts`), "PreToolUse")).toContain("leased to your own other session codex-2");
+    const start: SessionEvent = { source: "claude-code", sessionId: "s1", kind: "start", ts: T, detail: { hookEvent: "SessionStart" } };
+    expect(x.hooks.context(start, "SessionStart")).toContain("Your open claims: B3-2 (this session).");
+    expect(x.d.gateRefusal(bash("npx wrangler deploy"), "PreToolUse")).toMatch(/^Waiting for Sam Lee's approval to deploy/);
+    const list = await runCoordOp({ op: "handoffs", args: {}, caller: {} }, x.ops);
+    expect(list.text).toBe("- h_1 · offered · from Sam Lee · b3-fun/demo: Port the key rotation");
+    expect(x.d.summary(() => undefined)?.handoffs.map((h) => [h.id, h.status])).toEqual([["h_1", "offered"]]);
   });
 });
 

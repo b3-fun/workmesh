@@ -3,7 +3,7 @@ import { HUB_PERSON_EMAIL_MAX, HUB_PERSON_EMAIL_RE } from "@workmesh/protocol";
 /**
  * Who a display name stands for (docs/SPEC.md §48, §49). Two people on a team can share a display name, so the relay
  * matches a person the hub names by email when both sides have one. With a hub that sends no emails it compares
- * display names, as it always did.
+ * display names, as it always did. What the relay does without asking the person takes the stricter `surelyMe`.
  */
 
 /** A person as the hub names them: the display name, and their email when the hub sent one. */
@@ -30,6 +30,20 @@ export function samePerson(a: PersonRef | undefined, b: PersonRef | undefined): 
   const eb = emailKey(b.email);
   if (ea !== undefined && eb !== undefined) return ea === eb;
   return !!a.person && !!b.person && a.person.toLowerCase() === b.person.toLowerCase();
+}
+
+/**
+ * Whether an entry surely names the relay's own person (SPEC §49). It is for anything the relay does without asking
+ * the person, such as accepting a handoff by the `auto-self` policy. Pass the relay's own person with the email the
+ * hub sent for them on sync (`me.email`). With that email, an entry with no email is someone else, so an entry the
+ * hub sent without one never passes for the relay's person. When both have an email, the emails decide. Without an
+ * email of the relay's own, the display names decide, as in `samePerson`.
+ */
+export function surelyMe(me: PersonRef | undefined, other: PersonRef | undefined): boolean {
+  if (!me || !other) return false;
+  const mine = emailKey(me.email);
+  if (mine === undefined) return samePerson(me, other);
+  return emailKey(other.email) === mine;
 }
 
 /** A gate policy's owner. */

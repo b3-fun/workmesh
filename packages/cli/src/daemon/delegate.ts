@@ -142,11 +142,12 @@ export interface DelegateSummary {
 
 /**
  * Whether a handoff is from this device's own person. It is the one place that decides it, so the compare can change
- * without touching the policy that uses it. The sender is matched by email when the hub sends emails, else by the
- * name the hub gives (`CoordClient.isMe`, SPEC §49).
+ * without touching the policy that uses it. The `auto-self` policy accepts on it with no click, so it takes the strict
+ * check (`CoordClient.surelyMe`, SPEC §49): once the hub sends this person's email, a sender without one is someone
+ * else. With an older hub, the name the hub gives decides.
  */
 export function fromMe(h: Pick<HubHandoffAccepted, "from">, coord: CoordClient): boolean {
-  return coord.isMe(h.from);
+  return coord.surelyMe(h.from);
 }
 
 export class Delegate {

@@ -1633,16 +1633,22 @@ reader, §14).
   sync when the hub sends one, else the email the pairing answered (§3.1), which it already keeps in its config.
 - **One rule** (`lib/person.ts`). Wherever the relay asks "is this person me", it uses §48's matching rule: by email
   when the entry and the relay both have one, else by display name. With a hub that sends no emails, nothing
-  changes.
+  changes. The one exception is what the relay does without asking (below).
 - **Where the rule decides:**
-  - Handoffs (§31): whether one is offered to this person, and whether this person sent it themselves. The
-    `auto-self` policy accepts only the second kind, so a handoff from a teammate with the same display name waits
-    for an Accept like any other teammate's.
+  - Handoffs (§31): whether one is offered to this person.
   - Gates and approvals (§31): which gate policy is this person's own, whether they may decide a pending approval,
     and whether a decision's notice says "Your person". An approver is matched against `approverEmails` (§48).
   - Leases, claims and recent edits (§23): "your own other session" in a lease refusal, the open-claims line at a
     session's start, and whose recent edit gets a heads-up.
   - Replies (§23): whether the person a message goes to is the one whose agent wrote first.
+- **What the relay does without asking** (`surelyMe`). The `auto-self` policy accepts, with no click, only a handoff
+  this person sent themselves. It decides that by a stricter check:
+  - Once the last sync carried `me.email`, an entry with no email is someone else. One with an email is this person
+    only when it equals `me.email`. So a handoff from a teammate with the same display name waits for an Accept like
+    any other teammate's, also when the hub sent it without an email.
+  - Without `me.email` (an older hub), the rule above decides.
+- **Everything else keeps the rule above.** An email the hub leaves out never makes the relay stop seeing its own
+  lease, claim or gate policy as its own.
 - **A name a person or an agent typed** (`send`, §23; `handoff`, §31). The relay looks it up in the last sync's
   roster by display name or GitHub login. A typed email is looked up by email only, so a display name that looks
   like someone's email never competes with it. The relay's own person counts as a choice, even when the roster

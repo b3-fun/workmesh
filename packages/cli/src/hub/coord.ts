@@ -53,7 +53,7 @@ import type {
   HubSyncAccepted,
 } from "@workmesh/protocol";
 import type { z } from "zod";
-import { emailKey, gateOwner, samePerson } from "../lib/person";
+import { emailKey, gateOwner, samePerson, surelyMe } from "../lib/person";
 import type { PersonRef } from "../lib/person";
 import { cleanText, label, oneLine } from "../lib/untrusted";
 import { parseRetryAfter } from "./forwarder";
@@ -320,6 +320,16 @@ export class CoordClient {
    */
   isMe(other: PersonRef | undefined): boolean {
     return samePerson(this.self(), other);
+  }
+
+  /**
+   * Whether a person the hub names is surely this device's person, for anything the relay does without asking the
+   * person (`surelyMe`, SPEC §49). Once the last sync carried this person's email (`me.email`), an entry without an
+   * email is someone else. Before that (an older hub), `isMe` decides. So it never says yes where `isMe` says no.
+   */
+  surelyMe(other: PersonRef | undefined): boolean {
+    const fromHub = emailKey(this.state?.me?.email);
+    return fromHub === undefined ? this.isMe(other) : surelyMe({ person: this.me(), email: fromHub }, other);
   }
 
   /** The hub's clock, as best known. */

@@ -12,7 +12,8 @@
 // one of this Mac's agents and a message waiting for another), delegate (team plus
 // v2: handoffs offered to me or running here, and approvals; POST /coord/op answers
 // them, so Accept, Decline, Approve and Deny work against the mock; h_1 has a long
-// task and a context, h_3 is short and can't run on this Mac).
+// task and a context, h_3 is short and can't run on this Mac), newmachine (team plus a
+// machine that joined my account; POST /new-devices/dismiss takes it down).
 //
 // GET /update: legacy answers 404 (an older daemon), the scenarios above "up to
 // date". The update scenarios are team plus a newer release:
@@ -47,7 +48,7 @@ const arg = (name, fallback) => {
 const port = Number(arg("port", "45190"));
 const scenario = arg("scenario", "team");
 const UPDATE_SCENARIOS = ["update", "update-fail", "update-git", "update-menubar"];
-const SCENARIOS = ["team", "coord", "delegate", "empty", "unpaired", "halted", "noteam", "legacy", ...UPDATE_SCENARIOS];
+const SCENARIOS = ["team", "coord", "delegate", "newmachine", "empty", "unpaired", "halted", "noteam", "legacy", ...UPDATE_SCENARIOS];
 const CURRENT = arg("current", "0.12.0");
 const LATEST = arg("latest", "0.12.1");
 const MENUBAR_VERSION = arg("menubar-version", LATEST);
@@ -302,6 +303,18 @@ function coordOp(body) {
   return { ok: false, text: `mock-daemon: ${op} ${action ?? ""} isn't mocked` };
 }
 
+// Scenario newmachine: listed until POST /new-devices/dismiss, like the real daemon.
+let newDevices = [
+  {
+    id: "dev_01JD0000000000000000000002",
+    machine: "sams-laptop",
+    where: "Lisbon, Portugal (Example Telecom)",
+    pairedAt: ago(5),
+    toldAt: ago(5),
+    text: `A new machine joined your Workmesh account: sams-laptop, 5 minutes ago, from Lisbon, Portugal (Example Telecom). If this wasn't you, remove it on the board: ${HUB}`,
+  },
+];
+
 function team(open) {
   if (scenario === "unpaired") return { enabled: false };
   const base = {
@@ -329,6 +342,7 @@ function team(open) {
     };
   }
   if (scenario === "delegate") out.delegate = delegate;
+  if (scenario === "newmachine") out.newDevices = newDevices;
   return out;
 }
 
@@ -440,6 +454,23 @@ const server = http.createServer((req, res) => {
       const answer = coordOp(body);
       if (process.env.MOCK_DAEMON_VERBOSE) console.log(`POST /coord/op ${body.op} ${JSON.stringify(body.args)} -> ${answer.ok ? "ok" : answer.text}`);
       send(res, 200, answer);
+    });
+    return;
+  }
+  if (method === "POST" && url.pathname === "/new-devices/dismiss") {
+    let raw = "";
+    req.on("data", (chunk) => (raw += chunk));
+    req.on("end", () => {
+      let id;
+      try {
+        id = JSON.parse(raw).id;
+      } catch {
+        return send(res, 400, { ok: false, error: "bad json" });
+      }
+      const before = newDevices.length;
+      newDevices = newDevices.filter((d) => d.id !== id);
+      if (process.env.MOCK_DAEMON_VERBOSE) console.log(`POST /new-devices/dismiss ${id} -> ${before !== newDevices.length ? "removed" : "unknown"}`);
+      send(res, 200, { ok: true, removed: before !== newDevices.length });
     });
     return;
   }

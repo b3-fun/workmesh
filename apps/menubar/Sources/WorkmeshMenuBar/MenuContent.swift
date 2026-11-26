@@ -152,6 +152,7 @@ struct MenuContent: View {
             return rows.isEmpty ? nil : (g, rows)
         }
 
+        let newMachines = model.newDevices
         let holds = model.team?.coord?.holds ?? []
         let unread = Array((model.team?.coord?.unread ?? []).prefix(Self.maxMessages))
         let allHandoffs = model.team?.delegate?.shownHandoffs ?? []
@@ -159,9 +160,11 @@ struct MenuContent: View {
         let handoffs = Array(allHandoffs.prefix(Self.maxMessages))
         let approvals = Array(allApprovals.prefix(Self.maxMessages))
         // Handoff and approval rows carry a line of buttons: about two rows tall.
-        // A handoff whose whole text is open is several rows taller.
+        // A handoff whose whole text is open is several rows taller. A new machine's row has a line of buttons
+        // under two lines of text: about three rows tall.
         var rowCount = needs.count + holds.count + unread.count + 2 * (handoffs.count + approvals.count)
             + 6 * handoffs.filter { model.openHandoffs.contains($0.id) }.count
+            + 3 * newMachines.count
             + groups.reduce(0) { n, g in n + (g.0 == .idle && !idleExpanded ? 0 : g.1.count) }
         switch area {
         case .none: break
@@ -172,6 +175,10 @@ struct MenuContent: View {
         }
 
         let content = VStack(alignment: .leading, spacing: 0) {
+            if !newMachines.isEmpty {
+                sectionHeader("New on your account", count: newMachines.count > 1 ? "\(newMachines.count)" : nil, urgent: true)
+                ForEach(newMachines) { newDeviceRow($0, hubNow: hubNow) }
+            }
             if needs.isEmpty && groups.isEmpty {
                 Text("No agents running")
                     .font(.system(size: 12))
@@ -272,6 +279,46 @@ struct MenuContent: View {
     /// when the hub has one), else the hub's item from another machine.
     /// Messages, handoffs or approvals shown at most; each header counts them all.
     private static let maxMessages = 4
+
+    /// A machine that joined my account in the last day. The row stays until
+    /// it is dismissed here (the daemon drops the notice after 24 hours).
+    private func newDeviceRow(_ n: NewDeviceNotice, hubNow: Date) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.shield.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(n.machine).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(n.joined)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("If this wasn't you, remove it on the board.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if model.team?.boardLink != nil {
+                        Button("Open board") { model.openBoard() }
+                    }
+                    Button("Dismiss") { model.dismissNewDevice(n.id) }
+                }
+                .controlSize(.small)
+                .padding(.top, 3)
+            }
+            Spacer(minLength: 4)
+            if let at = n.pairedAt {
+                Text(AgentRow.elapsed(since: at, now: hubNow))
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .help(n.text ?? "\(n.machine): \(n.joined). If this wasn't you, remove it on the board.")
+        .accessibilityElement(children: .contain)
+    }
 
     /// v1: a teammate held one of this Mac's agents (every tool call is refused until they lift it).
     private func holdRow(_ h: CoordHold, hubNow: Date) -> some View {

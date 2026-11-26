@@ -99,6 +99,18 @@ All relay endpoints live under `/relay/*`, JSON bodies, max 256 KB per request.
 The person opens `verifyUrl` (Access login), sees "Connect *seans-mac-studio* to B3 as *Sean*?", and approves:
 `POST /api/pair/approve { "code": "ABCD-1234" }` (Access-authenticated).
 
+**The relay opens only the hub's own link** (B3-7237). The link is text from the hub's answer, and opening it hands
+it to the system's `open` command. So the relay checks it first (`workmesh hub connect`, `checkPairLink`):
+
+- It must be `https` on the host and port of the hub URL the person gave. Plain `http` passes only for a hub on
+  `localhost`, `127.0.0.1` or `[::1]`.
+- It must carry no user name or password.
+- A link that passes is printed and opened in its parsed form, never as the text the hub sent.
+- Any other link is neither printed nor opened. The relay prints the code, the hub's own pairing page
+  (`<hub url>/pair`) and the reason.
+
+Under every code the relay prints one line: approve only a code you see in your own terminal.
+
 `POST /relay/pair/poll` `{ "deviceId", "pollSecret" }`
 → `{ "status": "pending" | "complete" | "expired", "deviceToken"?: "bp_…", "person"?: { "email", "name" }, "project"?: { "id": "b3", "name": "B3", "include": {…}, "issueKeys": [...] } }`
 `deviceToken` is returned exactly once, on the first `complete` poll. Codes expire after 10 minutes. Rate limit pair
@@ -1441,3 +1453,69 @@ shapes and numbers only):
   totals are saved with the forwarder's state (§24: `usageReaders`), so a daemon restart carries on where it stopped
   and never reads a file twice. A state file from an older relay has no readers: those transcripts are read once from
   their start. A replaced or truncated file is read again from its start.
+
+---
+
+# New machines on an account (2026-11-26)
+
+A machine joins a person's account when that person approves its pairing code (§3.1). Their other machines said
+nothing when that happened, so a person who approved a code by mistake had no way to notice. The hub now names newly
+added machines on sync, and each relay tells its person. Linear B3-7237. Still `v: 1`; the list is optional, so an
+older hub and an older relay work as before.
+
+## 46. `newDevices` on sync
+
+The sync answer (`GET /relay/sync`, §21) gains one optional list:
+
+```jsonc
+{
+  // … §21, §30, §35 …
+  "newDevices": [                                      // ≤ 50
+    { "id": "dev_<ulid>",                              // the new machine's device id
+      "machine": "sams-laptop",                        // its name, as it paired (§3.1), 1..120
+      "pairedAt": 1795545600000,                       // when it was added (epoch ms, the hub's clock)
+      "where": "Lisbon, Portugal (Example Telecom)" }  // opt: a short place and network description, ≤ 200
+  ]
+}
+```
+
+- **What it lists:** the machines added to this device's person's account in the last 24 hours, other than the
+  machine asking. The hub lists each one on every sync in that time; a relay tells its person once per `id` (§47).
+- **Optional.** A hub that predates it sends no list, and a relay then has nothing to tell. An empty list means the
+  same.
+- **Accept reading** (`hubSyncAcceptSchema`): an item is kept when its `id` can be read. A `machine` or `where` that
+  is too long is cut. A `machine` that can't be read reads as empty, and a `pairedAt` that can't be read as 0. Either
+  way the person is still told. An item without an `id` is dropped on its own.
+- `machine` and `where` are text from outside the machine. A relay shows them on one line, with control and invisible
+  characters removed, and never gives them to an agent.
+
+## 47. The relay side (`packages/cli`)
+
+The daemon tells its person about each new machine once, and only the person. A notice stays up for 24 hours, or
+until the person dismisses it.
+
+- **Told once.** The daemon keeps the ids it has told the person about in `~/.local/state/workmesh/new-devices.json`
+  (`0600`). A machine on that list is not told again, also after a daemon restart. The list holds at most 200
+  machines: the oldest go first, and never one the hub still lists. A file with fewer fields loads as what it holds,
+  and a missing or unreadable one as an empty list.
+- **The words.** "A new machine joined your Workmesh account: sams-laptop, 5 minutes ago, from Lisbon, Portugal
+  (Example Telecom). If this wasn't you, remove it on the board: https://workmesh.b3os.org". The time is counted on
+  the hub's clock (`serverNow`, §21). A machine without a readable name is "an unnamed machine", one without a time
+  joined "recently", and one without a place has no "from". Name and place are put on one line, cut to 80 and 120
+  characters. The relay never raises a notice for its own device id.
+- **For the person only.** The sync client hands the list to the notice store and leaves it out of the state it
+  keeps. That state is what hooks, the MCP tools and the coordination commands read, so the list is in no hook
+  context, inbox or wake. The relay's tests run every hook event and every coordination call against it.
+- **Where the person sees it.**
+  - The daemon's log has one line when the machine is first heard of.
+  - `GET /team` gains `newDevices: [{ id, machine, where?, pairedAt, toldAt, text }]`, newest first: the notices heard
+    of in the last 24 hours and not dismissed. `text` is the sentence above.
+  - `workmesh status` prints each `text` first, and `workmesh status --json` carries the list as `newDevices`.
+  - `workmesh doctor` shows one `!` line per notice, named `new machine`.
+  - Workmesh.app posts one macOS notification per machine and shows a row until the person dismisses it.
+- **Dismiss.** `POST /new-devices/dismiss { id }` on the daemon's loopback API (bearer secret, as everywhere) answers
+  `{ ok: true, removed }`. The notice leaves `/team`, `status` and `doctor`; the machine stays on the list.
+- **Older sides.** An older hub sends no list, so nothing is told. An older daemon drops the list: its `/team` has no
+  `newDevices`, and `status`, `doctor` and the menu bar show nothing.
+
+In the code: `hub/coord.ts` (`onNewDevices`), `daemon/new-devices.ts` (`NewDeviceNotices`), `lib/untrusted.ts` (`oneLine`).

@@ -13,6 +13,7 @@ import { hubShareLevel, hubStickyShare, loadConfig, saveConfig } from "../lib/co
 import type { Config, HubConfig } from "../lib/config";
 import { getHubState, isDaemonUp, reloadHub } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
+import { oneLine } from "../lib/untrusted";
 import { readGithubLogin } from "../lib/github";
 import { bold, cyan, dim, formatDuration, green, red, select, sleep, spinner, yellow } from "../lib/ui";
 import { openBrowser } from "./setup";
@@ -67,6 +68,11 @@ export function suggestedShare(project: HubProjectRule, previous?: HubShareLevel
   return previous ?? project.defaultShare ?? "conversation";
 }
 
+/** A hub on this machine (local dev and tests): the only place plain http is accepted. */
+function isLocalHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
 /** https, or http only for a hub on this machine (local dev). */
 export function resolveHubUrl(input: string): string {
   const trimmed = input.trim();
@@ -76,12 +82,72 @@ export function resolveHubUrl(input: string): string {
   } catch {
     throw new Error(`invalid hub URL: ${trimmed || "(empty)"} — e.g. ${EXAMPLE_HUB_URL}`);
   }
-  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) {
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalHost(url.hostname))) {
     throw new Error(`hub URL must be https (got ${url.protocol}//${url.host})`);
   }
   if (url.username || url.password) throw new Error("hub URL must not contain credentials");
   return url.origin + url.pathname.replace(/\/+$/, "");
+}
+
+/** What `hub connect` may do with the approve link a hub sent: open it, or leave it and say why. */
+export type PairLinkCheck = { open: true; url: string } | { open: false; why: string };
+
+/**
+ * Checks the approve link before it is opened (SPEC §3.1). The link comes from the hub's answer, and opening it hands
+ * it to the system's `open` command, so it must lead back to the hub the person named: https on that hub's host and
+ * port. Plain http passes only for a hub on this machine. What gets opened is the parsed link, never the text as sent.
+ */
+export function checkPairLink(hubUrl: string, link: string): PairLinkCheck {
+  let hub: URL;
+  let url: URL;
+  try {
+    hub = new URL(hubUrl);
+    url = new URL(link);
+  } catch {
+    return { open: false, why: "it is not a web address" };
+  }
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalHost(url.hostname))) {
+    const what = url.protocol === "http:" ? `plain http to ${oneLine(url.host, 80)}` : `a ${oneLine(url.protocol, 40)} link`;
+    return { open: false, why: `it is ${what}, not https` };
+  }
+  if (url.host !== hub.host) return { open: false, why: `it leads to ${oneLine(url.host, 80)}, not to ${hub.host}` };
+  if (url.username || url.password) return { open: false, why: "it carries a user name or password" };
+  return { open: true, url: url.href };
+}
+
+/** The one line printed under every pairing code. */
+export const PAIR_CODE_WARNING = "approve only a code you see in your own terminal";
+
+export interface AnnouncePairingOptions {
+  /** False (`--no-open`): print the link, don't open it. */
+  open?: boolean;
+  /** Stands in for the system's browser opener (tests). */
+  openLink?: (url: string) => void;
+  print?: (line: string) => void;
+}
+
+/**
+ * Shows a pairing code and where to approve it. The hub's link is printed and opened only when it passes
+ * `checkPairLink`; otherwise the person gets the hub's own pairing page and the reason the link was left alone.
+ */
+export function announcePairing(
+  hubUrl: string,
+  pair: Pick<HubPairStartResponse, "code" | "verifyUrl">,
+  opts: AnnouncePairingOptions = {},
+): PairLinkCheck {
+  const print = opts.print ?? ((line: string) => console.log(line));
+  const link = checkPairLink(hubUrl, pair.verifyUrl);
+  print(`  pairing code: ${bold(oneLine(pair.code, 40))}`);
+  if (link.open) {
+    print(`  approve it in your browser: ${cyan(link.url)}`);
+  } else {
+    print(yellow(`  the hub's link was not opened: ${link.why}`));
+    print(`  open the hub's pairing page yourself and enter the code there: ${cyan(`${hubUrl}/pair`)}`);
+  }
+  print(yellow(`  ${PAIR_CODE_WARNING}`));
+  print("");
+  if (link.open && opts.open !== false) (opts.openLink ?? openBrowser)(link.url);
+  return link;
 }
 
 /** This machine's name as the board shows it: "seans-mac-studio". */
@@ -212,6 +278,8 @@ export interface HubConnectOptions {
   askShare?: (suggested: HubShareLevel) => Promise<HubShareLevel>;
   /** Injected for tests: the GitHub login `gh` reports. */
   readGithub?: () => Promise<string | undefined>;
+  /** Injected for tests: stands in for the system's browser opener. */
+  openLink?: (url: string) => void;
 }
 
 function askShareLevel(suggested: HubShareLevel): Promise<HubShareLevel> {
@@ -240,10 +308,7 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
       machine,
       share: knownShare,
       onCode: (pair) => {
-        console.log(`  pairing code: ${bold(pair.code)}`);
-        console.log(`  approve it in your browser: ${cyan(pair.verifyUrl)}`);
-        console.log("");
-        if (opts.open !== false) openBrowser(pair.verifyUrl);
+        announcePairing(hubUrl, pair, { open: opts.open, openLink: opts.openLink });
         spin = spinner("waiting for you to approve…");
       },
     });

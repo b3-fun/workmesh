@@ -193,9 +193,11 @@ struct TeamState: Decodable {
     let coord: CoordState?
     /// v2: handoffs offered to me or running here, and pending approvals (absent from older daemons).
     let delegate: DelegateState?
+    /// Machines that joined my account in the last day and weren't dismissed (none from older daemons).
+    let newDevices: [NewDeviceNotice]
 
     private enum K: String, CodingKey {
-        case enabled, hubUrl, boardUrl, hubName, deviceId, share, connected, halted, available, fetchedAt, error, pollMs, team, coord, delegate
+        case enabled, hubUrl, boardUrl, hubName, deviceId, share, connected, halted, available, fetchedAt, error, pollMs, team, coord, delegate, newDevices
     }
 
     init(from decoder: Decoder) throws {
@@ -215,6 +217,7 @@ struct TeamState: Decodable {
         team = c.lenient(TeamView.self, .team)
         coord = c.lenient(CoordState.self, .coord)
         delegate = c.lenient(DelegateState.self, .delegate)
+        newDevices = c.lossy(NewDeviceNotice.self, .newDevices)
     }
 
     /// What the footer names: the daemon's hub name, else the host without a
@@ -313,6 +316,46 @@ struct CoordMessage: Decodable, Identifiable {
         from = c.text(.from) ?? "A teammate"
         fromSession = c.text(.fromSession)
         ts = c.lenient(Double.self, .ts)
+    }
+}
+
+// MARK: - New machines on my account (inside GET /team)
+//
+// The hub names machines added to a person's account, and the daemon lists
+// each one for a day or until it is dismissed (POST /new-devices/dismiss). The
+// app posts one notification per machine and shows a row. Read leniently like
+// the rest of /team: an item without an id is dropped.
+
+struct NewDeviceNotice: Decodable, Identifiable {
+    let id: String
+    /// The machine's name, already on one line.
+    let machine: String
+    /// Where it joined from, when the hub said (`where` on the wire).
+    let place: String?
+    /// When it was added (epoch ms, hub clock); nil when the hub didn't say.
+    let pairedAt: Double?
+    /// The whole notice, as `workmesh status` prints it.
+    let text: String?
+
+    /// "Joined your account from Lisbon, Portugal (Example Telecom)".
+    var joined: String { "Joined your account" + (place.map { " from \($0)" } ?? "") }
+
+    private enum K: String, CodingKey {
+        case id, machine, pairedAt, text
+        case place = "where"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        guard let id = c.text(.id) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "new machine without an id"))
+        }
+        self.id = id
+        machine = c.text(.machine) ?? "An unnamed machine"
+        place = c.text(.place)
+        let at = c.lenient(Double.self, .pairedAt) ?? 0
+        pairedAt = at > 0 ? at : nil
+        text = c.text(.text)
     }
 }
 

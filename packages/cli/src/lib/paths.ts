@@ -128,6 +128,11 @@ export function sessionVersionsPath(): string {
   return path.join(stateDir(), "session-versions.json");
 }
 
+/** SPEC §47: the new machines on this person's account that the daemon already told them about (0600). */
+export function newDevicesPath(): string {
+  return path.join(stateDir(), "new-devices.json");
+}
+
 /** 0.12: the copy of the installed package `workmesh update` keeps until the new version passes its checks. */
 export function updateBackupDir(): string {
   return path.join(stateDir(), "update", "previous");

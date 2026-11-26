@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { hubSyncAcceptSchema } from "@workmesh/protocol";
 import type { HubApprovalAccepted, HubHandoffAccepted, HubSyncResponse } from "@workmesh/protocol";
@@ -5,8 +8,11 @@ import type { AgentSession, SessionEvent } from "@workmesh/core";
 import { CoordClient } from "../src/hub/coord";
 import { Delegate, SELF_HANDOFF_SENDER_DELAY_MS, decisionText, wakeText } from "../src/daemon/delegate";
 import type { DelegateSettings, HandoffRunnerLike } from "../src/daemon/delegate";
+import { AcceptedHere } from "../src/daemon/accepted-here";
+import { handoffHash } from "../src/daemon/handoff-text";
 import type { HandoffPlan } from "../src/daemon/handoff-text";
 import { CoordHooks, gateNote, guidance, knowledge } from "../src/daemon/coord-hooks";
+import { delegateSettings } from "../src/lib/config";
 
 /** v2 Delegate, relay side (docs/SPEC.md §31): gates, approvals, handoff policy and wake, by fixture. */
 
@@ -37,7 +43,9 @@ const BASE: HubSyncResponse = {
 
 type Reply = { status: number; body?: unknown } | Error;
 
-function harness(opts: { replies?: Reply[]; settings?: Partial<DelegateSettings>; shared?: boolean; runner?: HandoffRunnerLike } = {}) {
+function harness(
+  opts: { replies?: Reply[]; settings?: Partial<DelegateSettings>; shared?: boolean; runner?: HandoffRunnerLike; accepted?: AcceptedHere } = {},
+) {
   let now = T;
   const calls: Array<{ url: string; body?: unknown }> = [];
   const replies = [...(opts.replies ?? [])];
@@ -67,8 +75,9 @@ function harness(opts: { replies?: Reply[]; settings?: Partial<DelegateSettings>
     getSession: (k) => sessions.get(k),
     isShared: () => opts.shared ?? true,
     repoOf: (dir) => (dir.startsWith(ROOT) ? "b3-fun/b3os-beta" : undefined),
-    settings: () => ({ wake: true, accept: "auto-self", customGates: [], ...opts.settings }),
+    settings: () => ({ ...delegateSettings({}), ...opts.settings }),
     runner: opts.runner,
+    accepted: opts.accepted,
     now: () => now,
     log: (m) => logs.push(m),
   });
@@ -319,7 +328,7 @@ describe("wake (SPEC §31)", () => {
       getSession: (k) => (k === "codex:t-0123456789" ? { key: k, source: "codex", sessionId: "t-0123456789", state: "idle", agents: 1, startedAt: T, updatedAt: T, stateSince: T } : undefined),
       isShared: () => true,
       repoOf: () => undefined,
-      settings: () => ({ wake: true, accept: "auto-self", customGates: [] }),
+      settings: () => delegateSettings({}),
       codexWake: async (id, text) => {
         tried.push([id, text]);
         return ok;
@@ -378,6 +387,9 @@ class FakeRunner implements HandoffRunnerLike {
 
 type Handoffs = NonNullable<HubSyncResponse["handoffs"]>;
 
+/** A fixture as the relay reads it off the wire. */
+const read = (h: unknown): HubHandoffAccepted => h as HubHandoffAccepted;
+
 const handoff = (over: Record<string, unknown> = {}) => ({
   id: "h_1",
   from: { person: "Sean", sessionKey: `${OTHER_DEV}:claude-code:z1`, sessionName: "laptop-agent" },
@@ -390,18 +402,33 @@ const handoff = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("handoffs (SPEC §31)", () => {
+  it("the default is ask: a handoff the person sent themselves waits for them, like anyone else's", async () => {
+    expect(delegateSettings({}).accept).toBe("ask");
+    const runner = new FakeRunner();
+    const x = harness({ runner });
+    // From the person's own other machine, and from an agent session on this one.
+    x.sync({ handoffs: [handoff(), handoff({ id: "h_2", from: { person: "Sean", sessionKey: ME } })] as unknown as Handoffs });
+    x.tick(SELF_HANDOFF_SENDER_DELAY_MS + 1);
+    x.sync({ handoffs: [handoff(), handoff({ id: "h_2", from: { person: "Sean", sessionKey: ME } })] as unknown as Handoffs });
+    await flush();
+    expect(x.calls).toEqual([]);
+    expect(runner.ran).toEqual([]);
+    // The person sees both as waiting for their Accept.
+    expect(x.d.summary(() => undefined)!.handoffs.map((h) => [h.id, h.status])).toEqual([["h_1", "offered"], ["h_2", "offered"]]);
+  });
+
   it("auto-self: a handoff the person sent from another machine is accepted here and started", async () => {
     const runner = new FakeRunner();
-    const x = harness({ runner, replies: [{ status: 200, body: { ok: true, handoff: handoff({ status: "accepted", device: DEV }) } }] });
+    const x = harness({ runner, settings: { accept: "auto-self" }, replies: [{ status: 200, body: { ok: true, handoff: handoff({ status: "accepted", device: DEV }) } }] });
     x.sync({ handoffs: [handoff()] as unknown as Handoffs });
     await flush();
     expect(x.calls[0]).toEqual({ url: "https://hub.test/relay/handoffs", body: { action: "accept", id: "h_1" } });
     expect(runner.ran).toEqual(["h_1"]);
   });
 
-  it("the sending machine gives the person's other machines 20 s first", async () => {
+  it("auto-self: the sending machine gives the person's other machines 20 s first", async () => {
     const runner = new FakeRunner();
-    const x = harness({ runner, replies: [{ status: 200, body: { ok: true, handoff: handoff({ status: "accepted", device: DEV }) } }] });
+    const x = harness({ runner, settings: { accept: "auto-self" }, replies: [{ status: 200, body: { ok: true, handoff: handoff({ status: "accepted", device: DEV }) } }] });
     const fromHere = handoff({ from: { person: "Sean", sessionKey: ME } }) as unknown as Handoffs[number];
     x.sync({ handoffs: [fromHere] });
     await flush();
@@ -412,33 +439,237 @@ describe("handoffs (SPEC §31)", () => {
     expect(x.calls.map((c) => (c.body as { action: string }).action)).toEqual(["accept"]);
   });
 
-  it("someone else's handoff waits for the person; ask and never policies; another device's accept", async () => {
-    const runner = new FakeRunner();
-    const x = harness({ runner });
-    x.sync({ handoffs: [handoff({ from: { person: "An", sessionKey: AN } })] as unknown as Handoffs });
-    const ask = harness({ runner, settings: { accept: "ask" } });
-    ask.sync({ handoffs: [handoff()] as unknown as Handoffs });
-    await flush();
-    expect(x.calls).toEqual([]);
-    expect(ask.calls).toEqual([]);
-    // Accepted on the board (no device): this machine may start it; on another device: not here.
-    x.sync({ handoffs: [handoff({ status: "accepted", from: { person: "An", sessionKey: AN } })] as unknown as Handoffs });
-    expect(runner.ran).toEqual(["h_1"]);
-    const r2 = new FakeRunner();
-    const y = harness({ runner: r2 });
-    y.sync({ handoffs: [handoff({ status: "accepted", device: OTHER_DEV })] as unknown as Handoffs });
-    expect(r2.ran).toEqual([]);
-    const r3 = new FakeRunner();
-    const never = harness({ runner: r3, settings: { accept: "never" } });
-    never.sync({ handoffs: [handoff({ status: "accepted" })] as unknown as Handoffs });
-    expect(r3.ran).toEqual([]);
+  it("someone else's handoff waits for the person under every policy", async () => {
+    const fromAn = handoff({ from: { person: "An", sessionKey: AN } });
+    for (const accept of ["ask", "auto-self", "never"] as const) {
+      const runner = new FakeRunner();
+      const x = harness({ runner, settings: { accept } });
+      x.sync({ handoffs: [fromAn] as unknown as Handoffs });
+      await flush();
+      expect(x.calls, accept).toEqual([]);
+      expect(runner.ran, accept).toEqual([]);
+    }
   });
 
-  it("accepted for this machine but it can't run it: says so on the hub, once", async () => {
+  it("a handoff the hub lists as accepted, that this machine never accepted, is not started: it waits for \"run it here\"", async () => {
+    const runner = new FakeRunner();
+    runner.planned = { agent: "claude", permissionMode: "auto", where: "worktree" };
+    const x = harness({ runner });
+    const onBoard = handoff({ id: "h_board", status: "accepted", from: { person: "An", sessionKey: AN } });
+    const noRecord = handoff({ id: "h_mine", status: "accepted", device: DEV, from: { person: "An", sessionKey: AN } });
+    const elsewhere = handoff({ id: "h_other", status: "accepted", device: OTHER_DEV, from: { person: "An", sessionKey: AN } });
+    const list = [onBoard, noRecord, elsewhere] as unknown as Handoffs;
+    x.sync({ handoffs: list });
+    x.tick(120_000);
+    x.sync({ handoffs: list });
+    await flush();
+    // Nothing starts, and the hub is told nothing (no start, no fail).
+    expect(runner.ran).toEqual([]);
+    expect(x.calls).toEqual([]);
+    expect(list.map((h) => x.d.waitsToRunHere(read(h)))).toEqual([true, true, false]);
+    // The menu bar gets both that may run here, with the question and what a yes starts. The other machine's is not this one's.
+    const here = process.platform === "darwin" ? "this Mac" : "this machine";
+    const onAccept = { agent: "claude", permissionMode: "auto", text: `Starts a Claude Code agent on ${here} in auto mode, in a new worktree of b3-fun/b3os-beta.` };
+    expect(x.d.summary(() => undefined)!.handoffs.map((h) => ({ id: h.id, status: h.status, runningHere: h.runningHere, runHere: h.runHere, onAccept: h.onAccept }))).toEqual([
+      { id: "h_board", status: "accepted", runningHere: false, runHere: "Accepted on the board: run it here?", onAccept },
+      { id: "h_mine", status: "accepted", runningHere: false, runHere: "Accepted, but this machine has no record of your accept: run it here?", onAccept },
+    ]);
+  });
+
+  it("after the person's \"run it here\" it starts, once, and the record says where the yes came from", async () => {
+    const runner = new FakeRunner();
+    const accepted = new AcceptedHere();
+    const x = harness({ runner, accepted });
+    const onBoard = handoff({ status: "accepted", from: { person: "An", sessionKey: AN } }) as unknown as Handoffs[number];
+    x.sync({ handoffs: [onBoard] });
+    expect(runner.ran).toEqual([]);
+    x.d.runHere(read(onBoard), "menubar");
+    expect(runner.ran).toEqual(["h_1"]);
+    expect(accepted.list()).toEqual([{ id: "h_1", at: T, by: "menubar", hash: handoffHash(read(onBoard)) }]);
+    expect(x.d.waitsToRunHere(read(onBoard))).toBe(false);
+    // A second yes, and later syncs, start nothing more.
+    x.d.runHere(read(onBoard), "menubar");
+    x.tick(120_000);
+    x.sync({ handoffs: [onBoard] });
+    expect(runner.ran).toEqual(["h_1"]);
+    const row = x.d.summary(() => undefined)!.handoffs[0]!;
+    expect(row).toMatchObject({ id: "h_1", runningHere: true });
+    expect("runHere" in row).toBe(false);
+    // A handoff that doesn't wait (offered, or another machine's) is not started by a "run it here".
+    const y = harness({ runner: new FakeRunner() });
+    const offered = handoff({ from: { person: "An", sessionKey: AN } }) as unknown as Handoffs[number];
+    const other = handoff({ id: "h_2", status: "accepted", device: OTHER_DEV }) as unknown as Handoffs[number];
+    y.sync({ handoffs: [offered, other] });
+    y.d.runHere(read(offered));
+    y.d.runHere(read(other));
+    expect(y.d.summary(() => undefined)!.handoffs.map((h) => [h.id, h.runningHere])).toEqual([["h_1", false]]);
+  });
+
+  it("runAccepted auto: this machine starts whatever the hub lists as accepted for its person, as before", async () => {
+    const runner = new FakeRunner();
+    const x = harness({ runner, settings: { runAccepted: "auto" } });
+    const onBoard = handoff({ status: "accepted", from: { person: "An", sessionKey: AN } }) as unknown as Handoffs[number];
+    const elsewhere = handoff({ id: "h_other", status: "accepted", device: OTHER_DEV }) as unknown as Handoffs[number];
+    x.sync({ handoffs: [onBoard, elsewhere] });
+    expect(runner.ran).toEqual(["h_1"]);
+    expect(x.d.waitsToRunHere(read(onBoard))).toBe(false);
+    // `never` still runs none, and nothing waits for a yes there.
+    const r2 = new FakeRunner();
+    const never = harness({ runner: r2, settings: { accept: "never", runAccepted: "auto" } });
+    never.sync({ handoffs: [onBoard] });
+    expect(r2.ran).toEqual([]);
+    const r3 = new FakeRunner();
+    const neverConfirm = harness({ runner: r3, settings: { accept: "never" } });
+    neverConfirm.sync({ handoffs: [onBoard] });
+    expect(neverConfirm.d.waitsToRunHere(read(onBoard))).toBe(false);
+    expect(neverConfirm.d.summary(() => undefined)!.handoffs).toEqual([]);
+  });
+
+  it("an accept on this machine is in the record: the person's, and the auto-self policy's", async () => {
+    // The person's accept (the CLI or the menu bar made the hub call): it starts at once and at later syncs.
+    const runner = new FakeRunner();
+    const accepted = new AcceptedHere();
+    const x = harness({ runner, accepted });
+    const mine = handoff({ status: "accepted", device: DEV, from: { person: "An", sessionKey: AN } }) as unknown as Handoffs[number];
+    x.d.accepted(read(mine), "cli");
+    expect(runner.ran).toEqual(["h_1"]);
+    expect(accepted.list()).toEqual([{ id: "h_1", at: T, by: "cli", hash: handoffHash(read(mine)) }]);
+    // The policy's accept.
+    const r2 = new FakeRunner();
+    const byPolicy = new AcceptedHere();
+    const y = harness({ runner: r2, accepted: byPolicy, settings: { accept: "auto-self" }, replies: [{ status: 200, body: { ok: true, handoff: handoff({ status: "accepted", device: DEV }) } }] });
+    y.sync({ handoffs: [handoff()] as unknown as Handoffs });
+    await flush();
+    expect(r2.ran).toEqual(["h_1"]);
+    expect(byPolicy.list()).toEqual([{ id: "h_1", at: T, by: "policy", hash: handoffHash(read(handoff())) }]);
+  });
+
+  it("the record survives a daemon restart, and an id goes when the hub stops listing its handoff", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-accepted-"));
+    try {
+      const file = path.join(dir, "state", "handoffs-accepted.json");
+      const mine = handoff({ status: "accepted", device: DEV, from: { person: "An", sessionKey: AN } }) as unknown as Handoffs[number];
+      // Accepted here while this machine had no room to run it.
+      const busy = new FakeRunner();
+      busy.room = false;
+      const before = harness({ runner: busy, accepted: new AcceptedHere(file) });
+      before.d.accepted(read(mine), "cli");
+      expect(busy.ran).toEqual([]);
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+      // A new daemon reads the record and starts it at its first sync. One without the record would not.
+      const runner = new FakeRunner();
+      const after = harness({ runner, accepted: new AcceptedHere(file) });
+      after.sync({ handoffs: [mine] });
+      expect(runner.ran).toEqual(["h_1"]);
+      const blank = new FakeRunner();
+      harness({ runner: blank }).sync({ handoffs: [mine] });
+      expect(blank.ran).toEqual([]);
+      // A hub that sends no handoff list (it predates them) prunes nothing. One that stops listing the handoff does.
+      after.sync({ handoffs: undefined });
+      expect(new AcceptedHere(file).has("h_1")).toBe(true);
+      after.sync({ handoffs: [] });
+      expect(new AcceptedHere(file).list()).toEqual([]);
+      // Listed as accepted again later, it waits for a new yes.
+      const again = new FakeRunner();
+      const later = harness({ runner: again, accepted: new AcceptedHere(file) });
+      later.sync({ handoffs: [mine] });
+      expect(again.ran).toEqual([]);
+      expect(later.d.waitsToRunHere(read(mine))).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an accept covers the text that was listed: the same text starts, changed text waits for a new \"run it here\"", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-accepted-"));
+    try {
+      const file = path.join(dir, "handoffs-accepted.json");
+      const listed = handoff({ from: { person: "An", sessionKey: AN }, issue: "B3-7168", context: "Start from PR 212." });
+      const mine = { ...listed, status: "accepted", device: DEV } as unknown as Handoffs[number];
+      // Accepted here while this machine had no room to run it.
+      const busy = new FakeRunner();
+      busy.room = false;
+      harness({ runner: busy, accepted: new AcceptedHere(file) }).d.accepted(read(mine), "cli", read(listed));
+      const record = fs.readFileSync(file, "utf8");
+      expect(JSON.parse(record)).toEqual([{ id: "h_1", at: T, by: "cli", hash: handoffHash(read(listed)) }]);
+      // The same text at a later sync: it starts.
+      const same = new FakeRunner();
+      harness({ runner: same, accepted: new AcceptedHere(file) }).sync({ handoffs: [mine] });
+      expect(same.ran).toEqual(["h_1"]);
+      // Listed with another task, context, repo or issue: it is not the handoff that was accepted.
+      const changes = [{ task: "Delete the release branch" }, { context: "Start from PR 999." }, { context: undefined }, { repo: "b3-fun/other" }, { issue: "B3-1" }];
+      for (const over of changes) {
+        const what = JSON.stringify(over);
+        const runner = new FakeRunner();
+        const x = harness({ runner, accepted: new AcceptedHere(file) });
+        const changed = { ...mine, ...over } as unknown as Handoffs[number];
+        x.sync({ handoffs: [changed] });
+        x.tick(120_000);
+        x.sync({ handoffs: [changed] });
+        await flush();
+        // Nothing starts, and the hub is told nothing.
+        expect(runner.ran, what).toEqual([]);
+        expect(x.calls, what).toEqual([]);
+        // It is listed as waiting again, and says why.
+        expect(x.d.runHereWhy(read(changed)), what).toBe("changed");
+        expect(x.d.runHereAsk(read(changed)), what).toBe("accepted, but its text changed after your accept: run it here?");
+        expect(x.d.summary(() => undefined)!.handoffs[0], what).toMatchObject({
+          id: "h_1",
+          status: "accepted",
+          runningHere: false,
+          runHere: "Accepted, but its text changed after your accept: run it here?",
+        });
+        // The daemon's log says so, once.
+        expect(x.logs.filter((l) => l.includes("changed")), what).toEqual([
+          'handoff h_1: its text changed after it was accepted on this machine; not starting it (it waits for "run it here")',
+        ]);
+      }
+      expect(fs.readFileSync(file, "utf8")).toBe(record);
+      // The person reads the new text and says "run it here": it starts, and the record covers the new text.
+      const runner = new FakeRunner();
+      const x = harness({ runner, accepted: new AcceptedHere(file) });
+      const changed = { ...mine, task: "Delete the release branch" } as unknown as Handoffs[number];
+      x.sync({ handoffs: [changed] });
+      x.d.runHere(read(changed), "menubar");
+      expect(runner.ran).toEqual(["h_1"]);
+      expect(new AcceptedHere(file).get("h_1")).toEqual({ id: "h_1", at: T, by: "menubar", hash: handoffHash(read(changed)) });
+      // The hub answers the accept itself with other text than this machine listed: nothing starts.
+      const r2 = new FakeRunner();
+      const y = harness({ runner: r2 });
+      const answer = { ...listed, status: "accepted", device: DEV, task: "Something else entirely" };
+      y.sync({ handoffs: [listed] as unknown as Handoffs });
+      y.d.accepted(read(answer), "menubar", read(listed));
+      expect(r2.ran).toEqual([]);
+      expect(y.logs.filter((l) => l.includes("changed"))).toHaveLength(1);
+      expect(y.d.runHereWhy(read(answer))).toBe("changed");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a record written before hashes were kept still loads, and its ids match whatever is listed", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-accepted-"));
+    try {
+      const file = path.join(dir, "handoffs-accepted.json");
+      fs.writeFileSync(file, JSON.stringify([{ id: "h_1", at: T - 60_000, by: "cli" }]));
+      const mine = handoff({ status: "accepted", device: DEV, from: { person: "An", sessionKey: AN } }) as unknown as Handoffs[number];
+      const runner = new FakeRunner();
+      const x = harness({ runner, accepted: new AcceptedHere(file) });
+      expect(x.d.runHereWhy(read(mine))).toBeUndefined();
+      x.sync({ handoffs: [mine] });
+      expect(runner.ran).toEqual(["h_1"]);
+      expect(x.logs.filter((l) => l.includes("changed"))).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepted on this machine but it can't run it: says so on the hub, once", async () => {
     const runner = new FakeRunner();
     runner.cant = "no checkout of b3-fun/b3os-beta here";
     const x = harness({ runner });
     const h = handoff({ status: "accepted", device: DEV }) as unknown as Handoffs[number];
+    x.d.accepted(read(h), "cli");
     x.sync({ handoffs: [h] });
     x.sync({ handoffs: [h] });
     await flush();
@@ -446,6 +677,11 @@ describe("handoffs (SPEC §31)", () => {
       { url: "https://hub.test/relay/handoffs", body: { action: "fail", id: "h_1", note: "Couldn't start on this machine: no checkout of b3-fun/b3os-beta here" } },
     ]);
     expect(runner.ran).toEqual([]);
+    // One the hub lists as accepted for this machine, which this machine never accepted, is left alone: no fail.
+    const y = harness({ runner });
+    y.sync({ handoffs: [h] });
+    await flush();
+    expect(y.calls).toEqual([]);
   });
 
   it("the sending session hears how its handoff went (not what was already so at start)", () => {

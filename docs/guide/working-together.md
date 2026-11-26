@@ -112,11 +112,12 @@ who held it releases it (Release on the board, or "resume" on Linear). Your menu
 
 ## Handoffs
 
-`handoff` gives a task to a teammate, or to `me` for another of your machines. The recipient accepts it on the board,
-in the menu bar, or with `workmesh handoffs accept <id>`. Their machine then finds its checkout of the repo, makes a git
-worktree on a fresh `workmesh/handoff-…` branch from the default branch (their working tree is never touched), and
-starts `claude -p` (or `codex exec`) there in the background. The new session shows on the board, and the sender's
-agent hears when it is taken and when it finishes.
+`handoff` gives a task to a teammate, or to `me` for another of your machines. The recipient accepts it in the menu
+bar or with `workmesh handoffs accept <id>`. (One accepted on the board waits for a second yes on the machine that
+should run it, see below.) Their machine then finds its checkout of the repo and makes a git worktree on a fresh
+`workmesh/handoff-…` branch from the default branch, so their working tree is never touched. It starts `claude -p` (or
+`codex exec`) there in the background. The new session shows on the board, and the sender's agent hears when it is
+taken and when it finishes.
 
 On 11-25 Sean handed An a task. An accepted from the CLI at 13:35:07, his machine started the agent in a new worktree
 about 12 seconds later, and it committed `f558ac1` at 13:35:30. A handoff agent is told to commit on its branch, push,
@@ -156,9 +157,25 @@ menu bar or the board.
 In the menu bar, **Show all** opens the whole task and context. For a long handoff the first click on **Accept** opens
 them too, and the button then reads **Accept and run**. The line above the buttons says what starts.
 
-Which handoffs run without a click is your choice, `workmesh handoffs policy`: `auto-self` (the default: ones you send
-yourself run at once; teammates' wait for your Accept), `ask`, or `never`. If a handoff can't find your checkout, add
-where your repos live: `workmesh roots add ~/code`.
+Your machine starts only handoffs that were accepted on it: at its terminal, in its menu bar, or by your own
+`auto-self` policy. The hub saying "accepted" is not enough. So a handoff you accepted on the board is not started on
+its own. `workmesh handoffs` and the menu bar show it as "accepted on the board: run it here?". `workmesh handoffs run
+<id>` prints the whole handoff and what starts, then asks. In the menu bar it takes the same two steps as Accept. To get
+the old behaviour back, set `handoffs.runAccepted` to `auto` in the config. That trusts the hub's word that you accepted.
+
+Your accept covers the text you read. If the hub later lists the handoff with another task, context, repo or issue, it
+is not started. It shows as "accepted, but its text changed after your accept: run it here?" until you read the new
+text and confirm.
+
+The started agent gets the Workmesh daemon's environment without the variables whose names look like secrets, such as
+`GITHUB_TOKEN` or `AWS_SECRET_ACCESS_KEY`. It keeps what Claude Code or Codex needs to sign in. If a handoff needs one
+more, add its name to `handoffs.env` in the config. The run's log (`agent.log` under
+`~/.local/state/workmesh/handoffs/`) names what was left out.
+
+By default every handoff waits for your Accept, your own too. That is the `ask` policy. `workmesh handoffs policy
+auto-self` lets handoffs you send yourself start with no click. It trusts every machine and token of yours: each of
+them, and any agent running there, can then start an agent on this machine. `never` runs none here. If a handoff can't
+find your checkout, add where your repos live: `workmesh roots add ~/code`.
 
 ## Approval gates
 

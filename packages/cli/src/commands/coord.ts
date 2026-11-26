@@ -229,11 +229,31 @@ const handoffsDeps: HandoffsDeps = {
   print: (line) => console.log(line),
 };
 
+/** The two answers that start an agent on this machine, and the words each one uses. */
+const STARTS = {
+  accept: {
+    can: "canAccept",
+    no: "Not accepted",
+    question: "Accept and start an agent?",
+    elsewhere: { json: "Run it without --json, or accept in the menu bar or on the board.", pipe: "Accept it in your own terminal, in the menu bar or on the board." },
+    notWaiting: (id: string) => `${id} isn't waiting for your answer.`,
+    left: (id: string) => `${id} still waits for you (\`workmesh handoffs decline ${id}\` declines it).`,
+  },
+  run: {
+    can: "canRun",
+    no: "Not started",
+    question: "Run it here and start an agent?",
+    elsewhere: { json: "Run it without --json, or confirm it in the menu bar.", pipe: "Confirm it in your own terminal or in the menu bar." },
+    notWaiting: (id: string) => `${id} isn't waiting to run on this machine.`,
+    left: (id: string) => `${id} still waits: this machine or another of yours can run it.`,
+  },
+} as const;
+
 /**
- * `workmesh handoffs [list | show <id> | accept <id> | decline <id>]`. Accepting starts an agent on this machine with
- * someone else's text as its instructions. So `accept` always prints the whole handoff and what will start, then
- * asks. No option skips the question. Without a terminal to ask in, nothing is accepted here: the menu bar and the
- * board show the handoff too.
+ * `workmesh handoffs [list | show <id> | accept <id> | decline <id> | run <id>]`. Accepting starts an agent on this
+ * machine with someone else's text as its instructions. So does `run`, for a handoff that was accepted somewhere
+ * else. Both always print the whole handoff and what will start, then ask. No option skips the question. Without a
+ * terminal to ask in, nothing starts here: the menu bar shows the handoff too.
  */
 export async function runHandoffs(
   action: string | undefined,
@@ -244,13 +264,16 @@ export async function runHandoffs(
   const caller = callerOf("cli");
   const args = { action: action ?? "list", ...(id ? { id } : {}), ...(opts.note ? { note: opts.note } : {}) };
   const send = async (): Promise<void> => report(await deps.call("handoffs", args, caller), opts, deps.print);
-  if (action !== "accept") return send();
-  if (!id) return report({ ok: false, text: "`workmesh handoffs accept` needs the handoff's id (`workmesh handoffs` lists them)." }, opts, deps.print);
+  if (action !== "accept" && action !== "run") return send();
+  const words = STARTS[action];
+  if (!id) return report({ ok: false, text: `\`workmesh handoffs ${action}\` needs the handoff's id (\`workmesh handoffs\` lists them).` }, opts, deps.print);
   if (opts.json || !deps.isTerminal()) {
     const why = opts.json ? "--json leaves no room for the question" : "there is no terminal to ask in";
-    const where = opts.json ? "Run it without --json, or accept in the menu bar or on the board." : "Accept it in your own terminal, in the menu bar or on the board.";
     return report(
-      { ok: false, text: `Not accepted: ${why}. \`workmesh handoffs accept\` shows the whole handoff and asks before it starts an agent. ${where}` },
+      {
+        ok: false,
+        text: `${words.no}: ${why}. \`workmesh handoffs ${action}\` shows the whole handoff and asks before it starts an agent. ${opts.json ? words.elsewhere.json : words.elsewhere.pipe}`,
+      },
       opts,
       deps.print,
     );
@@ -259,11 +282,11 @@ export async function runHandoffs(
   if (!view.ok) return report(view, opts, deps.print);
   deps.print(view.text);
   deps.print("");
-  if ((view.data as { canAccept?: unknown } | undefined)?.canAccept !== true) {
-    return report({ ok: false, text: `Not accepted: ${id} isn't waiting for your answer.` }, opts, deps.print);
+  if ((view.data as Record<string, unknown> | undefined)?.[words.can] !== true) {
+    return report({ ok: false, text: `${words.no}: ${words.notWaiting(id)}` }, opts, deps.print);
   }
-  if (!(await deps.ask("Accept and start an agent?"))) {
-    deps.print(`Not accepted. ${id} still waits for you (\`workmesh handoffs decline ${id}\` declines it).`);
+  if (!(await deps.ask(words.question))) {
+    deps.print(`${words.no}. ${words.left(id)}`);
     return;
   }
   return send();

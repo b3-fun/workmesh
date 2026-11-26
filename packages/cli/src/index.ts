@@ -417,16 +417,16 @@ program
   .action(wrap(runHandoff));
 const handoffs = program
   .command("handoffs")
-  .description("Handoffs offered to you and sent by you; read one in full, accept or decline it")
-  .argument("[action]", "list | show | accept | decline")
-  .argument("[id]", "the handoff, for show, accept and decline")
+  .description("Handoffs offered to you and sent by you; read one in full, accept or decline it, or run one accepted elsewhere")
+  .argument("[action]", "list | show | accept | decline | run")
+  .argument("[id]", "the handoff, for show, accept, decline and run")
   .option("--note <text>", "why (decline)")
   .option("--json", "machine-readable output")
   .action(wrap((action: string | undefined, id: string | undefined, opts: { note?: string; json?: boolean }) => runHandoffs(action, id, opts)));
 handoffs
   .command("policy")
-  .description("Which handoffs this machine takes without a click: auto-self (default), ask, never")
-  .argument("[policy]", "auto-self | ask | never")
+  .description("Which handoffs this machine takes without a click: ask (the default: none), auto-self (your own), never")
+  .argument("[policy]", "ask | auto-self | never")
   .action(wrap(runHandoffPolicy));
 program
   .command("roots")

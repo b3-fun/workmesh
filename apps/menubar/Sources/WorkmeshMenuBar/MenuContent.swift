@@ -376,7 +376,8 @@ struct MenuContent: View {
     /// the daemon's line about what starts under it. A short task is shown
     /// whole. A longer one, or one with a context, shows two lines and "Show
     /// all"; its Accept first opens the whole text and then reads "Accept and
-    /// run".
+    /// run". A handoff accepted somewhere else, such as on the board, starts
+    /// nothing here until "Run here", which takes the same two steps.
     private func handoffRow(_ h: DelegateHandoff, hubNow: Date) -> some View {
         let from = h.fromSession.map { "\(h.from) (\($0))" } ?? h.from
         let open = model.openHandoffs.contains(h.id)
@@ -404,6 +405,14 @@ struct MenuContent: View {
                         if let more { rowLink(more).padding(.top, 1) }
                     }
                 } else {
+                    // Accepted somewhere else: the daemon's question, and one answer.
+                    if let question = h.runHere, h.waitsToRun {
+                        Text(question)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 1)
+                    }
                     if allInView, let start = h.onAccept {
                         Text(Self.withCode(start.text))
                             .font(.system(size: 11))
@@ -411,8 +420,15 @@ struct MenuContent: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 2)
                     }
-                    delegateActions(h.id, yes: allInView && h.onAccept?.agent != nil ? "Accept and run" : "Accept", no: "Decline", link: more) { yes in
-                        if yes { model.acceptHandoff(h) } else { model.declineHandoff(h.id) }
+                    if h.waitsToRun {
+                        // An ellipsis while the click opens the text first, as in a menu.
+                        delegateActions(h.id, yes: allInView ? "Run here" : "Run here…", no: nil, link: more) { _ in
+                            model.runHandoffHere(h)
+                        }
+                    } else {
+                        delegateActions(h.id, yes: allInView && h.onAccept?.agent != nil ? "Accept and run" : "Accept", no: "Decline", link: more) { yes in
+                            if yes { model.acceptHandoff(h) } else { model.declineHandoff(h.id) }
+                        }
                     }
                 }
             }
@@ -426,7 +442,7 @@ struct MenuContent: View {
         .padding(.vertical, 4)
         .help([from + " handed you: " + String(Self.oneLine(h.task).prefix(300)),
                [h.repo, h.issue].compactMap { $0 }.joined(separator: " · "),
-               h.runningHere ? "Running on this Mac." : (h.onAccept?.text ?? "Accept starts an agent for it on this Mac.")]
+               h.runningHere ? "Running on this Mac." : (h.onAccept?.text ?? (h.waitsToRun ? "Run here starts an agent for it on this Mac." : "Accept starts an agent for it on this Mac."))]
               .filter { !$0.isEmpty }.joined(separator: "\n"))
         .accessibilityElement(children: .contain)
     }
@@ -478,14 +494,14 @@ struct MenuContent: View {
 
     /// The two answers, or what was answered, plus the daemon's text for a call that failed.
     @ViewBuilder
-    private func delegateActions(_ id: String, yes: String, no: String, link: RowLink? = nil, answer: @escaping (Bool) -> Void) -> some View {
+    private func delegateActions(_ id: String, yes: String, no: String?, link: RowLink? = nil, answer: @escaping (Bool) -> Void) -> some View {
         if let done = model.delegateAnswered[id] {
             delegateNote(done)
         } else {
             HStack(spacing: 6) {
                 Group {
                     Button(yes) { answer(true) }
-                    Button(no) { answer(false) }
+                    if let no { Button(no) { answer(false) } }
                 }
                 .controlSize(.small)
                 .disabled(model.delegateBusy.contains(id))

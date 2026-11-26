@@ -21,6 +21,21 @@ const VIEW = [
 ].join("\n");
 
 const ACCEPTED: CoordOpResult = { ok: true, text: "Accepted h_1: this machine starts an agent for it." };
+const RUNNING: CoordOpResult = { ok: true, text: "Running h_1 here: this machine starts an agent for it." };
+
+/** The full view of a handoff that was accepted on the board and waits for "run it here". */
+const WAITING_VIEW = [
+  "Handoff h_1 · accepted on the board: run it here? · sent 6 min ago",
+  "From:  Alex (their agent docs-01)",
+  "To:    Sam",
+  "Repo:  example/app",
+  "",
+  "Task from Alex:",
+  "│ Fix the typo in the README",
+  "",
+  "Running it here starts a Claude Code agent on this Mac in auto mode, in a new worktree of example/app.",
+].join("\n");
+const WAITING: CoordOpResult = { ok: true, text: WAITING_VIEW, data: { handoff: { id: "h_1" }, canAccept: false, canRun: true } };
 
 function harness(o: { terminal?: boolean; answer?: boolean; show?: CoordOpResult; accept?: CoordOpResult } = {}) {
   const calls: Array<{ op: string; args: Record<string, unknown>; client?: string }> = [];
@@ -31,6 +46,7 @@ function harness(o: { terminal?: boolean; answer?: boolean; show?: CoordOpResult
       calls.push({ op, args, client: caller.client });
       if (args.action === "show") return o.show ?? { ok: true, text: VIEW, data: { handoff: { id: "h_1" }, canAccept: true } };
       if (args.action === "accept") return o.accept ?? ACCEPTED;
+      if (args.action === "run") return o.accept ?? RUNNING;
       if (args.action === "decline") return { ok: true, text: "Declined h_1." };
       return { ok: true, text: "- h_1 · offered · from Alex · example/app: Fix the typo in the README" };
     },
@@ -136,6 +152,69 @@ describe("workmesh handoffs accept", () => {
     const x = harness({ answer: true, accept: { ok: false, text: refusal } });
     await runHandoffs("accept", "h_1", {}, x.deps);
     expect(x.seen.at(-1)).toBe(refusal);
+    expect(process.exitCode).toBe(1);
+  });
+});
+
+describe("workmesh handoffs run (a handoff accepted somewhere else)", () => {
+  it("prints the whole handoff and what starts, then asks, and starts only on yes", async () => {
+    const x = harness({ answer: true, show: WAITING });
+    await runHandoffs("run", "h_1", {}, x.deps);
+    expect(x.calls).toEqual([
+      { op: "handoffs", args: { action: "show", id: "h_1" }, client: "cli" },
+      { op: "handoffs", args: { action: "run", id: "h_1" }, client: "cli" },
+    ]);
+    expect(x.seen).toEqual([WAITING_VIEW, "", "? Run it here and start an agent?", RUNNING.text]);
+    expect(process.exitCode).toBeUndefined();
+    const no = harness({ answer: false, show: WAITING });
+    await runHandoffs("run", "h_1", {}, no.deps);
+    expect(no.calls.map((c) => c.args.action)).toEqual(["show"]);
+    expect(no.seen.at(-1)).toBe("Not started. h_1 still waits: this machine or another of yours can run it.");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("without a terminal, or with --json, nothing starts and no call is made; no option skips the question", async () => {
+    const piped = harness({ terminal: false, answer: true, show: WAITING });
+    await runHandoffs("run", "h_1", { yes: true } as Parameters<typeof runHandoffs>[2], piped.deps);
+    expect(piped.calls).toEqual([]);
+    expect(piped.seen).toEqual([
+      "Not started: there is no terminal to ask in. `workmesh handoffs run` shows the whole handoff and asks before it starts an agent. Confirm it in your own terminal or in the menu bar.",
+    ]);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+    const json = harness({ terminal: true, answer: true, show: WAITING });
+    await runHandoffs("run", "h_1", { json: true }, json.deps);
+    expect(json.calls).toEqual([]);
+    expect(JSON.parse(json.seen.join("\n"))).toEqual({
+      ok: false,
+      text: "Not started: --json leaves no room for the question. `workmesh handoffs run` shows the whole handoff and asks before it starts an agent. Run it without --json, or confirm it in the menu bar.",
+    });
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("doesn't ask about a handoff that isn't waiting to run here; an agent caller gets the daemon's refusal", async () => {
+    // Offered, not yet accepted: `run` is not the answer for it.
+    const offered = harness({ answer: true });
+    await runHandoffs("run", "h_1", {}, offered.deps);
+    expect(offered.calls.map((c) => c.args.action)).toEqual(["show"]);
+    expect(offered.seen.at(-1)).toBe("Not started: h_1 isn't waiting to run on this machine.");
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+    // And `accept` is not the answer for one that waits to run here.
+    const waiting = harness({ answer: true, show: WAITING });
+    await runHandoffs("accept", "h_1", {}, waiting.deps);
+    expect(waiting.calls.map((c) => c.args.action)).toEqual(["show"]);
+    expect(waiting.seen.at(-1)).toBe("Not accepted: h_1 isn't waiting for your answer.");
+    process.exitCode = undefined;
+    const noId = harness({ answer: true });
+    await runHandoffs("run", undefined, {}, noId.deps);
+    expect(noId.calls).toEqual([]);
+    expect(noId.seen).toEqual(["`workmesh handoffs run` needs the handoff's id (`workmesh handoffs` lists them)."]);
+    process.exitCode = undefined;
+    const refusal = "Handoffs are accepted or declined by a person, on the board, in the menu bar or in their own terminal, not by an agent.";
+    const agent = harness({ answer: true, show: WAITING, accept: { ok: false, text: refusal } });
+    await runHandoffs("run", "h_1", {}, agent.deps);
+    expect(agent.seen.at(-1)).toBe(refusal);
     expect(process.exitCode).toBe(1);
   });
 });

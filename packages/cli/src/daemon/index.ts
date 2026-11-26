@@ -24,6 +24,7 @@ import { CoordClient } from "../hub/coord";
 import { CoordHooks } from "./coord-hooks";
 import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
+import { AcceptedHere } from "./accepted-here";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
 import { NewDeviceNotices } from "./new-devices";
 import { codexHomeOfRollout } from "../hub/agents";
@@ -34,6 +35,7 @@ import { readGithubLogin } from "../lib/github";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
 import {
+  acceptedHandoffsPath,
   checkoutsPath,
   handoffsDir,
   hubForwardStatePath,
@@ -154,6 +156,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     repoOf: (dir) => forwarder?.classify(dir)?.repo,
     settings,
     runner,
+    accepted: new AcceptedHere(acceptedHandoffsPath()),
     codexWake: config.adapters.codex.enabled ? codexWaker({ log, homeOf: (id) => codexHomes.get(`codex:${id}`) }) : undefined,
     log,
   });
@@ -465,7 +468,9 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         classify: (p) => forwarder?.classify(p),
         isShared: (key) => forwarder?.isShared(key) ?? false,
         claudeSessions: () => readLiveClaudeSessions(claudeDir),
-        onAccepted: (h) => delegate.accepted(h),
+        onAccepted: (h, by, seen) => delegate.accepted(h, by, seen),
+        runHereQuestion: (h) => delegate.runHereAsk(h),
+        onRunHere: (h, by) => delegate.runHere(h, by),
         runningHandoffs: () => runner.running(),
         handoffStart: (h, lead) => delegate.onAccept(h, lead),
       }),

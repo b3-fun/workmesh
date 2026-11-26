@@ -96,6 +96,11 @@ Any tool (curl) ───┼─────────────────�
 ### Daemon loopback API (127.0.0.1:4519, bearer secret except /health)
 
 - `GET /health` · `GET /state` · `POST /event` · `POST /resume`
+- Two checks run before anything else on every request, `/health` included (B3-7243). The `Host` header must name
+  `127.0.0.1`, `localhost` or `[::1]` in any case, else `421` (`isLoopbackHost` in `daemon/server.ts`). Its port is
+  not compared, so a port forward keeps working. A request with an `Origin` header gets `403`. No CORS headers are
+  sent, ever. The CLI, hooks, MCP server and menu bar app call `127.0.0.1` and send no `Origin`; a new client must
+  do the same.
 - `POST /pause` — empty body pauses until resumed; `{for: "30m"|"1h"|"tomorrow"}` or `{until}` snoozes, the pusher's sweep tick auto-resumes (`lib/snooze.ts`); `/state.pausedUntil`
 - `POST /sessions/dismiss {key}` — drops a session (`SessionStore.remove`); it returns with its next event
 - `GET /config` — token-free `safeConfig` view · `POST /config` — live-tune `granularity`/`statusPolicy`/`showProject`/`repoPrefix` (validated by `liveConfigPatchSchema`, applied via `pusher.applyConfig()`, persisted). Used by the menu bar app.

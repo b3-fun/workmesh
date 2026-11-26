@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { HUB_ISSUE_RE, HUB_REPO_RE } from "./fields.js";
+import { HUB_ISSUE_RE, HUB_REPO_RE, hubPersonEmailAcceptSchema, hubPersonEmailSchema } from "./fields.js";
 import { isLeasePath, LEASE_PATH_MAX } from "./lease-paths.js";
 
 /**
@@ -55,6 +55,9 @@ const repoName = z.string().max(200).regex(HUB_REPO_RE, "repo must be owner/name
 const issueId = z.string().max(24).regex(HUB_ISSUE_RE, "not an issue id");
 const memoryId = z.string().max(10).regex(HUB_MEMORY_ID_RE, "a memory id is m<number>");
 const personName = z.string().min(1).max(120);
+/** A person's email beside their display name (§48): optional everywhere; a reader takes a malformed one as absent. */
+const personEmail = hubPersonEmailSchema.optional();
+const personEmailAccept = hubPersonEmailAcceptSchema;
 const sessionName = z.string().max(120);
 const prUrl = z.string().max(300).regex(HUB_PR_URL_RE, "a PR link is https://github.com/owner/name/pull/N");
 const scopePath = z.string().max(LEASE_PATH_MAX).refine(isLeasePath, "scope paths are repo-relative paths or globs");
@@ -136,12 +139,14 @@ const linksAccept = z.object({
 /** Who wrote a memory (or proposed retiring one): the person, and the agent session when an agent did. */
 export const hubMemoryAuthorSchema = z.object({
   person: personName,
+  email: personEmail,
   sessionKey: hubKey.optional(),
   sessionName: sessionName.optional(),
 });
 export type HubMemoryAuthor = z.infer<typeof hubMemoryAuthorSchema>;
 const authorAccept = z.object({
   person: z.string().catch("someone").transform((s) => s.slice(0, 120) || "someone"),
+  email: personEmailAccept,
   sessionKey: soft(hubKey),
   sessionName: soft(cut(120)),
 });
@@ -353,7 +358,7 @@ export const hubMemoryBriefItemSchema = z.object({
   scope: hubMemoryScopeSchema.optional(),
   issues: z.array(issueId).max(HUB_MEMORY_MAX_LINKS).optional(),
   tags: z.array(tag).max(HUB_MEMORY_MAX_TAGS).optional(),
-  by: z.object({ person: personName }),
+  by: z.object({ person: personName, email: personEmail }),
   updatedAt: epochMs,
 });
 export type HubMemoryBriefItem = z.infer<typeof hubMemoryBriefItemSchema>;
@@ -365,7 +370,7 @@ const briefItemAccept = z.object({
   scope: soft(scopeAccept),
   issues: soft(keepValid(issueId.transform((s) => s.toUpperCase()), HUB_MEMORY_MAX_LINKS)),
   tags: soft(keepValid(tag, HUB_MEMORY_MAX_TAGS)),
-  by: z.object({ person: z.string().catch("someone").transform((s) => s.slice(0, 120) || "someone") }),
+  by: z.object({ person: z.string().catch("someone").transform((s) => s.slice(0, 120) || "someone"), email: personEmailAccept }),
   updatedAt: epochMsAccept.catch(0),
 });
 export type HubMemoryBriefItemAccepted = z.infer<typeof briefItemAccept>;

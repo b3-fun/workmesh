@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { HUB_ISSUE_RE, HUB_REPO_RE } from "./fields.js";
+import { HUB_ISSUE_RE, HUB_REPO_RE, hubPersonEmailAcceptSchema, hubPersonEmailSchema } from "./fields.js";
 import { isLeasePath, LEASE_PATH_MAX } from "./lease-paths.js";
 import { hubSyncDelegateAcceptSchema, hubSyncDelegateSchema } from "./delegate.js";
 import { hubSyncMemoryAcceptSchema, hubSyncMemorySchema } from "./memory.js";
@@ -46,6 +46,9 @@ const leasePath = z.string().max(LEASE_PATH_MAX).refine(isLeasePath, "lease path
 const issueId = z.string().max(24).regex(HUB_ISSUE_RE, "not an issue id");
 const recordId = z.string().min(1).max(64);
 const personName = z.string().min(1).max(120);
+/** A person's email beside their display name (§48): optional everywhere; a reader takes a malformed one as absent. */
+const personEmail = hubPersonEmailSchema.optional();
+const personEmailAccept = hubPersonEmailAcceptSchema;
 const sessionName = z.string().max(120);
 const reason = z.string().max(HUB_REASON_MAX);
 const epochMs = z.number().int().nonnegative().max(8.64e15);
@@ -83,15 +86,20 @@ const unique = (a: readonly string[]): boolean => new Set(a).size === a.length;
 
 // ------------------------------------------------------------------ shared shapes (responses)
 
-/** Who holds a lease or a claim: the person (display name, as in `/relay/team`) and the session. */
+/**
+ * Who holds a lease or a claim: the person (display name, as in `/relay/team`, and their email when the hub sends it,
+ * §48) and the session.
+ */
 export const hubHolderSchema = z.object({
   person: personName,
+  email: personEmail,
   sessionKey: hubKey,
   sessionName: sessionName.optional(),
 });
 export type HubHolder = z.infer<typeof hubHolderSchema>;
 const holderAccept = z.object({
   person: personName,
+  email: personEmailAccept,
   sessionKey: hubKey,
   sessionName: soft(z.string().transform((s) => s.slice(0, 120))),
 });
@@ -153,7 +161,7 @@ export type HubClaimAccepted = z.infer<typeof claimAccept>;
 
 export const hubNoteSchema = z.object({
   id: recordId,
-  by: z.object({ person: personName, sessionKey: hubKey.optional(), sessionName: sessionName.optional() }),
+  by: z.object({ person: personName, email: personEmail, sessionKey: hubKey.optional(), sessionName: sessionName.optional() }),
   text: coordText,
   tags: z.array(noteTag).max(HUB_NOTE_MAX_TAGS).optional(),
   ts: epochMs,
@@ -163,6 +171,7 @@ const noteAccept = z.object({
   id: recordId,
   by: z.object({
     person: personName,
+    email: personEmailAccept,
     sessionKey: soft(hubKey),
     sessionName: soft(z.string().transform((s) => s.slice(0, 120))),
   }),
@@ -273,10 +282,11 @@ export type HubClaimResponseAccepted = z.infer<typeof hubClaimResponseAcceptSche
 
 /**
  * Exactly one recipient: a person (display name, email or GitHub login, as the roster shows them; the hub picks which
- * of their sessions gets it), one session (its hub key), or an agent by its session name.
+ * of their sessions gets it), one session (its hub key), or an agent by its session name. `email` (§48) goes beside
+ * `person` when the relay resolved the name to one roster person who has one: the hub then finds the person by it.
  */
 export const hubMessageToSchema = z.union([
-  z.strictObject({ person: z.string().min(1).max(200) }),
+  z.strictObject({ person: z.string().min(1).max(200), email: personEmail }),
   z.strictObject({ session: hubKey }),
   z.strictObject({ agent: z.string().min(1).max(120) }),
 ]);
@@ -297,6 +307,8 @@ export const hubMessageRequestAcceptSchema = z.object({
   to: z
     .object({
       person: opt(z.string().min(1).max(200)),
+      /** Read beside `person` only; it never counts as a recipient of its own. */
+      email: personEmailAccept,
       session: opt(hubKey),
       agent: opt(z.string().min(1).max(120)),
     })
@@ -360,6 +372,7 @@ export const hubHoldSchema = z.object({
   sessionKey: hubKey,
   /** Who put it on. */
   by: personName,
+  byEmail: personEmail,
   reason: reason.optional(),
   since: epochMs,
 });
@@ -370,7 +383,7 @@ export const hubInboxItemSchema = z.object({
   id: recordId,
   /** The recipient session's hub key (one of this device's). */
   to: hubKey,
-  from: z.object({ person: personName, sessionName: sessionName.optional(), sessionKey: hubKey.optional() }),
+  from: z.object({ person: personName, email: personEmail, sessionName: sessionName.optional(), sessionKey: hubKey.optional() }),
   text: coordText,
   ts: epochMs,
   thread: thread.optional(),
@@ -390,6 +403,7 @@ export const hubRosterSessionSchema = z.object({
 });
 export const hubRosterEntrySchema = z.object({
   person: personName,
+  email: personEmail,
   github: z.string().max(40).optional(),
   sessions: z.array(hubRosterSessionSchema).max(500),
 });
@@ -400,6 +414,7 @@ export const hubRecentEditSchema = z.object({
   repo: repoName,
   path: leasePath,
   person: personName,
+  email: personEmail,
   sessionKey: hubKey,
   sessionName: sessionName.optional(),
   ts: epochMs,
@@ -411,8 +426,8 @@ export const hubSyncResponseSchema = z.object({
   cursor,
   /** The hub's clock, so a relay can age expiries without trusting its own. */
   serverNow: epochMs.optional(),
-  /** The device's person, as the other lists name people. */
-  me: z.object({ person: personName }).optional(),
+  /** The device's person, as the other lists name people (with their email when the hub sends emails, §48). */
+  me: z.object({ person: personName, email: personEmail }).optional(),
   /** Every active lease in the project. */
   leases: z.array(hubLeaseSchema).max(5000),
   /** Holds on any session in the project (a relay acts on its own). */
@@ -437,12 +452,13 @@ const rosterStateAccept = z.enum(["working", "waiting", "idle", "ended", "offlin
 export const hubSyncAcceptSchema = z.object({
   cursor: soft(z.string().transform((s) => s.slice(0, 512))),
   serverNow: soft(epochMsAccept),
-  me: soft(z.object({ person: personName })),
+  me: soft(z.object({ person: personName, email: personEmailAccept })),
   leases: keepValid(leaseAccept, 5000),
   holds: keepValid(
     z.object({
       sessionKey: hubKey,
       by: z.string().catch("someone").transform((s) => s.slice(0, 120) || "someone"),
+      byEmail: personEmailAccept,
       reason: soft(z.string().transform((s) => s.slice(0, HUB_REASON_MAX))),
       since: epochMsAccept.catch(0),
     }),
@@ -454,6 +470,7 @@ export const hubSyncAcceptSchema = z.object({
       to: hubKey,
       from: z.object({
         person: z.string().catch("someone").transform((s) => s.slice(0, 120) || "someone"),
+        email: personEmailAccept,
         sessionName: soft(z.string().transform((s) => s.slice(0, 120))),
         sessionKey: soft(hubKey),
       }),
@@ -471,6 +488,7 @@ export const hubSyncAcceptSchema = z.object({
   roster: keepValid(
     z.object({
       person: personName,
+      email: personEmailAccept,
       github: soft(z.string().max(40)),
       sessions: keepValid(
         z.object({
@@ -490,6 +508,7 @@ export const hubSyncAcceptSchema = z.object({
       repo: repoName,
       path: leasePath,
       person: personName,
+      email: personEmailAccept,
       sessionKey: hubKey,
       sessionName: soft(z.string().transform((s) => s.slice(0, 120))),
       ts: epochMsAccept,

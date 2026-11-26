@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { HUB_ISSUE_RE, HUB_REPO_RE } from "./fields.js";
+import { HUB_ISSUE_RE, HUB_REPO_RE, hubPersonEmailAcceptSchema, hubPersonEmailSchema } from "./fields.js";
 
 /**
  * v2 Delegate (docs/SPEC.md §30): handoffs to a person's runner, approval gates on an agent's risky actions, and
@@ -32,6 +32,9 @@ const repoName = z.string().max(200).regex(HUB_REPO_RE, "repo must be owner/name
 const issueId = z.string().max(24).regex(HUB_ISSUE_RE, "not an issue id");
 const recordId = z.string().min(1).max(64);
 const personName = z.string().min(1).max(120);
+/** A person's email beside their display name (§48): optional everywhere; a reader takes a malformed one as absent. */
+const personEmail = hubPersonEmailSchema.optional();
+const personEmailAccept = hubPersonEmailAcceptSchema;
 const deviceId = z.string().min(1).max(64);
 const epochMs = z.number().int().nonnegative().max(8.64e15);
 const epochMsAccept = z.number().min(0).max(8.64e15).transform((n) => Math.round(n));
@@ -81,19 +84,33 @@ export const HUB_GATE_ACTIONS = ["merge", "deploy", "publish", "force_push", "sp
 export const hubGateActionSchema = z.enum(HUB_GATE_ACTIONS);
 export type HubGateAction = z.infer<typeof hubGateActionSchema>;
 
-/** One person's gates: which of their agents' actions need an approval, and whose (absent = the owner's own). */
+/**
+ * One person's gates: which of their agents' actions need an approval, and whose (absent = the owner's own).
+ * `ownerEmail` and `approverEmails` (§48) are the same people's emails: `approverEmails` has one entry per approver,
+ * in the order of `approvers`.
+ */
 export const hubGatePolicySchema = z.object({
   owner: personName,
+  ownerEmail: personEmail,
   actions: z.array(hubGateActionSchema).max(HUB_GATE_ACTIONS.length),
   approvers: z.array(personName).max(20).optional(),
+  approverEmails: z.array(hubPersonEmailSchema).max(20).optional(),
 });
 export type HubGatePolicy = z.infer<typeof hubGatePolicySchema>;
-const gatePolicyAccept = z.object({
-  owner: personName,
-  /** An action this relay doesn't know is dropped on its own. */
-  actions: keepValid(hubGateActionSchema, HUB_GATE_ACTIONS.length),
-  approvers: soft(keepValid(personName, 20)),
-});
+const gatePolicyAccept = z
+  .object({
+    owner: personName,
+    ownerEmail: personEmailAccept,
+    /** An action this relay doesn't know is dropped on its own. */
+    actions: keepValid(hubGateActionSchema, HUB_GATE_ACTIONS.length),
+    approvers: soft(keepValid(personName, 20)),
+    approverEmails: z.array(hubPersonEmailSchema).max(20).optional().catch(undefined),
+  })
+  // The emails are read only when they line up with the names: every entry an email, one per approver kept. Otherwise
+  // the list reads as absent, and a reader matches the approvers by display name.
+  .transform((g) =>
+    g.approverEmails !== undefined && g.approverEmails.length !== (g.approvers?.length ?? 0) ? { ...g, approverEmails: undefined } : g,
+  );
 export type HubGatePolicyAccepted = z.infer<typeof gatePolicyAccept>;
 
 /** `POST /relay/gates`: set this device's person's own gates (an empty list turns them all off). */
@@ -135,6 +152,7 @@ export const hubApprovalSchema = z.object({
   sessionKey: hubKey,
   /** Whose agent asked (the gate's owner). */
   owner: personName.optional(),
+  ownerEmail: personEmail,
   gate: hubGateActionSchema,
   detail,
   status: hubApprovalStatusSchema,
@@ -143,6 +161,7 @@ export const hubApprovalSchema = z.object({
   decidedAt: epochMs.optional(),
   /** Who decided. */
   by: personName.optional(),
+  byEmail: personEmail,
   /** Where they decided it (0.12.1). */
   via: hubDecisionViaSchema.optional(),
   note: note.optional(),
@@ -152,12 +171,14 @@ const approvalAccept = z.object({
   id: recordId,
   sessionKey: hubKey,
   owner: soft(personName),
+  ownerEmail: personEmailAccept,
   gate: hubGateActionSchema,
   detail: z.string().min(1).transform((s) => s.slice(0, HUB_APPROVAL_DETAIL_MAX)),
   status: hubApprovalStatusSchema,
   ts: epochMsAccept.catch(0),
   decidedAt: soft(epochMsAccept),
   by: soft(cut(120)),
+  byEmail: personEmailAccept,
   via: soft(hubDecisionViaSchema),
   note: soft(cut(HUB_DELEGATE_NOTE_MAX)),
 });
@@ -229,8 +250,8 @@ export type HubHandoffStatus = z.infer<typeof hubHandoffStatusSchema>;
 
 export const hubHandoffSchema = z.object({
   id: recordId,
-  from: z.object({ person: personName, sessionKey: hubKey.optional(), sessionName: z.string().max(120).optional() }),
-  to: z.object({ person: personName }),
+  from: z.object({ person: personName, email: personEmail, sessionKey: hubKey.optional(), sessionName: z.string().max(120).optional() }),
+  to: z.object({ person: personName, email: personEmail }),
   task: handoffText,
   repo: repoName.optional(),
   issue: issueId.optional(),
@@ -253,10 +274,11 @@ const handoffAccept = z.object({
   id: recordId,
   from: z.object({
     person: personName,
+    email: personEmailAccept,
     sessionKey: soft(hubKey),
     sessionName: soft(cut(120)),
   }),
-  to: z.object({ person: personName }),
+  to: z.object({ person: personName, email: personEmailAccept }),
   task: z.string().min(1).transform((s) => s.slice(0, HUB_HANDOFF_TEXT_MAX)),
   repo: soft(repoName),
   issue: soft(issueId),
@@ -276,7 +298,8 @@ export type HubHandoffUpdateAction = z.infer<typeof hubHandoffUpdateActionSchema
 
 /**
  * `POST /relay/handoffs`. `create`: hand a task to a person (yourself included: another of your machines). `from`
- * absent = the person wrote it themselves. The others move one handoff on: `accept` / `decline` (its recipient;
+ * absent = the person wrote it themselves. `to.email` (§48) goes beside `to.person` when the relay resolved the name
+ * to one roster person who has one. The others move one handoff on: `accept` / `decline` (its recipient;
  * `accept` from a relay makes that device the runner), `start` (the runner, with the session it started when it
  * knows it; a second `start` from the same device only adds `sessionKey`), `done` / `fail` (the runner).
  */
@@ -284,7 +307,7 @@ export const hubHandoffRequestSchema = z.union([
   z.strictObject({
     action: z.literal("create"),
     from: sessionKey.optional(),
-    to: z.strictObject({ person: z.string().min(1).max(200) }),
+    to: z.strictObject({ person: z.string().min(1).max(200), email: personEmail }),
     task: handoffText,
     repo: repoName.optional(),
     issue: issueId.optional(),
@@ -302,7 +325,7 @@ export const hubHandoffRequestAcceptSchema = z.union([
   z.object({
     action: z.literal("create"),
     from: opt(sessionKey),
-    to: z.object({ person: z.string().min(1).max(200) }),
+    to: z.object({ person: z.string().min(1).max(200), email: personEmailAccept }),
     task: textAccept(HUB_HANDOFF_TEXT_MAX),
     repo: opt(repoName),
     /** Issue keys read case-insensitively. */

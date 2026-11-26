@@ -451,6 +451,7 @@ person or session on its own instead of failing):
 - A `200` here is also how a relay knows the hub reads v0.6 session structure: from then on it sends subagents as
   their own sessions (§15). A `404` turns that off again.
 - `latestClient` (relay 0.12.0, §40): the newest published relay, as the hub last read it from npm.
+- `ownerEmail` (optional, §48) on `needsMe` and `sessions` entries: the owner's email, as in `people[].email`.
 
 ---
 
@@ -578,6 +579,7 @@ read and drops the rest one by one):
 - `edits` (optional): files sessions edited in the last 10 minutes (one row per session and path, the newest),
   from the `path` the hub already has (§3.2). A relay warns its agent before it edits a file another person's
   session touched there.
+- Every person named above may come with their email (§48): `email` beside `person`, `byEmail` beside a hold's `by`.
 
 ## 23. The relay side (`packages/cli`)
 
@@ -889,6 +891,9 @@ v2 on this hub", and an empty list as "v2, nothing now".
 
 A relay keeps every item it can read and drops the rest one by one (an unknown handoff status or gate action drops
 that item, so a relay never acts on a state it can't read).
+
+Every person named in these shapes may come with their email (§48): `email` beside a handoff's `from.person` and
+`to.person`, `ownerEmail` and `approverEmails` on a gate policy, `ownerEmail` and `byEmail` on an approval.
 
 ## 31. The relay side (`packages/cli`, 0.11.0)
 
@@ -1351,3 +1356,55 @@ shapes and numbers only):
   totals are saved with the forwarder's state (§24: `usageReaders`), so a daemon restart carries on where it stopped
   and never reads a file twice. A state file from an older relay has no readers: those transcripts are read once from
   their start. A replaced or truncated file is read again from its start.
+
+---
+
+# People by email (B3-7239, 2026-11-26)
+
+Two people on a team can share a display name, and a name is easier to imitate than an email address. Until now the
+hub named people to relays by display name only, and a relay compared names to decide "is this mine". The hub may now
+send each person's email beside their name, and a relay that has both emails compares those instead. Every field
+below is optional: an older hub sends none, and an older relay ignores them.
+
+## 48. `email` beside a person's name
+
+Code form: `packages/protocol/src/fields.ts` (`hubPersonEmailSchema` for a sender, `hubPersonEmailAcceptSchema` for a
+reader, §14).
+
+- **The value** is the person's sign-in email (§2): plain ASCII `local@domain` with no spaces, at most 254
+  characters. A sender leaves the field out when it has no email. A reader takes a missing, `null` or malformed one
+  as absent, and keeps the item it sits on.
+- **Where the hub sends it.** Where a person is an object with a `person` key, the email is `email` in the same
+  object. Where a person is a bare name under another key, the email is that key with `Email` added.
+
+| Body | Name | Email |
+|---|---|---|
+| `GET /relay/sync` (§21) | `me.person` | `me.email` |
+| | `roster[].person` | `roster[].email` |
+| | `edits[].person` | `edits[].email` |
+| | `holds[].by` | `holds[].byEmail` |
+| | `inbox[].from.person` | `inbox[].from.email` |
+| | `notes[].by.person` | `notes[].by.email` |
+| Leases and claims (§21), on sync and in answers | `holder.person` | `holder.email` |
+| Handoffs (§30) | `from.person`, `to.person` | `from.email`, `to.email` |
+| Gate policies (§30) | `owner`, `approvers[]` | `ownerEmail`, `approverEmails[]` |
+| Approvals (§30) | `owner`, `by` | `ownerEmail`, `byEmail` |
+| Memories (§35), the brief's too | `by.person`, `retire.by.person` | `by.email`, `retire.by.email` |
+| `GET /relay/team` (§16) | `needsMe[].owner`, `sessions[].owner` | `needsMe[].ownerEmail`, `sessions[].ownerEmail` |
+
+- **The team view** already had `me.email` and `people[].email` beside `name` (§16). Pairing already answers with the
+  person's email (§3.1).
+- **Approvers.** A gate policy's `approverEmails` has one email per entry of `approvers`, in the same order. A reader
+  uses the list only when every entry is an email and it has as many entries as the reader kept names. Otherwise the
+  list reads as absent, so an email is never read against the wrong approver.
+- **Where a relay sends it.** A message (`POST /relay/messages`) and a handoff's `create` (`POST /relay/handoffs`)
+  take `to: { person, email? }`. A relay sends `email` when it resolved the name to one roster person who has one
+  (§49). A hub that reads the field finds the recipient by it. A `to` still needs `person`, `session` or `agent`: an
+  email alone is not a recipient. A hub that predates the field drops it and resolves `person` as before. The relay
+  only ever sends back an email the hub gave it.
+- **Who is acting** still comes from the device token, never from a body (§21). These emails say whom an entry or a
+  request is about.
+- **The matching rule.** Two entries name the same person when both carry an email and the emails are equal, read
+  case-insensitively. When either has no email, they are compared by display name, case-insensitively, as before.
+  So equal names with different emails are different people, and one email under two names is one person.
+- **Not covered.** The sessions an Ask answer names (§29) carry a display name only. Nothing is decided from them.

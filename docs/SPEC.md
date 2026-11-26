@@ -1212,7 +1212,8 @@ an upgrade went on without the new tools until someone restarted them. From 0.12
     {version?, reason, detail}`. It is one of `unsigned`, `bad-signature`, `bad-list`, `wrong-version` and
     `hash-mismatch`. A signature by a key that isn't pinned is `bad-signature`. A zip whose digest on GitHub is not
     the signed one is `hash-mismatch`. For such a release, `status` prints the reason and `doctor` warns in its
-    `release signing` check (macOS).
+    `release signing` check (macOS). A release whose tag is not a version offers nothing and has no `menubarHeld`,
+    as with signing off: its two small files are not read, and the tag's text goes into no reason.
   - The two small files are read over https with size limits (64 KB and 1 KB). A read that fails is tried again in 6 h
     and keeps what was checked before. An offer saved before signing was switched on is dropped and read again.
   - The pinned list ships empty: the maintainers have not made a key yet. With no key pinned, signing is off

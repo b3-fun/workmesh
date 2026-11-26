@@ -226,6 +226,15 @@ describe("the menu bar's release, with a maintainer key pinned", () => {
     });
   });
 
+  it("a tag that isn't a version offers nothing, as with signing off, and its text goes no further", async () => {
+    const tag = "nightly: see the notes";
+    const g = github({ ...signed(), tag });
+    expect(await g.read([maintainer.pub])).toEqual({ kind: "none" });
+    // Neither small file is read for it, so the tag can't end up in a reason that status and doctor print.
+    expect(g.asked).toEqual([API]);
+    expect(await github({ tag }).read([])).toEqual({ kind: "none" });
+  });
+
   it("a signed list that doesn't name the zip offers nothing", async () => {
     const other = signed({ files: [{ name: "Other.zip", sha256: sha(ZIP), size: ZIP.length }] });
     expect(await github(other).read([maintainer.pub])).toMatchObject({ kind: "held", held: { reason: "bad-list", detail: "the signed list does not name Workmesh-menubar-macos.zip" } });

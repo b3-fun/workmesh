@@ -145,6 +145,8 @@ export async function fetchMenubarRelease(
   const zip = assets.find((a) => a?.name === MENUBAR_ASSET);
   if (!zip) return { kind: "none" };
   const version = body.tag_name.replace(/^v/, "");
+  // A tag that isn't a version is never offered, signing on or off, and its text goes into no reason.
+  if (!parseVersion(version)) return { kind: "none" };
   const digest = typeof zip.digest === "string" ? /^sha256:([0-9a-f]{64})$/i.exec(zip.digest)?.[1]?.toLowerCase() : undefined;
   // A zip put on an older release counts from when it was put there, not from when the release went out.
   const released = timeMs(body.published_at);
@@ -154,7 +156,7 @@ export async function fetchMenubarRelease(
 
   if (keys.length === 0) return offer(readMenubarRelease({ ...base, sha256: digest, size: zip.size }));
 
-  const held = (reason: MenubarHeldReason, detail: string): MenubarRead => ({ kind: "held", held: { ...(parseVersion(version) ? { version } : {}), reason, detail } });
+  const held = (reason: MenubarHeldReason, detail: string): MenubarRead => ({ kind: "held", held: { version, reason, detail } });
   const list = assets.find((a) => a?.name === RELEASE_LIST);
   const sig = assets.find((a) => a?.name === RELEASE_LIST_SIG);
   if (!list || !sig) {

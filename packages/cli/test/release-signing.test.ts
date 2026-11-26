@@ -390,11 +390,12 @@ describe("scripts/sign-release.mjs", () => {
     expect(fs.existsSync(path.join(dir, RELEASE_LIST))).toBe(false);
   });
 
-  it("the key can come through a pipe, so it need not sit on disk", () => {
+  it.each(["-", "/dev/stdin"])("the key can come through a pipe (--key %s), so it need not sit on disk", (from) => {
     const { pub } = newKey();
     const pem = fs.readFileSync(keyFile(), "utf8");
     fs.rmSync(keyFile());
-    const r = run(["--key", "/dev/stdin", "--version", VERSION, MENUBAR_ASSET], pem);
+    // The test's pipe is a socket on Linux, where opening /dev/stdin fails: the script must read standard input itself.
+    const r = run(["--key", from, "--version", VERSION, MENUBAR_ASSET], pem);
     expect(r.code, r.all).toBe(0);
     const { list, sig } = written();
     expect(verifyReleaseList(list, sig, [pub], VERSION).ok).toBe(true);

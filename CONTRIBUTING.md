@@ -158,7 +158,8 @@ node scripts/sign-release.mjs --new-key /Volumes/keys/workmesh-release.pem
 It writes the private key to that file (mode 600) and prints the public key. Keep the private key off GitHub: in an
 offline file, such as an encrypted drive you plug in only to sign, or on a hardware security key. It never goes in the
 repo, a CI secret, an environment variable, a chat or a log. The script refuses a key file inside the repo or one that
-other users can read. It reads the key only from the path you give, and never prints it.
+other users can read. It reads the key only from the path you give, and never prints it. To pipe the key in from a
+password manager, pass `--key -`: the script then reads it from standard input.
 
 The script signs from a key file. A key that can't leave a hardware security key needs that key's own tool. Write the
 list with `--list-only`, then sign its exact bytes with a plain Ed25519 signature. Put the base64 of the 64 signature

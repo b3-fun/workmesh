@@ -9,6 +9,7 @@
 //   node scripts/sign-release.mjs --key <key file> [--version 0.12.4] <file>…   sign a release's files
 //   node scripts/sign-release.mjs --list-only [--version 0.12.4] <file>…        write the list only, to sign with another tool
 //
+//   --key -             read the private key from standard input (a password manager piping it in)
 //   --out <dir>         where the two files go (default: beside the first file)
 //   --version <v>       the release's version (default: packages/cli/package.json's)
 //   --keys-file <path>  the pinned-key list to check the key against (default: the client's; tests pass their own)
@@ -100,16 +101,25 @@ function newKey(file) {
   console.log(`  "${publicBase64(privateKey)}",`);
 }
 
+/** `--key -` (or `/dev/stdin`): the key comes through standard input, for a password manager that pipes it in. */
+const FROM_STDIN = new Set(["-", "/dev/stdin"]);
+
 function readKey(file) {
-  if (insideRepo(file)) die(`${file} is inside this repo. Keep the private key where it can't be committed.`);
+  const fromStdin = FROM_STDIN.has(file);
+  if (!fromStdin && insideRepo(file)) die(`${file} is inside this repo. Keep the private key where it can't be committed.`);
   let pem;
   try {
-    const st = fs.statSync(file);
-    // A pipe (a password manager feeding the key) has no file mode worth checking.
-    if (st.isFile() && process.platform !== "win32" && (st.mode & 0o077) !== 0) {
-      die(`${file} can be read by other users (mode ${(st.mode & 0o777).toString(8)}). Run: chmod 600 ${file}`);
+    if (fromStdin) {
+      // Read file descriptor 0, never the path: on Linux a pipe from another program can be a socket, and opening
+      // /dev/stdin on a socket fails. A pipe has no file mode worth checking.
+      pem = fs.readFileSync(0);
+    } else {
+      const st = fs.statSync(file);
+      if (st.isFile() && process.platform !== "win32" && (st.mode & 0o077) !== 0) {
+        die(`${file} can be read by other users (mode ${(st.mode & 0o777).toString(8)}). Run: chmod 600 ${file}`);
+      }
+      pem = fs.readFileSync(file);
     }
-    pem = fs.readFileSync(file);
   } catch (err) {
     die(`can't read the key file ${file} (${err?.code ?? "error"})`);
   }

@@ -11,8 +11,9 @@
 // view), legacy (a daemon from before GET /team: 404), coord (team plus v1: a hold on
 // one of this Mac's agents and a message waiting for another), delegate (team plus
 // v2: handoffs offered to me or running here, and approvals; POST /coord/op answers
-// them, so Accept, Decline, Approve and Deny work against the mock), newmachine (team
-// plus a machine that joined my account; POST /new-devices/dismiss takes it down).
+// them, so Accept, Decline, Approve and Deny work against the mock; h_1 has a long
+// task and a context, h_3 is short and can't run on this Mac), newmachine (team plus a
+// machine that joined my account; POST /new-devices/dismiss takes it down).
 //
 // GET /update: legacy answers 404 (an older daemon), the scenarios above "up to
 // date". The update scenarios are team plus a newer release:
@@ -246,9 +247,32 @@ function teamBody() {
 // v2 (scenario delegate): changed by POST /coord/op, like the real daemon after its hub call.
 const delegate = {
   available: true,
+  // `task` and `context` are the whole text; `onAccept` is the daemon's line about what Accept starts here.
   handoffs: [
-    { id: "h_1", from: "An", fromSession: "b3iq-strategy", task: "Port the KEK rotation to the vault service: rotate behind the new key-id header, keep the old key readable for a week, and open a PR against main.", repo: "b3-fun/b3os-beta", issue: "B3-7168", status: "offered", createdAt: ago(6), runningHere: false },
-    { id: "h_2", from: "Gio", task: "Move the stake API to the new farm cutoff and redeploy staging", repo: "b3-fun/stake", status: "started", createdAt: ago(25), runningHere: true },
+    {
+      id: "h_1",
+      from: "An",
+      fromSession: "b3iq-strategy",
+      task: "Port the KEK rotation to the vault service: rotate behind the new key-id header, keep the old key readable for a week, and open a PR against main.\n\nSteps:\n1. Add the key-id header to the vault client.\n2. Rotate the key in staging and check that last week's records still decrypt.\n3. Write the runbook page for the rotation.",
+      context: "Start from PR 212, which adds the header on the server side. The staging key lives in the vault under kek/staging. Ask Gio before you touch the stake service: it reads the same key.",
+      onAccept: { agent: "claude", permissionMode: "auto", text: "Starts a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta." },
+      repo: "b3-fun/b3os-beta",
+      issue: "B3-7168",
+      status: "offered",
+      createdAt: ago(6),
+      runningHere: false,
+    },
+    {
+      id: "h_3",
+      from: "Mitch",
+      task: "Bump the lockfile and rerun CI",
+      onAccept: { text: "This Mac can't run it: no checkout of b3-fun/b3iq here (`workmesh roots add <dir>` names where your repos live)." },
+      repo: "b3-fun/b3iq",
+      status: "offered",
+      createdAt: ago(2),
+      runningHere: false,
+    },
+    { id: "h_2", from: "Gio", task: "Move the stake API to the new farm cutoff and redeploy staging", context: "The cutoff is block 21,400,000.", repo: "b3-fun/stake", status: "started", createdAt: ago(25), runningHere: true },
   ],
   approvals: [
     { id: "ap_1", session: localWaiting.key, name: localWaiting.name, gate: "merge", detail: "gh pr merge 212 --merge in b3-fun/b3os-beta", status: "pending", ts: ago(3), mine: true, canDecide: true },

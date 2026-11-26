@@ -14,6 +14,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var teamChecked = false
     /// Teammates whose sessions are expanded, by name. Memory only.
     @Published var expandedPeople = Set<String>()
+    /// v2: handoffs whose whole task and context are open in the menu, by id. Memory only.
+    @Published var openHandoffs = Set<String>()
     /// v2: handoff and approval ids with an Accept/Decline/Approve/Deny call in flight.
     @Published private(set) var delegateBusy = Set<String>()
     /// v2: what was answered ("Accepted", "Denied"), by id, until the daemon no
@@ -245,8 +247,28 @@ final class AppModel: ObservableObject {
 
     // v2 Delegate: answered through the daemon's POST /coord/op, as the person.
 
-    func answerHandoff(_ id: String, accept: Bool) {
-        delegateCall("handoffs", accept ? "accept" : "decline", id: id, done: accept ? "Accepted" : "Declined")
+    /// Accept starts an agent with the sender's text as its instructions. When
+    /// the row can't show all of that text, the first call opens it and accepts
+    /// nothing; the call after that accepts.
+    func acceptHandoff(_ h: DelegateHandoff) {
+        guard !h.hidesText || openHandoffs.contains(h.id) else {
+            openHandoffs.insert(h.id)
+            return
+        }
+        delegateCall("handoffs", "accept", id: h.id, done: "Accepted")
+    }
+
+    func declineHandoff(_ id: String) {
+        delegateCall("handoffs", "decline", id: id, done: "Declined")
+    }
+
+    /// "Show all" and "Show less" on a handoff row.
+    func toggleHandoffText(_ id: String) {
+        if openHandoffs.contains(id) {
+            openHandoffs.remove(id)
+        } else {
+            openHandoffs.insert(id)
+        }
     }
 
     func decideApproval(_ id: String, approve: Bool) {
@@ -265,7 +287,12 @@ final class AppModel: ObservableObject {
             var failure: String?
             do {
                 let r = try await client.coordOp(op, args: ["action": action, "id": id])
-                if r.ok { delegateAnswered[id] = done } else { failure = r.text ?? "Workmesh couldn't do that." }
+                if r.ok {
+                    delegateAnswered[id] = done
+                    openHandoffs.remove(id) // answered: its whole text closes again
+                } else {
+                    failure = r.text ?? "Workmesh couldn't do that."
+                }
             } catch DaemonError.http(let code) {
                 failure = "The Workmesh daemon answered \(code)."
             } catch {
@@ -295,6 +322,11 @@ final class AppModel: ObservableObject {
 
     /// An answered item stays marked only while the daemon still lists it as offered or pending.
     private func pruneAnswered() {
+        // A handoff the daemon no longer lists has no text left to keep open.
+        if !openHandoffs.isEmpty {
+            let listed = Set(team?.delegate?.handoffs.map(\.id) ?? [])
+            openHandoffs = openHandoffs.intersection(listed)
+        }
         guard !delegateAnswered.isEmpty else { return }
         let d = team?.delegate
         let open = Set((d?.handoffs.filter(\.isOffered).map(\.id) ?? []) + (d?.approvals.filter(\.isPending).map(\.id) ?? []))

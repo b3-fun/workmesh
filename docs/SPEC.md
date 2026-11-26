@@ -965,7 +965,9 @@ command run; a waiter that can't reach the daemon ends.
   done or failed (the last three wake it). `handoffs` (list) and `approvals` (list) sync first when the last sync is
   over 5 s old, so a person at a terminal sees a handoff offered a moment ago.
 - **Notices.** The daemon writes notices for its own sessions (an approval decided, a handoff's progress) into the
-  same inbox as teammates' messages, delivered the same way and never acked to the hub.
+  same inbox as teammates' messages, delivered the same way and never acked to the hub. A notice is printed as
+  Workmesh's own line, outside any block. Only the daemon can make a notice: a sync item that carries a notice's id
+  prefix is refused (§42).
 - **Wake.** An inbox item wakes an idle session when its `wake` says so, else when a person wrote it; the daemon's
   notices about outcomes wake too. Claude Code: `workmesh setup` (and `init`; `--no-wake` skips it) adds a Stop hook
   `{ type: "command", command: "<node> <cli> wake-wait claude-code", asyncRewake: true, timeout: 3600, rewakeMessage,
@@ -1270,7 +1272,9 @@ relays paired with a local hub as two people) found what follows. No wire change
   Command: …".
 - **Messages are framed as their sender's.** The daemon's own notices have `wmn_` ids. The hub's message ids are
   `wm_<ULID>`, which the daemon's notices used to share, so a teammate's message read as "news about its own earlier
-  work" with no "Message from An" (Claude Code and Codex alike).
+  work" with no sender named (Claude Code and Codex alike). Only the daemon writes a `wmn_` id (B3-7233). A sync item
+  whose id starts with it is dropped at sync. It is never stored, delivered or acked, and the daemon log names it
+  once.
 - **Wake.** `codex queue --thread <id> --message <text>` gets the wake inside `<workmesh-wake>…</workmesh-wake>`: Codex
   hands a queued message to the thread as a user prompt, and the tag makes the hook read it as injected (§19), so the
   board shows a turn and no prompt the person didn't type. `codex queue` runs in the thread's Codex home. A thread

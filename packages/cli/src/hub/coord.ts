@@ -52,6 +52,7 @@ import type {
   HubSyncAccepted,
 } from "@workmesh/protocol";
 import type { z } from "zod";
+import { cleanText, label, oneLine } from "../lib/untrusted";
 import { parseRetryAfter } from "./forwarder";
 
 /**
@@ -129,6 +130,7 @@ const MAX_DELIVERED = 2000;
 /**
  * Ids of notices the daemon writes itself (an approval decided, a handoff finished): never acked to the hub. Not
  * `wm_`: the hub's own message ids are `wm_<ULID>`, and a teammate's message must never read as the daemon's notice.
+ * Only `notify` writes this prefix: a sync item that carries it is refused (`withoutLocalIds`).
  */
 const LOCAL_ID_PREFIX = "wmn_";
 
@@ -137,6 +139,8 @@ export function isLocalNotice(id: string): boolean {
   return id.startsWith(LOCAL_ID_PREFIX);
 }
 const MAX_LOCAL = 500;
+/** Refused sync items are logged once each, for at most this many ids. */
+const MAX_REFUSED_LOGGED = 200;
 /** An undelivered message the hub stopped listing is kept this long (its session may come back). */
 const INBOX_KEEP_MS = 24 * 60 * 60_000;
 
@@ -183,6 +187,8 @@ export class CoordClient {
   /** v2: notices for this device's sessions that the daemon wrote itself, by id. */
   private readonly local = new Map<string, HubSyncInboxItem>();
   private localSeq = 0;
+  /** Ids of sync items refused for carrying the daemon's own notice prefix (each is logged once). */
+  private readonly refusedIds = new Set<string>();
   private readonly onSync: CoordClientOptions["onSync"];
   /** v2 endpoints this hub answered 404 to, and until when that is remembered. */
   private readonly v2Absent = new Map<string, number>();
@@ -456,7 +462,8 @@ export class CoordClient {
       id,
       to: localKey,
       from: { person: opts.from ?? "Workmesh", sessionName: undefined, sessionKey: undefined },
-      text: text.slice(0, 4000),
+      // A notice is printed as Workmesh's own words: nothing unseen stays in it, whatever went into it.
+      text: cleanText(text).slice(0, 4000),
       ts: this.now(),
       thread: undefined,
       wake: opts.wake ?? true,
@@ -636,8 +643,25 @@ export class CoordClient {
     this.apply(parsed.data, now, started);
   }
 
+  /**
+   * A sync without the inbox items whose id starts with the daemon's own notice prefix. Only this daemon writes such
+   * ids (`notify`), and an item with one would be printed as Workmesh's own notice, so one from the hub is refused: it
+   * is never stored, delivered or acked, and the daemon log names it once.
+   */
+  private withoutLocalIds(s: HubSyncAccepted): HubSyncAccepted {
+    const inbox = s.inbox.filter((i) => !isLocalNotice(i.id));
+    if (inbox.length === s.inbox.length) return s;
+    for (const i of s.inbox) {
+      if (!isLocalNotice(i.id) || this.refusedIds.has(i.id) || this.refusedIds.size >= MAX_REFUSED_LOGGED) continue;
+      this.refusedIds.add(i.id);
+      this.log(`hub: ignored an inbox item whose id is one of this daemon's own (${oneLine(i.id, 64)}, from ${label(i.from.person)})`);
+    }
+    return { ...s, inbox };
+  }
+
   /** Takes in a good sync answer (exposed for tests). */
-  apply(s: HubSyncAccepted, now = this.now(), sentAt = now): void {
+  apply(sync: HubSyncAccepted, now = this.now(), sentAt = now): void {
+    const s = this.withoutLocalIds(sync);
     const previous = this.state;
     this.state = s;
     this.fetchedAt = now;

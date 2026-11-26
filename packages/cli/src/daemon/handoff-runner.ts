@@ -487,8 +487,13 @@ export class HandoffRunner implements HandoffRunnerLike {
     // The prompt goes to the agent on standard input, from a file only this user can read. On the command line any
     // process on the machine could read the task in the process list.
     const promptFile = path.join(runDir, "prompt.txt");
-    fs.writeFileSync(promptFile, prompt, { mode: 0o600 });
-    fs.chmodSync(promptFile, 0o600);
+    try {
+      fs.writeFileSync(promptFile, prompt, { mode: 0o600 });
+      fs.chmodSync(promptFile, 0o600);
+    } catch {
+      // The start is already claimed on the hub: say that nothing runs, rather than leave it as started.
+      return fail("couldn't write the prompt file on this machine");
+    }
     try {
       fs.rmSync(exitFile, { force: true });
     } catch {

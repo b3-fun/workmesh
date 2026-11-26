@@ -334,6 +334,33 @@ describe("handoff runner (SPEC §31)", () => {
     }
   });
 
+  it("a prompt file that can't be written fails the handoff on the hub, and nothing is started", async () => {
+    const hub = fakeHub([
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "started" } } },
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "failed" } } },
+    ]);
+    // A directory stands where the prompt file would go.
+    fs.mkdirSync(path.join(home, "handoffs", "abc12345", "prompt.txt"), { recursive: true });
+    const runner = new HandoffRunner({
+      coord: () => hub.coord,
+      settings: () => settings(),
+      checkouts: new CheckoutIndex(path.join(home, "c.json")),
+      dir: path.join(home, "handoffs"),
+      which: () => "/bin/true",
+      spawnImpl: (() => {
+        throw new Error("must not spawn");
+      }) as never,
+    });
+    runner.run({ ...HANDOFF, repo: undefined });
+    await until(() => hub.calls.length === 2);
+    expect(hub.calls.map((c) => c.body)).toEqual([
+      { action: "start", id: HANDOFF.id, sessionKey: expect.stringMatching(/^claude-code:/) },
+      { action: "fail", id: HANDOFF.id, note: "couldn't write the prompt file on this machine" },
+    ]);
+    await until(() => runner.running().size === 0);
+    expect(runner.list()).toEqual([]);
+  });
+
   it("doesn't run when another device won the start; at metadata the note says only how it ended", async () => {
     const hub = fakeHub([{ status: 409, body: { ok: false, error: "another device started it" } }]);
     const runner = new HandoffRunner({

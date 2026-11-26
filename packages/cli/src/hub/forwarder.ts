@@ -644,6 +644,15 @@ export class HubForwarder {
     return this.sessions.get(key)?.shared === true;
   }
 
+  /**
+   * A shared session's permission mode as its transcript last said it (SPEC §26: Claude Code's `permissionMode`,
+   * Codex's approval and sandbox as one word), or undefined when the mirror has none yet. Local use only: the daemon
+   * reads it when a hook didn't report the mode (SPEC §23).
+   */
+  modeOf(key: string): string | undefined {
+    return this.sessions.get(key)?.mirror?.mode;
+  }
+
   /** v1: some shared top-level session is live (the coordination sync then polls fast). */
   hasLiveShared(): boolean {
     for (const t of this.sessions.values()) {

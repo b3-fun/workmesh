@@ -45,7 +45,7 @@ describe("Claude Code subagent hooks (v0.6)", () => {
   it("maps SubagentStart to a heartbeat carrying the agent's id and type", () => {
     const e = mapHookInput({ ...base, hook_event_name: "SubagentStart", agent_id: AGENT, agent_type: "Explore" }, 5);
     expect(e).toMatchObject({ kind: "heartbeat", sessionId: "sess-1", ts: 5 });
-    expect(e?.detail).toEqual({ hookEvent: "SubagentStart", agentId: AGENT, agentType: "Explore", transcriptPath: base.transcript_path });
+    expect(e?.detail).toEqual({ hookEvent: "SubagentStart", agentId: AGENT, agentType: "Explore", transcriptPath: base.transcript_path, permissionMode: "default" });
     expect(sessionEventSchema.safeParse(e).success).toBe(true);
   });
 

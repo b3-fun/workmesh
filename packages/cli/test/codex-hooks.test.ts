@@ -77,7 +77,18 @@ describe("mapCodexHookInput", () => {
       tool: "apply_patch",
       filePath: "/Users/dev/b3/b3os-beta/crates/vm/src/vm.rs",
       filePaths: ["/Users/dev/b3/b3os-beta/crates/vm/src/vm.rs", "/Users/dev/b3/b3os-beta/docs/new.md"],
+      permissionMode: "default",
     });
+  });
+
+  it("keeps the session's permission mode in the local detail, when the hook reports a usable one", () => {
+    expect(map({ hook_event_name: "Stop", permission_mode: "bypassPermissions" })?.detail).toMatchObject({ hookEvent: "Stop", permissionMode: "bypassPermissions" });
+    // A value that is not one word is left out; the rest of the detail stays.
+    for (const bad of ["two words", "", 7, null, "x".repeat(41)]) {
+      const e = map({ hook_event_name: "PreToolUse", tool_name: "shell", tool_input: { command: ["ls"] }, permission_mode: bad });
+      expect(e?.detail?.permissionMode, String(bad)).toBeUndefined();
+      expect(e?.detail?.tool).toBe("shell");
+    }
   });
 
   it("labels shell calls 'running commands' whatever Codex names the tool", () => {

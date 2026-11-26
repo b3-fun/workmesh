@@ -10,6 +10,7 @@ import {
   mapHookInput,
   textAsksUser,
 } from "../src/adapters/claude-code";
+import { sessionEventSchema } from "@workmesh/core";
 import { OUR_COMMAND_RE } from "../src/lib/names";
 import { stableNodePath } from "../src/lib/node-path";
 
@@ -31,6 +32,21 @@ describe("mapHookInput", () => {
       cwd: "/Users/dev/projects/workmesh",
       ts: 123,
     });
+  });
+
+  it("keeps the session's permission mode in the local detail, on every hook that reports one", () => {
+    const start = mapHookInput(input({ hook_event_name: "SessionStart", permission_mode: "bypassPermissions" }), 123);
+    expect(start?.detail).toEqual({ hookEvent: "SessionStart", permissionMode: "bypassPermissions" });
+    expect(sessionEventSchema.safeParse(start).success).toBe(true);
+    const tool = mapHookInput(input({ hook_event_name: "PostToolUse", tool_name: "Read", tool_input: { file_path: "/x/a.ts" }, permission_mode: "dontAsk" }));
+    expect(tool?.detail).toMatchObject({ hookEvent: "PostToolUse", tool: "Read", permissionMode: "dontAsk" });
+    // A value that is not one word is left out; the rest of the detail stays.
+    for (const bad of ["two words", "", 7, null, "x".repeat(41)]) {
+      const e = mapHookInput(input({ hook_event_name: "PostToolUse", tool_name: "Read", tool_input: { file_path: "/x/a.ts" }, permission_mode: bad }));
+      expect(e?.detail?.permissionMode, String(bad)).toBeUndefined();
+      expect(e?.detail?.tool).toBe("Read");
+      expect(sessionEventSchema.safeParse(e).success).toBe(true);
+    }
   });
 
   it("maps UserPromptSubmit to working/thinking", () => {

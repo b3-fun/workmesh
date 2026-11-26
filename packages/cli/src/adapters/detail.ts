@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DETAIL_LIMITS, truncateHead, truncateMiddle } from "@workmesh/core";
+import { DETAIL_LIMITS, PERMISSION_MODE_RE, truncateHead, truncateMiddle } from "@workmesh/core";
 import type { SessionEvent, SessionEventDetail } from "@workmesh/core";
 
 /**
@@ -24,6 +24,18 @@ export function clip(text: unknown, max: number): string | undefined {
 export function clipHead(text: unknown, max: number): string | undefined {
   if (typeof text !== "string" || !text) return undefined;
   return truncateHead(text, max);
+}
+
+/** A hook payload's permission mode (`permission_mode`), when it is one word the detail schema takes. */
+export function permissionModeOf(value: unknown): string | undefined {
+  return typeof value === "string" && value.length <= DETAIL_LIMITS.permissionMode && PERMISSION_MODE_RE.test(value) ? value : undefined;
+}
+
+/** The event with the hook's permission mode in its detail (local only), when the hook reported one. */
+export function withPermissionMode(event: SessionEvent, hookEvent: string, value: unknown): SessionEvent {
+  const permissionMode = permissionModeOf(value);
+  if (!permissionMode) return event;
+  return { ...event, detail: { ...(event.detail ?? { hookEvent: hookEvent.slice(0, DETAIL_LIMITS.hookEvent) }), permissionMode } };
 }
 
 /** An absolute transcript path from a hook payload, within the detail limit. */

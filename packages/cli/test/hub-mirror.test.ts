@@ -301,6 +301,9 @@ describe("the forwarder at the conversation level", () => {
     const { h, key } = await terminalSession("conversation");
     const s = h.last(key)!;
     expect(s).toMatchObject({ title: "B3OS agent infra tools", mode: "auto", model: "claude-opus-5-5" });
+    // The daemon reads the same mode on the machine (who may get a teammate's message, SPEC §23).
+    expect(h.fwd.modeOf(key)).toBe("auto");
+    expect(h.fwd.modeOf("claude-code:unknown")).toBeUndefined();
     expect(s.tasks).toEqual({ monitors: 1, agents: 1 });
     const turn = h.events(key).find((e) => e.kind === "turn")!;
     expect(turn).toMatchObject({ durationMs: 11_000, tasks: { shells: 1, monitors: 1, agents: 1 } });

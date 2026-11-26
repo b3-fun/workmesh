@@ -662,11 +662,31 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
       "- h_abc12345 · offered · from An · b3-fun/b3os-beta, B3-7168: Port the KEK rotation to the new runner [more: workmesh handoffs show h_abc12345]",
     );
     const accepted: string[] = [];
-    const r = await runCoordOp({ op: "handoffs", args: { action: "accept", id: "h_abc12345" }, caller: PERSON }, deps(hub.coord, { onAccepted: (h) => accepted.push(h.id) }));
+    const r = await runCoordOp(
+      { op: "handoffs", args: { action: "accept", id: "h_abc12345" }, caller: PERSON },
+      // The hub's answer (accepted) and the handoff as this machine listed it (offered): the text the person read.
+      deps(hub.coord, { onAccepted: (h, by, seen) => accepted.push(`${h.id} ${h.status} by ${by}, listed as ${seen.status}`) }),
+    );
     expect(r.text).toBe("Accepted h_abc12345: this machine starts an agent for it.");
-    expect(accepted).toEqual(["h_abc12345"]);
+    expect(accepted).toEqual(["h_abc12345 accepted by cli, listed as offered"]);
     // The person's answer names no agent session.
     expect(hub.calls).toEqual([{ url: "https://hub.test/relay/handoffs", body: { action: "accept", id: "h_abc12345" } }]);
+  });
+
+  it("an accept covers what this machine listed: a handoff it doesn't list can't be accepted here", async () => {
+    const hub = fakeHub([{ status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "declined" } } }]);
+    sync(hub.coord, { handoffs: [{ ...HANDOFF, status: "offered" }] as never });
+    const accepted: string[] = [];
+    const d = deps(hub.coord, { now: () => T, onAccepted: (h) => accepted.push(h.id) });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "accept", id: "h_unlisted" }, caller: PERSON }, d)).toMatchObject({
+      ok: false,
+      text: "No handoff h_unlisted for you or from you in the hub's list (`handoffs` lists them).",
+    });
+    expect(hub.calls).toEqual([]);
+    expect(accepted).toEqual([]);
+    // Declining needs no reading first.
+    expect(await runCoordOp({ op: "handoffs", args: { action: "decline", id: "h_unlisted" }, caller: PERSON }, d)).toMatchObject({ ok: true, text: "Declined h_unlisted." });
+    expect(hub.calls.map((c) => c.body)).toEqual([{ action: "decline", id: "h_unlisted" }]);
   });
 
   it("a handoff is accepted or declined by a person: an agent caller is refused, and the hub hears nothing", async () => {
@@ -679,7 +699,7 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     const live = [{ key: "claude-code:s7", source: "claude-code", sessionId: "s7", cwd: "/w/b3os-beta", updatedAt: T }];
     const d = deps(hub.coord, {
       onAccepted: (h) => accepted.push(h.id),
-      waitsToRunHere: () => true,
+      runHereQuestion: () => "accepted on the board: run it here?",
       onRunHere: (h) => accepted.push(`run ${h.id}`),
       listSessions: () => live as never,
       getSession: (k) => live.find((s) => s.key === k) as never,
@@ -788,7 +808,7 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     const d = deps(hub.coord, {
       now: () => T,
       // Stands in for the daemon's record: only h_board waits.
-      waitsToRunHere: (h) => h.id === "h_board",
+      runHereQuestion: (h) => (h.id === "h_board" ? "accepted on the board: run it here?" : undefined),
       onRunHere: (h, by) => ran.push(`${h.id} by ${by}`),
       handoffStart: (_h, lead) => {
         leads.push(lead);

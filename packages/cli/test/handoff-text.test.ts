@@ -4,11 +4,13 @@ import {
   LIST_TASK_MAX,
   NOTHING_VISIBLE,
   cleanHandoff,
+  handoffHash,
   handoffListLine,
   handoffStart,
   handoffView,
   hasMoreText,
   readable,
+  runHereQuestion,
 } from "../src/daemon/handoff-text";
 import { QUOTE_MARK } from "../src/lib/untrusted";
 
@@ -179,6 +181,31 @@ describe("the full view", () => {
     expect(handoffView(handoff({ from: { person: "Alex", sessionKey: "dev_A:codex:t1", sessionName: undefined } }), { runningHere: false })).toContain(
       "From:  Alex (one of their agents)",
     );
+  });
+});
+
+describe("what an accept covers", () => {
+  it("the hash moves with the task, the context, the repo and the issue, and with nothing else", () => {
+    const h = handoff({ context: "Start from PR 12." });
+    const base = handoffHash(h);
+    expect(base).toMatch(/^[0-9a-f]{64}$/);
+    expect(handoffHash(handoff({ context: "Start from PR 12." }))).toBe(base);
+    for (const over of [{ task: "Fix the typo in the README." }, { context: "Start from PR 13." }, { context: undefined }, { repo: "example/other" }, { repo: undefined }, { issue: "APP-13" }, { issue: undefined }]) {
+      expect(handoffHash({ ...h, ...over }), JSON.stringify(over)).not.toBe(base);
+    }
+    // A change nobody could see counts too: the hash is of the text as the hub sent it.
+    expect(handoffHash({ ...h, task: `${h.task}${ZERO_WIDTH_SPACE}` })).not.toBe(base);
+    // Status, sender, device and times are not part of what was read.
+    const later = handoff({ context: "Start from PR 12.", status: "accepted", device: "dev_1", updatedAt: T + 5, note: "x", from: { person: "Bo", sessionKey: undefined, sessionName: undefined } });
+    expect(handoffHash(later)).toBe(base);
+    // No way to move text from one field to the next and keep the hash.
+    expect(handoffHash({ ...h, task: `${h.task}Start`, context: " from PR 12." })).not.toBe(base);
+  });
+
+  it("the question says why a handoff waits", () => {
+    expect(runHereQuestion("board")).toBe("accepted on the board: run it here?");
+    expect(runHereQuestion("no-record", true)).toBe("Accepted, but this machine has no record of your accept: run it here?");
+    expect(runHereQuestion("changed")).toBe("accepted, but its text changed after your accept: run it here?");
   });
 });
 

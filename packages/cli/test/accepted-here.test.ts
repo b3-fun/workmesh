@@ -39,6 +39,24 @@ describe("the record of handoffs accepted on this machine", () => {
     expect(fs.readdirSync(path.dirname(file))).toEqual(["handoffs-accepted.json"]);
   });
 
+  it("keeps the hash of what was accepted beside the id; an entry without one is from an older record", () => {
+    const hash = "a".repeat(64);
+    const a = new AcceptedHere(file);
+    a.add("h_1", "cli", T, hash);
+    a.add("h_2", "policy", T);
+    expect(a.get("h_1")).toEqual({ id: "h_1", at: T, by: "cli", hash });
+    expect(a.get("h_2")).toEqual({ id: "h_2", at: T, by: "policy" });
+    expect(a.get("h_3")).toBeUndefined();
+    const again = new AcceptedHere(file);
+    expect(again.list()).toEqual([
+      { id: "h_1", at: T, by: "cli", hash },
+      { id: "h_2", at: T, by: "policy" },
+    ]);
+    // An older record, ids only, loads as it is. An entry whose hash isn't a hash is not one to go by.
+    fs.writeFileSync(file, JSON.stringify([{ id: "h_old", at: T, by: "menubar" }, { id: "h_bad", at: T, by: "cli", hash: "not-a-hash" }, { id: "h_num", at: T, by: "cli", hash: 7 }]));
+    expect(new AcceptedHere(file).list()).toEqual([{ id: "h_old", at: T, by: "menubar" }]);
+  });
+
   it("a file that was made wider is 0600 again after the next change", () => {
     const a = new AcceptedHere(file);
     a.add("h_1", "cli", T);

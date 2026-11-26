@@ -142,6 +142,6 @@ Set by Workmesh itself, useful when you debug:
 | `~/.local/state/workmesh/hub-forward.json` | Shared sessions and unsent events, so a restart loses nothing (`0600`). |
 | `~/.local/state/workmesh/update.log`, `update/previous/` | The last `workmesh update` run and the copy it rolls back to. |
 | `~/.local/state/workmesh/handoffs/` | Handoff runs on this machine. |
-| `~/.local/state/workmesh/handoffs-accepted.json` | The ids of the handoffs that were accepted on this machine (`0600`). Only those are started here. |
+| `~/.local/state/workmesh/handoffs-accepted.json` | The ids of the handoffs that were accepted on this machine, each with a hash of the text that was accepted (`0600`). Only those are started here, and only while their text is the same. |
 | `~/Library/LaunchAgents/org.npclabs.workmesh.daemon.plist` | The daemon service on macOS. |
 | `~/.config/systemd/user/workmesh.service` | The daemon service on Linux. |

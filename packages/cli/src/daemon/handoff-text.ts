@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { HUB_DELEGATE_NOTE_MAX } from "@workmesh/protocol";
 import type { HubHandoffAccepted } from "@workmesh/protocol";
 import { QUOTE_MARK, cleanText, oneLine } from "../lib/untrusted";
@@ -68,12 +69,31 @@ export function handoffStart(
 }
 
 /**
- * What the list and the menu bar say about a handoff that was accepted somewhere else and waits for this person's
- * "run it here". With no device on it, it was accepted on the board. With this machine's device on it, the hub says
- * it was accepted here, and this machine has no record of that.
+ * What a person's accept covers: the task and context they read, and the repo and issue it is for. The hash is of the
+ * text as the hub sent it, before any cleaning, so a change nobody could see counts too.
  */
-export function runHereQuestion(h: Pick<HubHandoffAccepted, "device">, capital = false): string {
-  const text = h.device ? "accepted, but this machine has no record of your accept: run it here?" : "accepted on the board: run it here?";
+export function handoffHash(h: Pick<HubHandoffAccepted, "task" | "context" | "repo" | "issue">): string {
+  return createHash("sha256")
+    .update(JSON.stringify([h.task, h.context ?? null, h.repo ?? null, h.issue ?? null]))
+    .digest("hex");
+}
+
+/**
+ * Why an accepted handoff waits for this person's "run it here" on this machine. `board`: it was accepted on the
+ * board. `no-record`: the hub says it was accepted on this machine, and this machine has no record of that.
+ * `changed`: it was accepted here, and the hub now lists it with other text.
+ */
+export type RunHereWhy = "board" | "no-record" | "changed";
+
+const RUN_HERE: Record<RunHereWhy, string> = {
+  board: "accepted on the board: run it here?",
+  "no-record": "accepted, but this machine has no record of your accept: run it here?",
+  changed: "accepted, but its text changed after your accept: run it here?",
+};
+
+/** What the list and the menu bar say about a handoff that waits for "run it here". */
+export function runHereQuestion(why: RunHereWhy, capital = false): string {
+  const text = RUN_HERE[why];
   return capital ? `${text[0]!.toUpperCase()}${text.slice(1)}` : text;
 }
 

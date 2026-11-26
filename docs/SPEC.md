@@ -966,6 +966,13 @@ command run; a waiter that can't reach the daemon ends.
   - The record is a file in the state dir (`handoffs-accepted.json`, 0600). It holds each id with when and where it
     was accepted, never a handoff's text. It keeps 500 ids and survives a daemon restart. An id goes when the hub
     stops listing its handoff.
+  - An accept covers the text that was read. Beside each id the record keeps a SHA-256 hash of the task, the
+    context, the repo and the issue, as this machine listed them when the handoff was accepted. The relay starts a
+    handoff only when the one the hub lists still has that hash. One listed with other text waits again, as
+    "accepted, but its text changed after your accept: run it here?", and the daemon's log says so. An entry without
+    a hash, from a record written before hashes were kept, matches whatever is listed under its id.
+  - So the daemon takes an accept only for a handoff it lists. For one it doesn't list, it answers "No handoff <id>
+    for you or from you in the hub's list" and makes no hub call.
   - A handoff accepted somewhere else is not started. That is one accepted on the board, or one the hub lists as
     accepted for this machine while the record has no such id. The list and the menu bar show it as "accepted on the
     board: run it here?". The person confirms at a terminal (`workmesh handoffs run <id>`): the whole handoff, the

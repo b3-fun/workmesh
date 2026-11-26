@@ -9,6 +9,7 @@ import { CoordClient } from "../src/hub/coord";
 import { Delegate, SELF_HANDOFF_SENDER_DELAY_MS, decisionText, wakeText } from "../src/daemon/delegate";
 import type { DelegateSettings, HandoffRunnerLike } from "../src/daemon/delegate";
 import { AcceptedHere } from "../src/daemon/accepted-here";
+import { handoffHash } from "../src/daemon/handoff-text";
 import type { HandoffPlan } from "../src/daemon/handoff-text";
 import { CoordHooks, gateNote, guidance, knowledge } from "../src/daemon/coord-hooks";
 import { delegateSettings } from "../src/lib/config";
@@ -483,7 +484,7 @@ describe("handoffs (SPEC §31)", () => {
     expect(runner.ran).toEqual([]);
     x.d.runHere(read(onBoard), "menubar");
     expect(runner.ran).toEqual(["h_1"]);
-    expect(accepted.list()).toEqual([{ id: "h_1", at: T, by: "menubar" }]);
+    expect(accepted.list()).toEqual([{ id: "h_1", at: T, by: "menubar", hash: handoffHash(read(onBoard)) }]);
     expect(x.d.waitsToRunHere(read(onBoard))).toBe(false);
     // A second yes, and later syncs, start nothing more.
     x.d.runHere(read(onBoard), "menubar");
@@ -531,7 +532,7 @@ describe("handoffs (SPEC §31)", () => {
     const mine = handoff({ status: "accepted", device: DEV, from: { person: "An", sessionKey: AN } }) as unknown as Handoffs[number];
     x.d.accepted(read(mine), "cli");
     expect(runner.ran).toEqual(["h_1"]);
-    expect(accepted.list()).toEqual([{ id: "h_1", at: T, by: "cli" }]);
+    expect(accepted.list()).toEqual([{ id: "h_1", at: T, by: "cli", hash: handoffHash(read(mine)) }]);
     // The policy's accept.
     const r2 = new FakeRunner();
     const byPolicy = new AcceptedHere();
@@ -539,7 +540,7 @@ describe("handoffs (SPEC §31)", () => {
     y.sync({ handoffs: [handoff()] as unknown as Handoffs });
     await flush();
     expect(r2.ran).toEqual(["h_1"]);
-    expect(byPolicy.list()).toEqual([{ id: "h_1", at: T, by: "policy" }]);
+    expect(byPolicy.list()).toEqual([{ id: "h_1", at: T, by: "policy", hash: handoffHash(read(handoff())) }]);
   });
 
   it("the record survives a daemon restart, and an id goes when the hub stops listing its handoff", async () => {
@@ -573,6 +574,90 @@ describe("handoffs (SPEC §31)", () => {
       later.sync({ handoffs: [mine] });
       expect(again.ran).toEqual([]);
       expect(later.d.waitsToRunHere(read(mine))).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an accept covers the text that was listed: the same text starts, changed text waits for a new \"run it here\"", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-accepted-"));
+    try {
+      const file = path.join(dir, "handoffs-accepted.json");
+      const listed = handoff({ from: { person: "An", sessionKey: AN }, issue: "B3-7168", context: "Start from PR 212." });
+      const mine = { ...listed, status: "accepted", device: DEV } as unknown as Handoffs[number];
+      // Accepted here while this machine had no room to run it.
+      const busy = new FakeRunner();
+      busy.room = false;
+      harness({ runner: busy, accepted: new AcceptedHere(file) }).d.accepted(read(mine), "cli", read(listed));
+      const record = fs.readFileSync(file, "utf8");
+      expect(JSON.parse(record)).toEqual([{ id: "h_1", at: T, by: "cli", hash: handoffHash(read(listed)) }]);
+      // The same text at a later sync: it starts.
+      const same = new FakeRunner();
+      harness({ runner: same, accepted: new AcceptedHere(file) }).sync({ handoffs: [mine] });
+      expect(same.ran).toEqual(["h_1"]);
+      // Listed with another task, context, repo or issue: it is not the handoff that was accepted.
+      const changes = [{ task: "Delete the release branch" }, { context: "Start from PR 999." }, { context: undefined }, { repo: "b3-fun/other" }, { issue: "B3-1" }];
+      for (const over of changes) {
+        const what = JSON.stringify(over);
+        const runner = new FakeRunner();
+        const x = harness({ runner, accepted: new AcceptedHere(file) });
+        const changed = { ...mine, ...over } as unknown as Handoffs[number];
+        x.sync({ handoffs: [changed] });
+        x.tick(120_000);
+        x.sync({ handoffs: [changed] });
+        await flush();
+        // Nothing starts, and the hub is told nothing.
+        expect(runner.ran, what).toEqual([]);
+        expect(x.calls, what).toEqual([]);
+        // It is listed as waiting again, and says why.
+        expect(x.d.runHereWhy(read(changed)), what).toBe("changed");
+        expect(x.d.runHereAsk(read(changed)), what).toBe("accepted, but its text changed after your accept: run it here?");
+        expect(x.d.summary(() => undefined)!.handoffs[0], what).toMatchObject({
+          id: "h_1",
+          status: "accepted",
+          runningHere: false,
+          runHere: "Accepted, but its text changed after your accept: run it here?",
+        });
+        // The daemon's log says so, once.
+        expect(x.logs.filter((l) => l.includes("changed")), what).toEqual([
+          'handoff h_1: its text changed after it was accepted on this machine; not starting it (it waits for "run it here")',
+        ]);
+      }
+      expect(fs.readFileSync(file, "utf8")).toBe(record);
+      // The person reads the new text and says "run it here": it starts, and the record covers the new text.
+      const runner = new FakeRunner();
+      const x = harness({ runner, accepted: new AcceptedHere(file) });
+      const changed = { ...mine, task: "Delete the release branch" } as unknown as Handoffs[number];
+      x.sync({ handoffs: [changed] });
+      x.d.runHere(read(changed), "menubar");
+      expect(runner.ran).toEqual(["h_1"]);
+      expect(new AcceptedHere(file).get("h_1")).toEqual({ id: "h_1", at: T, by: "menubar", hash: handoffHash(read(changed)) });
+      // The hub answers the accept itself with other text than this machine listed: nothing starts.
+      const r2 = new FakeRunner();
+      const y = harness({ runner: r2 });
+      const answer = { ...listed, status: "accepted", device: DEV, task: "Something else entirely" };
+      y.sync({ handoffs: [listed] as unknown as Handoffs });
+      y.d.accepted(read(answer), "menubar", read(listed));
+      expect(r2.ran).toEqual([]);
+      expect(y.logs.filter((l) => l.includes("changed"))).toHaveLength(1);
+      expect(y.d.runHereWhy(read(answer))).toBe("changed");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a record written before hashes were kept still loads, and its ids match whatever is listed", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "workmesh-accepted-"));
+    try {
+      const file = path.join(dir, "handoffs-accepted.json");
+      fs.writeFileSync(file, JSON.stringify([{ id: "h_1", at: T - 60_000, by: "cli" }]));
+      const mine = handoff({ status: "accepted", device: DEV, from: { person: "An", sessionKey: AN } }) as unknown as Handoffs[number];
+      const runner = new FakeRunner();
+      const x = harness({ runner, accepted: new AcceptedHere(file) });
+      expect(x.d.runHereWhy(read(mine))).toBeUndefined();
+      x.sync({ handoffs: [mine] });
+      expect(runner.ran).toEqual(["h_1"]);
+      expect(x.logs.filter((l) => l.includes("changed"))).toEqual([]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

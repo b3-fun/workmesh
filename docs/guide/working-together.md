@@ -150,6 +150,10 @@ its own. `workmesh handoffs` and the menu bar show it as "accepted on the board:
 <id>` prints the whole handoff and what starts, then asks. In the menu bar it takes the same two steps as Accept. To get
 the old behaviour back, set `handoffs.runAccepted` to `auto` in the config. That trusts the hub's word that you accepted.
 
+Your accept covers the text you read. If the hub later lists the handoff with another task, context, repo or issue, it
+is not started. It shows as "accepted, but its text changed after your accept: run it here?" until you read the new
+text and confirm.
+
 The started agent gets the Workmesh daemon's environment without the variables whose names look like secrets, such as
 `GITHUB_TOKEN` or `AWS_SECRET_ACCESS_KEY`. It keeps what Claude Code or Codex needs to sign in. If a handoff needs one
 more, add its name to `handoffs.env` in the config. The run's log (`agent.log` under

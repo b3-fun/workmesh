@@ -15,7 +15,7 @@ import { CoordClient } from "../hub/coord";
 import type { CoordResult } from "../hub/coord";
 import { scrubText } from "../hub/redact";
 import type { AcceptedBy } from "./accepted-here";
-import { cleanHandoff, handoffListLine, handoffView, runHereQuestion } from "./handoff-text";
+import { cleanHandoff, handoffListLine, handoffView } from "./handoff-text";
 import type { HandoffStart } from "./handoff-text";
 import { forgetOp, memoriesOp, noteAsMemory, recallOp, rememberOp } from "./memory-ops";
 
@@ -100,10 +100,13 @@ export interface CoordOpsDeps {
   isShared: (key: string) => boolean;
   /** Live Claude Code processes by session id (`~/.claude/sessions`). */
   claudeSessions: () => ReadonlyMap<string, { pid: number; sessionId: string }> | undefined;
-  /** v2: the person accepted a handoff on this machine (record it, and start it now rather than at the next sync). */
-  onAccepted?: (h: HubHandoffAccepted, by: AcceptedBy) => void;
-  /** v2: whether a handoff accepted somewhere else waits for this person's "run it here". */
-  waitsToRunHere?: (h: HubHandoffAccepted) => boolean;
+  /**
+   * v2: the person accepted a handoff on this machine (record it, and start it now rather than at the next sync).
+   * `seen` is the handoff as this machine listed it when they accepted: the text they read.
+   */
+  onAccepted?: (h: HubHandoffAccepted, by: AcceptedBy, seen: HubHandoffAccepted) => void;
+  /** v2: the question for a handoff that waits for this person's "run it here"; undefined when it doesn't wait. */
+  runHereQuestion?: (h: HubHandoffAccepted) => string | undefined;
   /** v2: the person said "run it here" on this machine (record it, and start it). */
   onRunHere?: (h: HubHandoffAccepted, by: AcceptedBy) => void;
   /** v2: handoff ids running on this machine. */
@@ -530,17 +533,25 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
           await coord.refreshed();
           const h = coord.view().state?.handoffs?.find((x) => x.id === id);
           if (!h) return fail(`No handoff ${id} for you or from you in the hub's list (\`handoffs\` lists them).`);
-          if (!deps.waitsToRunHere?.(h)) return fail(`Workmesh: ${id} isn't waiting to run on this machine.`);
+          if (!deps.runHereQuestion?.(h)) return fail(`Workmesh: ${id} isn't waiting to run on this machine.`);
           const start = deps.handoffStart?.(h, "Running it here starts");
           if (start && !start.agent) return fail(start.text);
           deps.onRunHere?.(h, by);
           return { ok: true, text: `Running ${id} here: this machine starts an agent for it.`, data: { handoff: cleanHandoff(h) } };
         }
         const note = str(a.note, 500);
+        // An accept covers the text this machine listed, which is what the person read. One it doesn't list can't be
+        // accepted here.
+        let seen: HubHandoffAccepted | undefined;
+        if (action === "accept") {
+          await coord.refreshed();
+          seen = coord.view().state?.handoffs?.find((x) => x.id === id);
+          if (!seen) return fail(`No handoff ${id} for you or from you in the hub's list (\`handoffs\` lists them).`);
+        }
         const r = await coord.handoff({ action, id, ...(note ? { note } : {}) });
         if (!r.ok) return delegateError(r);
         if (!r.body.ok) return fail(`Workmesh: ${r.body.error || `the hub didn't ${action} it`}`, r.body);
-        if (action === "accept") deps.onAccepted?.(r.body.handoff, by);
+        if (seen) deps.onAccepted?.(r.body.handoff, by, seen);
         return {
           ok: true,
           text: action === "accept" ? `Accepted ${id}: this machine starts an agent for it.` : `Declined ${id}.`,
@@ -562,20 +573,21 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         if (!h) return fail(`No handoff ${id} for you or from you in the hub's list (\`handoffs\` lists them).`);
         const runningHere = running.has(h.id);
         const canAccept = h.status === "offered" && !runningHere && me !== undefined && h.to.person.toLowerCase() === me;
-        // Accepted somewhere else: it waits for this person's "run it here" on this machine.
-        const canRun = !runningHere && (deps.waitsToRunHere?.(h) ?? false);
+        // Accepted somewhere else, or changed since it was accepted here: it waits for this person's "run it here".
+        const runHere = runningHere ? undefined : deps.runHereQuestion?.(h);
+        const canRun = runHere !== undefined;
         const start = canAccept ? deps.handoffStart?.(h, "Accepting starts") : canRun ? deps.handoffStart?.(h, "Running it here starts") : undefined;
         const ago = h.createdAt > 0 ? mins(coord.hubNow(now) - h.createdAt) : undefined;
         return {
           ok: true,
-          text: handoffView(h, { runningHere, ago, start, runHere: canRun ? runHereQuestion(h) : undefined }),
+          text: handoffView(h, { runningHere, ago, start, runHere }),
           data: { handoff: cleanHandoff(h), canAccept, canRun, ...(start ? { onAccept: start } : {}) },
         };
       }
       if (st.handoffs.length === 0) return { ok: true, text: "No handoffs.", data: { handoffs: [] } };
       const lines = st.handoffs
         .slice(0, 30)
-        .map((h) => handoffListLine(h, { me, runningHere: running.has(h.id), runHere: deps.waitsToRunHere?.(h) ? runHereQuestion(h) : undefined }));
+        .map((h) => handoffListLine(h, { me, runningHere: running.has(h.id), runHere: deps.runHereQuestion?.(h) }));
       return { ok: true, text: lines.join("\n"), data: { handoffs: st.handoffs.map(cleanHandoff) } };
     }
 

@@ -7,8 +7,11 @@ import path from "node:path";
  * hub listing a handoff as accepted is not enough, because the hub can be wrong and the board can be used by someone
  * else.
  *
- * The record is a small file in the state dir (0600), so it survives a daemon restart. It holds ids, never a
- * handoff's text. It is capped, and an id goes once the hub stops listing its handoff.
+ * Each id comes with a hash of what was accepted: the task, the context, the repo and the issue as this machine
+ * showed them. A handoff the hub lists with other text is not the one that was accepted, and is not started.
+ *
+ * The record is a small file in the state dir (0600), so it survives a daemon restart. It holds ids and hashes, never
+ * a handoff's text. It is capped, and an id goes once the hub stops listing its handoff.
  */
 
 /** Where the accept happened on this machine. */
@@ -19,12 +22,18 @@ export interface AcceptedEntry {
   /** When, on this machine's clock (epoch ms). */
   at: number;
   by: AcceptedBy;
+  /**
+   * The hash of the handoff as it was accepted (`handoffHash`). Absent in a record written before hashes were kept:
+   * such an entry matches whatever the hub lists under its id.
+   */
+  hash?: string;
 }
 
 /** The record keeps this many ids; the oldest go first. */
 export const ACCEPTED_HERE_MAX = 500;
 
 const BY: readonly string[] = ["cli", "menubar", "policy"];
+const HASH_RE = /^[0-9a-f]{64}$/;
 
 export class AcceptedHere {
   private readonly file: string | undefined;
@@ -40,7 +49,9 @@ export class AcceptedHere {
         const x = e as Partial<AcceptedEntry> | null;
         if (!x || typeof x.id !== "string" || x.id === "" || x.id.length > 64) continue;
         if (typeof x.at !== "number" || !Number.isFinite(x.at) || typeof x.by !== "string" || !BY.includes(x.by)) continue;
-        this.entries.set(x.id, { id: x.id, at: x.at, by: x.by });
+        // No hash: an entry from before hashes were kept. A hash that isn't one: not an entry to go by.
+        if (x.hash !== undefined && (typeof x.hash !== "string" || !HASH_RE.test(x.hash))) continue;
+        this.entries.set(x.id, { id: x.id, at: x.at, by: x.by, ...(x.hash === undefined ? {} : { hash: x.hash }) });
       }
       this.trim();
     } catch {
@@ -52,14 +63,18 @@ export class AcceptedHere {
     return this.entries.has(id);
   }
 
+  get(id: string): AcceptedEntry | undefined {
+    return this.entries.get(id);
+  }
+
   list(): AcceptedEntry[] {
     return [...this.entries.values()];
   }
 
-  /** A handoff was accepted on this machine. */
-  add(id: string, by: AcceptedBy, at: number): void {
+  /** A handoff was accepted on this machine; `hash` says which text the accept covers. */
+  add(id: string, by: AcceptedBy, at: number, hash?: string): void {
     this.entries.delete(id);
-    this.entries.set(id, { id, at, by });
+    this.entries.set(id, { id, at, by, ...(hash === undefined ? {} : { hash }) });
     this.trim();
     this.save();
   }

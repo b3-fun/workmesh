@@ -13,8 +13,8 @@ import type { GateMatch } from "./gates";
 import { formatInbox } from "./coord-hooks";
 import { AcceptedHere } from "./accepted-here";
 import type { AcceptedBy } from "./accepted-here";
-import { NOTHING_VISIBLE, handoffStart, readable, runHereQuestion } from "./handoff-text";
-import type { HandoffPlan, HandoffStart } from "./handoff-text";
+import { NOTHING_VISIBLE, handoffHash, handoffStart, readable, runHereQuestion } from "./handoff-text";
+import type { HandoffPlan, HandoffStart, RunHereWhy } from "./handoff-text";
 import { oneLine } from "../lib/untrusted";
 
 /**
@@ -184,6 +184,8 @@ export class Delegate {
   private readonly codexTried = new Set<string>();
   /** The handoffs accepted on this machine: the only ones it starts. */
   private readonly acceptedHere: AcceptedHere;
+  /** Handoffs whose text changed after the accept, as `<id>|<hash now>`: the log says so once per change. */
+  private readonly changedLogged = new Set<string>();
 
   constructor(deps: DelegateDeps) {
     this.deps = deps;
@@ -490,7 +492,8 @@ export class Delegate {
       .then((r) => {
         if (r.ok && r.body.ok) {
           this.log(`handoff ${h.id}: accepted by policy (auto-self)`);
-          this.acceptedHere.add(h.id, "policy", this.now());
+          // The policy accepted the text this machine was listing: that is what the record covers.
+          this.acceptedHere.add(h.id, "policy", this.now(), handoffHash(h));
           if (r.body.handoff.status === "accepted") this.maybeStart(coord, r.body.handoff, policy, true);
         }
       })
@@ -502,7 +505,15 @@ export class Delegate {
     if (!runner || policy === "never") return;
     if (h.device && h.device !== coord.deviceId) return;
     // The hub's word is not enough: this machine starts only what was accepted on it, unless its person chose `auto`.
-    if (this.deps.settings().runAccepted !== "auto" && !this.acceptedHere.has(h.id)) return;
+    // And it starts the text that was accepted: one the hub lists with other text waits for a new yes.
+    if (this.deps.settings().runAccepted !== "auto") {
+      const entry = this.acceptedHere.get(h.id);
+      if (!entry) return;
+      if (entry.hash !== undefined && entry.hash !== handoffHash(h)) {
+        this.logChanged(h);
+        return;
+      }
+    }
     if (runner.running().has(h.id) || (!force && this.handoffCalls.has(h.id))) return;
     const why = runner.cannotRun(h);
     if (why) {
@@ -526,37 +537,66 @@ export class Delegate {
 
   /**
    * The person accepted a handoff on this machine, at its terminal or in its menu bar: the record says so, and it
-   * starts here now, rather than at the next sync.
+   * starts here now, rather than at the next sync. `seen` is the handoff as this machine listed it when they
+   * accepted, which is the text they read. The record covers that text: if the hub answered the accept with other
+   * text (`h`), nothing starts.
    */
-  accepted(h: HubHandoffAccepted, by: AcceptedBy = "cli"): void {
+  accepted(h: HubHandoffAccepted, by: AcceptedBy = "cli", seen: HubHandoffAccepted = h): void {
     const coord = this.deps.coord();
     if (!coord || h.status !== "accepted") return;
-    this.acceptedHere.add(h.id, by, this.now());
+    this.acceptedHere.add(h.id, by, this.now(), handoffHash(seen));
     this.maybeStart(coord, h, this.deps.settings().accept === "never" ? "ask" : this.deps.settings().accept, true);
   }
 
   /**
-   * Whether an accepted handoff waits for this person's "run it here". It was accepted somewhere else: on the board,
-   * or so the hub says while this machine has no record of it. It may run on this machine, and nothing runs it yet.
+   * Why an accepted handoff waits for this person's "run it here", or undefined when it doesn't. It waits when it
+   * was accepted somewhere else: on the board, or so the hub says while this machine has no record of it. It waits
+   * again when it was accepted here and the hub now lists it with other text. It may run on this machine, and
+   * nothing runs it yet.
    */
-  waitsToRunHere(h: HubHandoffAccepted): boolean {
+  runHereWhy(h: HubHandoffAccepted): RunHereWhy | undefined {
     const coord = this.deps.coord();
     const runner = this.deps.runner;
-    if (!coord || !runner || h.status !== "accepted") return false;
+    if (!coord || !runner || h.status !== "accepted") return undefined;
     const settings = this.deps.settings();
-    if (settings.accept === "never" || settings.runAccepted === "auto") return false;
+    if (settings.accept === "never" || settings.runAccepted === "auto") return undefined;
     const me = lower(this.me(coord));
-    if (!me || h.to.person.toLowerCase() !== me) return false;
-    if (h.device && h.device !== coord.deviceId) return false;
-    return !this.acceptedHere.has(h.id) && !runner.running().has(h.id);
+    if (!me || h.to.person.toLowerCase() !== me) return undefined;
+    if (h.device && h.device !== coord.deviceId) return undefined;
+    if (runner.running().has(h.id)) return undefined;
+    const entry = this.acceptedHere.get(h.id);
+    if (!entry) return h.device ? "no-record" : "board";
+    return entry.hash !== undefined && entry.hash !== handoffHash(h) ? "changed" : undefined;
   }
 
-  /** The person said "run it here" for a handoff that waits (`waitsToRunHere`): the record says so, and it starts. */
+  waitsToRunHere(h: HubHandoffAccepted): boolean {
+    return this.runHereWhy(h) !== undefined;
+  }
+
+  /** The question the list shows for a handoff that waits for "run it here", or undefined when it doesn't wait. */
+  runHereAsk(h: HubHandoffAccepted): string | undefined {
+    const why = this.runHereWhy(h);
+    return why ? runHereQuestion(why) : undefined;
+  }
+
+  /**
+   * The person said "run it here" for a handoff that waits (`runHereWhy`). The record now covers the text this
+   * machine lists, which is the text they just read, and it starts.
+   */
   runHere(h: HubHandoffAccepted, by: AcceptedBy = "cli"): void {
     const coord = this.deps.coord();
     if (!coord || !this.waitsToRunHere(h)) return;
-    this.acceptedHere.add(h.id, by, this.now());
+    this.acceptedHere.add(h.id, by, this.now(), handoffHash(h));
     this.maybeStart(coord, h, this.deps.settings().accept, true);
+  }
+
+  /** Says once, per change, that a handoff accepted here is now listed with other text. */
+  private logChanged(h: HubHandoffAccepted): void {
+    const key = `${h.id}|${handoffHash(h)}`;
+    if (this.changedLogged.has(key)) return;
+    this.changedLogged.add(key);
+    if (this.changedLogged.size > 1000) this.changedLogged.clear();
+    this.log(`handoff ${h.id}: its text changed after it was accepted on this machine; not starting it (it waits for "run it here")`);
   }
 
   /** Handoffs the sync lists for this person: offered to them, sent by them, running here. */
@@ -697,7 +737,8 @@ export class Delegate {
     for (const h of st?.handoffs ?? []) {
       const offeredToMe = me !== undefined && h.to.person.toLowerCase() === me && h.status === "offered";
       const here = running.has(h.id);
-      const waits = !here && this.waitsToRunHere(h);
+      const why = here ? undefined : this.runHereWhy(h);
+      const waits = why !== undefined;
       if (!offeredToMe && !here && !waits) continue;
       // The whole task and context, so the person can read all of it before Accept. Cleaning never adds a
       // character, so both stay within the protocol's limit.
@@ -710,7 +751,7 @@ export class Delegate {
         task: readable(h.task) ?? NOTHING_VISIBLE,
         ...(context === undefined ? {} : { context }),
         ...(onAccept ? { onAccept } : {}),
-        ...(waits ? { runHere: runHereQuestion(h, true) } : {}),
+        ...(why ? { runHere: runHereQuestion(why, true) } : {}),
         repo: h.repo,
         issue: h.issue,
         status: h.status,

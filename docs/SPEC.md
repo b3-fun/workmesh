@@ -1351,3 +1351,38 @@ shapes and numbers only):
   totals are saved with the forwarder's state (§24: `usageReaders`), so a daemon restart carries on where it stopped
   and never reads a file twice. A state file from an older relay has no readers: those transcripts are read once from
   their start. A replaced or truncated file is read again from its start.
+
+---
+
+# New machines on an account (2026-11-26)
+
+A machine joins a person's account when that person approves its pairing code (§3.1). Their other machines said
+nothing when that happened, so a person who approved a code by mistake had no way to notice. The hub now names newly
+added machines on sync, and each relay tells its person. Linear B3-7237. Still `v: 1`; the list is optional, so an
+older hub and an older relay work as before.
+
+## 46. `newDevices` on sync
+
+`GET /relay/sync` (§21) gains one optional list:
+
+```jsonc
+{
+  // … §21, §30, §35 …
+  "newDevices": [                                      // ≤ 50
+    { "id": "dev_<ulid>",                              // the new machine's device id
+      "machine": "sams-laptop",                        // its name, as it paired (§3.1), 1..120
+      "pairedAt": 1795545600000,                       // when it was added (epoch ms, the hub's clock)
+      "where": "Lisbon, Portugal (Example Telecom)" }  // opt: a short place and network description, ≤ 200
+  ]
+}
+```
+
+- **What it lists:** the machines added to this device's person's account in the last 24 hours, other than the
+  machine asking. The hub lists each one on every sync in that time; a relay tells its person once per `id` (§47).
+- **Optional.** A hub that predates it sends no list, and a relay then has nothing to tell. An empty list means the
+  same.
+- **Accept reading** (`hubSyncAcceptSchema`): an item is kept when its `id` can be read. A `machine` or `where` that
+  is too long is cut; a `machine` that can't be read reads as empty and a `pairedAt` that can't be read as 0, so the
+  person is still told. An item without an `id` is dropped on its own.
+- `machine` and `where` are text from outside the machine. A relay shows them on one line, with control and invisible
+  characters removed, and never gives them to an agent.

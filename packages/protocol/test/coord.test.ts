@@ -290,6 +290,37 @@ describe("sync (SPEC §21)", () => {
   });
 });
 
+describe("where the hub made an inbox item from (SPEC §23)", () => {
+  const linear = { ...sync.inbox[0], id: "m_9", via: "linear" };
+  const withVia = (via: unknown) => ({ ...sync, inbox: [{ ...linear, via }] });
+
+  it("what the hub builds, the relay reads unchanged", () => {
+    const built = hubSyncResponseSchema.parse({ ...sync, inbox: [linear] });
+    expect(built.inbox[0]?.via).toBe("linear");
+    expect(hubSyncAcceptSchema.parse(built).inbox[0]?.via).toBe("linear");
+  });
+
+  it("is optional: a message a person or an agent sent carries none", () => {
+    expect(hubSyncResponseSchema.parse(sync).inbox[0]?.via).toBeUndefined();
+    expect(hubSyncAcceptSchema.parse(sync).inbox[0]?.via).toBeUndefined();
+    expect(hubSyncAcceptSchema.parse(withVia(null)).inbox[0]?.via).toBeUndefined();
+  });
+
+  it("strict: exactly `linear`", () => {
+    for (const via of ["Linear", "slack", "", 1, null, ["linear"]]) {
+      expect(hubSyncResponseSchema.safeParse(withVia(via)).success, JSON.stringify(via)).toBe(false);
+    }
+  });
+
+  it("accept: a value this relay doesn't know keeps the message and reads as `other`, never as absent", () => {
+    for (const via of ["Linear", "slack", "", 1, false, ["linear"], { from: "linear" }]) {
+      const read = hubSyncAcceptSchema.parse(withVia(via));
+      expect(read.inbox, JSON.stringify(via)).toHaveLength(1);
+      expect(read.inbox[0]?.via, JSON.stringify(via)).toBe("other");
+    }
+  });
+});
+
 describe("new machines on sync (SPEC §46)", () => {
   const laptop = { id: "dev_01JD0000000000000000000002", machine: "sams-laptop", pairedAt: T, where: "Lisbon, Portugal (Example Telecom)" };
   const box = { id: "dev_01JD0000000000000000000003", machine: "sams-box", pairedAt: T + 1000 };

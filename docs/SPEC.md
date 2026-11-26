@@ -587,6 +587,10 @@ read and drops the rest one by one):
   an item again before its ack lands and delivers it once (by `id`). Leases, holds, claims and roster are complete
   lists too; the cursor is the hub's own (a relay sends back what it got). A relay keeps an undelivered item a hub
   stops listing for a day (its session may come back), so a hub that lists each item once still works.
+- An inbox item may carry `via` (optional, B3-7232). It says where the hub made the message from, when no paired
+  machine and no signed-in member sent it. The one value today is `"linear"`: a prompt a Linear user wrote on an
+  issue. `from.person` is then the name Linear gave its author. A hub sends exactly that value or no field. A relay
+  reads any value it does not know as `other`, and never as absent (§23).
 - `edits` (optional): files sessions edited in the last 10 minutes (one row per session and path, the newest),
   from the `path` the hub already has (§3.2). A relay warns its agent before it edits a file another person's
   session touched there.

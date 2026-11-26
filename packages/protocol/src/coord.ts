@@ -371,6 +371,19 @@ export const hubHoldSchema = z.object({
 });
 export type HubHold = z.infer<typeof hubHoldSchema>;
 
+/** The one source an inbox item's `via` names today: a Linear user's prompt on an issue. */
+export const HUB_INBOX_VIA_LINEAR = "linear";
+/** What a relay reads from `via`: the source it knows, or `other` for any value it doesn't. */
+export type HubInboxVia = typeof HUB_INBOX_VIA_LINEAR | "other";
+/**
+ * `via` as a relay reads it. A value it doesn't know still says that no paired machine sent the message, so it reads
+ * as `other` and never as absent: a newer hub's new source is not taken for a member's own message.
+ */
+const viaAccept = z
+  .unknown()
+  .transform((v): HubInboxVia | undefined => (v === undefined || v === null ? undefined : v === HUB_INBOX_VIA_LINEAR ? HUB_INBOX_VIA_LINEAR : "other"))
+  .optional();
+
 /** A message waiting for one of this device's sessions. */
 export const hubInboxItemSchema = z.object({
   id: recordId,
@@ -385,6 +398,12 @@ export const hubInboxItemSchema = z.object({
    * person wrote it (no `from.sessionKey`), not when an agent did.
    */
   wake: z.boolean().optional(),
+  /**
+   * Where the hub made the item from, when no paired machine and no signed-in member sent it. `linear`: a prompt a
+   * Linear user wrote on an issue. `from.person` is then the name that source gave its author. Absent on every
+   * message a relay or the board sent.
+   */
+  via: z.literal(HUB_INBOX_VIA_LINEAR).optional(),
 });
 export type HubInboxItem = z.infer<typeof hubInboxItemSchema>;
 
@@ -496,6 +515,7 @@ export const hubSyncAcceptSchema = z.object({
       ts: epochMsAccept.catch(0),
       thread: soft(thread),
       wake: soft(z.boolean()),
+      via: viaAccept,
     }),
     500,
   ),

@@ -54,10 +54,21 @@ export interface DelegateSettings {
   wake: boolean;
   /** Who may hand this machine work without a click (default `ask`: nobody). */
   accept: HandoffAcceptPolicy;
-  /** A handoff accepted somewhere else: wait for the person's "run it here" (`confirm`, the default), or start it. */
-  runAccepted: "confirm" | "auto";
+  /**
+   * A handoff accepted somewhere else: wait for the person's "run it here" (`confirm`, the default), start it
+   * (`auto`), or start it only when a standing rule of the person's accepted it (`rules`, SPEC §50).
+   */
+  runAccepted: "confirm" | "auto" | "rules";
   /** The person's own `custom` gate patterns. */
   customGates: readonly string[];
+}
+
+/**
+ * Whether this machine starts an accepted handoff without its own record of an accept (SPEC §31, §50): always with
+ * `auto`; with `rules` only one the hub says a standing rule of the person's accepted; never with `confirm`.
+ */
+export function startsWithoutRecord(runAccepted: DelegateSettings["runAccepted"], h: Pick<HubHandoffAccepted, "acceptedBy">): boolean {
+  return runAccepted === "auto" || (runAccepted === "rules" && h.acceptedBy === "rule");
 }
 
 /** Runs accepted handoffs on this machine (daemon/handoff-runner.ts). */
@@ -510,9 +521,10 @@ export class Delegate {
     const runner = this.deps.runner;
     if (!runner || policy === "never") return;
     if (h.device && h.device !== coord.deviceId) return;
-    // The hub's word is not enough: this machine starts only what was accepted on it, unless its person chose `auto`.
-    // And it starts the text that was accepted: one the hub lists with other text waits for a new yes.
-    if (this.deps.settings().runAccepted !== "auto") {
+    // The hub's word is not enough: this machine starts only what was accepted on it, unless its person chose `auto`,
+    // or chose `rules` and one of their standing rules accepted this one (SPEC §50). And it starts the text that was
+    // accepted: one the hub lists with other text waits for a new yes.
+    if (!startsWithoutRecord(this.deps.settings().runAccepted, h)) {
       const entry = this.acceptedHere.get(h.id);
       if (!entry) return;
       if (entry.hash !== undefined && entry.hash !== handoffHash(h)) {
@@ -565,12 +577,12 @@ export class Delegate {
     const runner = this.deps.runner;
     if (!coord || !runner || h.status !== "accepted") return undefined;
     const settings = this.deps.settings();
-    if (settings.accept === "never" || settings.runAccepted === "auto") return undefined;
+    if (settings.accept === "never" || startsWithoutRecord(settings.runAccepted, h)) return undefined;
     if (!coord.isMe(h.to)) return undefined;
     if (h.device && h.device !== coord.deviceId) return undefined;
     if (runner.running().has(h.id)) return undefined;
     const entry = this.acceptedHere.get(h.id);
-    if (!entry) return h.device ? "no-record" : "board";
+    if (!entry) return h.device ? "no-record" : h.acceptedBy === "rule" ? "rule" : "board";
     return entry.hash !== undefined && entry.hash !== handoffHash(h) ? "changed" : undefined;
   }
 

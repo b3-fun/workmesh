@@ -1153,7 +1153,8 @@ command run; a waiter that can't reach the daemon ends.
   - One accepted on another of the person's machines (`device` is that machine) is that machine's to run. It is not
     offered here.
   - The config key `handoffs.runAccepted` is `confirm` when absent. With `auto`, this machine starts any handoff the
-    hub lists as accepted for its person, as before B3-7235. That trusts the hub's word.
+    hub lists as accepted for its person, as before B3-7235. That trusts the hub's word. With `rules` (§51), it
+    starts only one that a standing rule of the person's accepted (`acceptedBy: "rule"`, §50), and asks about the rest.
   - **The agent starts with fewer secrets** (B3-7235). It gets the daemon's environment without the variables whose
     name says the value is a secret. The redaction rules' reading of a name decides (§9): the last word counts, so
     `GITHUB_TOKEN` and `AWS_SECRET_ACCESS_KEY` go, and `PATH`, `NVM_DIR` and `SSH_AUTH_SOCK` stay.
@@ -1841,3 +1842,39 @@ reader, §14).
     lacks. A GitHub login goes the same way, and the hub does not match logins either (§21).
 - **Unchanged:** which session a lease, hold or message belongs to. Those are matched by session key, never by a
   person's name.
+
+# Requests: people without a relay ask for work (B3-7260, 2026-11-26)
+
+Sean, 11-26: "a non technical person prompting or asking the mesh, and the work executing on engineer's machines". A
+person who runs no relay (a PM, ops, design, sales) asks the hub for work in plain words. The hub records the request,
+proposes an owner and offers that engineer an ordinary handoff (§30), sent in the requester's name. The engineer
+accepts it, or a standing rule they set on the board accepts it for them. The relay runs it the way it runs any
+handoff (§31). The requester follows it, comments and signs off on the board. All of that lives on the hub. The wire
+gains one thing: a handoff can say a standing rule accepted it.
+
+## 50. `acceptedBy` on a handoff
+
+Code form: `packages/protocol/src/delegate.ts` (`hubHandoffSchema`, `HUB_HANDOFF_RULE_MAX`).
+
+- **`acceptedBy: "rule"`** is on a handoff (in sync, in `/relay/team`, in answers) that a standing rule of its
+  recipient's accepted, from `accepted` on. A rule is something the person set on the board, such as "accept small
+  requests from Allie in b3-fun/docs, at most 3 a day". **`rule`** gives that rule in the hub's words, at most 200
+  characters. A handoff the person accepted themselves carries neither field.
+- **A reader** keeps only the value `rule`. Any other value, or none, reads as absent, so the handoff is read as one
+  accepted somewhere else. `rule` is cut to 200 characters. A hub before §50 sends neither field.
+- **Requests are otherwise ordinary handoffs.** `from` is the requester, with no `sessionKey`, because they have no
+  machine. `task` is the request in the requester's words. `context` holds the clarified details, the Linear issue
+  and the request's page on the board. A relay that knows nothing of requests runs one like any other handoff.
+
+## 51. The relay side (`packages/cli`)
+
+- **The config key `handoffs.runAccepted`** takes a third value, `rules`. With `rules`, this machine starts a
+  handoff the hub lists as accepted for its person when it carries `acceptedBy: "rule"`, with no "run it here"
+  from the person on this machine. Every other handoff accepted somewhere else waits for "run it here" as under
+  `confirm` (§31). `rules` trusts the hub's word that the person's own rule accepted it. Turning `rules` on at the
+  machine is the person's consent to the rules they set on the board.
+- **With `confirm`** (the default), a handoff a rule accepted waits like any other one accepted somewhere else. Its
+  question reads "accepted by your standing rule on the board: run it here?".
+- `never` still runs none, and `auto` starts every accepted handoff as before.
+- Everything else in §31 holds. A handoff another machine accepted (`device`) is that machine's to run. The started
+  agent gets the same environment, with secrets left out. The run reports `done` or `fail`.

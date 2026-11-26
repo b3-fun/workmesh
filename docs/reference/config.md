@@ -37,7 +37,7 @@ Written by `workmesh hub connect` (or `init`). Don't copy this section between m
 |---|---|---|
 | `handoffs` | absent | Handoff settings for this machine. Absent means the defaults below. |
 | `handoffs.accept` | `ask` | `ask` waits for your Accept on every handoff, your own too. `auto-self` starts handoffs you sent yourself with no click and waits on teammates'. It trusts every machine and token of yours: each of them, and any agent running there, can start an agent on this machine. `never` runs none here (`workmesh handoffs policy`). |
-| `handoffs.runAccepted` | `confirm` | What this machine does with a handoff that was accepted somewhere else, such as on the board. `confirm`: it waits here until you say "run it here" (`workmesh handoffs run <id>`, or the menu bar). `auto`: this machine starts it. `auto` trusts the hub's word that you accepted it. |
+| `handoffs.runAccepted` | `confirm` | What this machine does with a handoff that was accepted somewhere else, such as on the board. `confirm`: it waits here until you say "run it here" (`workmesh handoffs run <id>`, or the menu bar). `auto`: this machine starts it. `auto` trusts the hub's word that you accepted it. `rules`: this machine starts one that a standing rule you set on the board accepted (a request, SPEC §50), and asks about the rest. `rules` trusts the hub's word that your rule accepted it. |
 | `handoffs.agent` | `claude` when found, else `codex` | The agent CLI that runs a handoff. |
 | `handoffs.roots` | `[]` | Folders whose git repos count as checkouts for handoffs (`workmesh roots add <dir>`). |
 | `handoffs.worktree` | `true` | Run each handoff in a new git worktree on its own branch. |

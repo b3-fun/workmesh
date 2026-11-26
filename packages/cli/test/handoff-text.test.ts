@@ -41,6 +41,8 @@ const handoff = (over: Partial<HubHandoffAccepted> = {}): HubHandoffAccepted => 
   device: undefined,
   sessionKey: undefined,
   note: undefined,
+  acceptedBy: undefined,
+  rule: undefined,
   ...over,
 });
 

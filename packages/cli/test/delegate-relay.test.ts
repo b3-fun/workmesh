@@ -92,6 +92,8 @@ const HANDOFF: HubHandoffAccepted = {
   device: DEV,
   sessionKey: undefined,
   note: undefined,
+  acceptedBy: undefined,
+  rule: undefined,
 };
 
 const settings = (over: Partial<RunnerSettings> = {}): RunnerSettings => ({

@@ -221,6 +221,12 @@ its own. `workmesh handoffs` and the menu bar show it as "accepted on the board:
 <id>` prints the whole handoff and what starts, then asks. In the menu bar it takes the same two steps as Accept. To get
 the old behaviour back, set `handoffs.runAccepted` to `auto` in the config. That trusts the hub's word that you accepted.
 
+Requests from teammates who run no relay (a PM, ops, design) come to you as handoffs too, sent in their name. You
+can let a standing rule on the board accept some of them for you: from whom, in which repo, up to what size, how
+many a day. Your machine still asks "accepted by your standing rule on the board: run it here?" unless you set
+`handoffs.runAccepted` to `rules`. Then it starts what your rules accepted, and still asks about everything else
+accepted somewhere else. `rules` trusts the hub's word that your rule accepted it.
+
 Your accept covers the text you read. If the hub later lists the handoff with another task, context, repo or issue, it
 is not started. It shows as "accepted, but its text changed after your accept: run it here?" until you read the new
 text and confirm.

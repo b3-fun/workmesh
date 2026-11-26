@@ -395,6 +395,53 @@ describe("MCP server (workmesh mcp)", () => {
     expect(older.result.protocolVersion).toBe("2025-11-25");
   });
 
+  it("handoffs only lists: the tool offers no accept or decline, and the daemon refuses one sent anyway", async () => {
+    const tool = MCP_TOOLS.find((t) => t.name === "handoffs")!;
+    expect(tool.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    expect(tool.annotations).toEqual({ readOnlyHint: true, openWorldHint: false });
+    expect(tool.description).toBe(
+      "Handoffs offered to your person and sent by them, one line each. Only your person accepts or declines one: on the board, in the menu bar or in their own terminal.",
+    );
+    // No tool takes an action named accept or decline.
+    expect(JSON.stringify(MCP_TOOLS.map((t) => t.inputSchema))).not.toMatch(/accept|decline/);
+    // An agent that still sends one gets the daemon's refusal, whether or not the daemon can name its session.
+    const h = harness();
+    const viaDaemon = (caller: () => { ppid?: number; cwd?: string }) => ({
+      version: "0.12.3",
+      caller,
+      call: (op: CoordOpRequest["op"], args: Record<string, unknown>, c: CoordOpRequest["caller"]) => runCoordOp({ op, args, caller: c }, h.deps),
+    });
+    for (const who of [() => ({ ppid: 4242, cwd: ROOT }), () => ({})]) {
+      for (const client of ["claude-code", "codex-mcp-client", undefined]) {
+        const session: { client?: string } = {};
+        await handleMcpMessage({ jsonrpc: "2.0", id: 1, method: "initialize", params: client ? { clientInfo: { name: client } } : {} }, viaDaemon(who), session);
+        for (const action of ["accept", "decline"]) {
+          const r = (await handleMcpMessage(
+            { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "handoffs", arguments: { action, id: "h_1" } } },
+            viaDaemon(who),
+            session,
+          )) as { result: unknown };
+          expect(r.result, `${action} as ${client ?? "an unnamed client"}`).toEqual({
+            content: [{ type: "text", text: "Handoffs are accepted or declined by a person, on the board, in the menu bar or in their own terminal, not by an agent." }],
+            isError: true,
+          });
+        }
+      }
+    }
+    expect(h.calls).toEqual([]);
+  });
+
+  it("an MCP client's name never passes for the CLI or the menu bar", async () => {
+    const seen: unknown[] = [];
+    const o = { version: "0.12.3", caller: () => ({}), call: async (_op: string, _args: Record<string, unknown>, c: unknown) => (seen.push(c), { ok: true, text: "" }) };
+    for (const name of ["cli", "menubar", " CLI ", "claude-code"]) {
+      const session: { client?: string } = {};
+      await handleMcpMessage({ jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name } } }, o, session);
+      await handleMcpMessage({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "handoffs" } }, o, session);
+    }
+    expect(seen).toEqual([{ client: "mcp:cli" }, { client: "mcp:menubar" }, { client: "mcp: CLI " }, { client: "claude-code" }]);
+  });
+
   it("a daemon that doesn't answer is a tool error, not a crash", async () => {
     const r = (await handleMcpMessage(
       { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "inbox" } },

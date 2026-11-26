@@ -50,7 +50,8 @@ prompt, add the server to `permissions.allow` in `~/.claude/settings.json`:
 ```
 
 Workmesh's refusals (a lease, a hold, a gate) come from the `PreToolUse` hook, so they apply whatever your permission
-mode, `--dangerously-skip-permissions` included.
+mode, `--dangerously-skip-permissions` included. They apply to the agent's own tool calls. They do not reach another
+program running under your account: see [Approval gates](working-together.md#approval-gates).
 
 ## What a hook costs
 

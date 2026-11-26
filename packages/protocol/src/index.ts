@@ -61,6 +61,8 @@ export const HUB_PLAN_MAX_STEPS = 30;
 export const HUB_PLAN_STEP_MAX = 200;
 export const HUB_PLAN_STEP_ACCEPT_MAX = 5 * HUB_PLAN_STEP_MAX;
 export const HUB_MAX_COST_USD = 1e7;
+/** SPEC §45: models one session's usage may name (one entry per model its calls ran on). */
+export const HUB_MAX_USAGE_MODELS = 16;
 
 // ------------------------------------------------------------------ identifiers
 
@@ -240,6 +242,44 @@ export const hubPlanStepSchema = z.strictObject({
 });
 export type HubPlanStep = z.infer<typeof hubPlanStepSchema>;
 
+/**
+ * SPEC §45: one model's token totals for a session, summed over every API call the relay counted on it since the
+ * session's transcript began. The kinds don't overlap except where a field says "of": a call's whole input is
+ * `input + cacheRead + cacheWrite`. Counts only (metadata).
+ */
+export const hubModelUsageSchema = z
+  .strictObject({
+    model: modelName,
+    /** Input tokens read at the full price (not from or into the prompt cache). */
+    input: tokenCount,
+    /** Input tokens read from the prompt cache. */
+    cacheRead: tokenCount,
+    /** Input tokens written to the prompt cache, every lifetime. */
+    cacheWrite: tokenCount,
+    /** Of `cacheWrite`, the ones written for an hour (Anthropic bills those at twice the input price). */
+    cacheWrite1h: tokenCount.optional(),
+    /** Generated tokens, thinking and reasoning included. */
+    output: tokenCount,
+    /** Of `output`, reasoning tokens (Codex reports them). */
+    reasoning: tokenCount.optional(),
+    /** API calls counted. */
+    calls: tokenCount.optional(),
+  })
+  .refine((u) => (u.cacheWrite1h ?? 0) <= u.cacheWrite, "cacheWrite1h is part of cacheWrite")
+  .refine((u) => (u.reasoning ?? 0) <= u.output, "reasoning is part of output");
+export type HubModelUsage = z.infer<typeof hubModelUsageSchema>;
+
+/** SPEC §45: a session's token usage by model, as running totals. */
+export const hubSessionUsageSchema = z.strictObject({
+  models: z
+    .array(hubModelUsageSchema)
+    .max(HUB_MAX_USAGE_MODELS)
+    .refine((m) => new Set(m.map((u) => u.model)).size === m.length, "one entry per model"),
+  /** When the latest call counted was made (epoch ms): the hub credits the growth since its last totals to this time. */
+  at: epochMs.optional(),
+});
+export type HubSessionUsage = z.infer<typeof hubSessionUsageSchema>;
+
 export const hubSessionUpsertSchema = z.strictObject({
   key: sessionKey,
   source: z.string().min(1).max(64),
@@ -294,6 +334,12 @@ export const hubSessionUpsertSchema = z.strictObject({
   mode: modeName.optional(),
   /** Background tasks running now, by kind. Metadata. */
   tasks: hubTasksSchema.optional(),
+  // SPEC §45: full token usage (relay 0.12.2).
+  /**
+   * The session's own token totals by model and kind, since its transcript began (a subagent's under its own key,
+   * never folded into its parent's). Absent: the relay doesn't count them (relays before 0.12.2 sent `tokensOut` only).
+   */
+  usage: hubSessionUsageSchema.optional(),
 });
 export type HubSessionUpsert = z.infer<typeof hubSessionUpsertSchema>;
 
@@ -434,6 +480,61 @@ const tasksAccept = z.object({
 });
 export type HubTasksAccepted = z.infer<typeof tasksAccept>;
 
+/** SPEC §45: a token count read tolerantly; absent reads as 0. A negative or non-number count fails its entry. */
+const usageCountAccept = z
+  .number()
+  .min(0)
+  .max(HUB_MAX_TOKENS)
+  .transform((n) => Math.round(n))
+  .nullish()
+  .transform((v) => v ?? 0);
+const usagePartAccept = z
+  .number()
+  .min(0)
+  .max(HUB_MAX_TOKENS)
+  .transform((n) => Math.round(n))
+  .nullish()
+  .catch(undefined)
+  .transform((v) => v ?? undefined);
+const modelUsageAccept = z
+  .object({
+    model: modelName,
+    input: usageCountAccept,
+    cacheRead: usageCountAccept,
+    cacheWrite: usageCountAccept,
+    cacheWrite1h: usagePartAccept,
+    output: usageCountAccept,
+    reasoning: usagePartAccept,
+    calls: usagePartAccept,
+  })
+  .transform((u) => ({
+    ...u,
+    // A part can't exceed its whole: a relay that says otherwise is read as the whole.
+    cacheWrite1h: u.cacheWrite1h === undefined ? undefined : Math.min(u.cacheWrite1h, u.cacheWrite),
+    reasoning: u.reasoning === undefined ? undefined : Math.min(u.reasoning, u.output),
+  }));
+export type HubModelUsageAccepted = z.infer<typeof modelUsageAccept>;
+/**
+ * SPEC §45 usage, read tolerantly: an entry this hub can't read is dropped on its own, a model named twice keeps its
+ * first entry, past HUB_MAX_USAGE_MODELS the first ones are kept; a usage object that isn't one reads as absent.
+ */
+const usageAccept = z.object({
+  models: z
+    .array(z.unknown())
+    .max(10 * HUB_MAX_USAGE_MODELS)
+    .transform((items) => {
+      const out: HubModelUsageAccepted[] = [];
+      for (const item of items) {
+        const r = modelUsageAccept.safeParse(item);
+        if (!r.success || out.length >= HUB_MAX_USAGE_MODELS || out.some((u) => u.model === r.data.model)) continue;
+        out.push(r.data);
+      }
+      return out;
+    }),
+  at: opt(epochMsAccept).catch(undefined),
+});
+export type HubSessionUsageAccepted = z.infer<typeof usageAccept>;
+
 /** v0.11 plan steps, read tolerantly: a bad step is dropped on its own, an unknown status reads as pending. */
 const planStepAccept = z.object({
   step: z.string().min(1).max(HUB_PLAN_STEP_ACCEPT_MAX),
@@ -486,6 +587,8 @@ export const hubSessionUpsertAcceptSchema = z.object({
   /** v0.11: a malformed mode or tasks object reads as absent, never a 400. */
   mode: opt(modeName).catch(undefined),
   tasks: opt(tasksAccept).catch(undefined),
+  /** SPEC §45: a malformed usage reads as absent, never a 400. */
+  usage: opt(usageAccept).catch(undefined),
 });
 export type HubSessionUpsertAccepted = z.infer<typeof hubSessionUpsertAcceptSchema>;
 

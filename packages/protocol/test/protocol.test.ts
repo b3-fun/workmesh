@@ -3,6 +3,7 @@ import {
   HUB_CLIENT_RE,
   HUB_DEVICE_TOKEN_RE,
   HUB_MAX_TASKS,
+  HUB_MAX_USAGE_MODELS,
   HUB_MODE_RE,
   HUB_PLAN_MAX_STEPS,
   HUB_PLAN_STEP_ACCEPT_MAX,
@@ -541,5 +542,84 @@ describe("hub wire v0.11: session mirror (SPEC §26)", () => {
     expect(got.events[1]?.plan).toEqual([{ step: "ok", status: "pending" }]);
     expect(got.events[2]?.tasks).toBeUndefined();
     expect(hubActivityEventAcceptSchema.parse({ ...plan, plan: [{ step: 1 }] }).plan).toBeUndefined();
+  });
+});
+
+describe("hub wire: full token usage (SPEC §45)", () => {
+  const usage = {
+    models: [
+      { model: "claude-opus-5-5", input: 1_872, cacheRead: 350_844_547, cacheWrite: 6_217_315, cacheWrite1h: 5_000_000, output: 832_704, calls: 1_164 },
+      { model: "claude-haiku-5-5", input: 120, cacheRead: 0, cacheWrite: 0, output: 21 },
+    ],
+    at: 1_795_545_602_000,
+  };
+  const s = { ...session, usage };
+  const codex = {
+    ...session,
+    key: "codex:019a",
+    source: "codex",
+    usage: { models: [{ model: "gpt-6-astra", input: 372_725, cacheRead: 9_657_600, cacheWrite: 0, output: 26_694, reasoning: 7_307 }] },
+  };
+
+  it("a relay sends per-model totals by kind; the hub reads them unchanged", () => {
+    for (const x of [s, codex]) {
+      const sent = hubSessionUpsertSchema.parse(x);
+      expect(hubSessionUpsertAcceptSchema.parse(sent)).toEqual(sent);
+    }
+    const body = hubIngestRequestSchema.parse({ v: 1, sentAt: 1, full: false, sessions: [s, codex], events: [] });
+    expect(hubIngestAcceptSchema.parse(body)).toEqual(body);
+  });
+
+  it("usage is optional, and an empty list is a session that made no calls yet", () => {
+    expect(hubSessionUpsertSchema.safeParse(session).success).toBe(true);
+    expect(hubSessionUpsertSchema.safeParse({ ...session, usage: { models: [] } }).success).toBe(true);
+  });
+
+  it("strict: whole counts, parts within their whole, one entry per model, no extra keys", () => {
+    const m = usage.models[0]!;
+    const bad = [
+      { models: [{ ...m, input: -1 }] },
+      { models: [{ ...m, cacheRead: 1.5 }] },
+      { models: [{ ...m, cacheWrite1h: m.cacheWrite + 1 }] },
+      { models: [{ ...m, reasoning: m.output + 1 }] },
+      { models: [{ ...m, output: undefined }] },
+      { models: [{ ...m, model: "" }] },
+      { models: [{ ...m, model: "m".repeat(81) }] },
+      { models: [{ ...m, text: "no" }] },
+      { models: [m, m] },
+      { models: Array.from({ length: HUB_MAX_USAGE_MODELS + 1 }, (_, i) => ({ ...m, model: `model-${i}` })) },
+      { ...usage, at: -1 },
+      { ...usage, extra: 1 },
+    ];
+    for (const u of bad) expect(hubSessionUpsertSchema.safeParse({ ...session, usage: u }).success, JSON.stringify(u).slice(0, 80)).toBe(false);
+  });
+
+  it("the hub drops what it can't read entry by entry, and never fails a batch over usage", () => {
+    const m = usage.models[0]!;
+    const got = hubSessionUpsertAcceptSchema.parse({
+      ...session,
+      usage: {
+        models: [
+          { ...m, input: 10.4, cacheWrite1h: m.cacheWrite * 2, reasoning: "lots", future: 1 },
+          { model: "claude-sonnet-5-5", output: 7 },
+          { ...m, input: 99 },
+          { model: "bad", input: -5, output: 1 },
+          "not an entry",
+        ],
+        at: "yesterday",
+      },
+    });
+    expect(got.usage?.at).toBeUndefined();
+    expect(got.usage?.models).toEqual([
+      { ...m, input: 10, cacheWrite1h: m.cacheWrite, reasoning: undefined },
+      { model: "claude-sonnet-5-5", input: 0, cacheRead: 0, cacheWrite: 0, output: 7, cacheWrite1h: undefined, reasoning: undefined, calls: undefined },
+    ]);
+    const many = Array.from({ length: 20 }, (_, i) => ({ ...m, model: `model-${i}` }));
+    expect(hubSessionUpsertAcceptSchema.parse({ ...session, usage: { models: many } }).usage?.models).toHaveLength(HUB_MAX_USAGE_MODELS);
+    for (const u of ["lots", { models: "x" }, { models: Array.from({ length: 10 * HUB_MAX_USAGE_MODELS + 1 }, () => m) }]) {
+      const r = hubSessionUpsertAcceptSchema.safeParse({ ...session, usage: u });
+      expect(r.success).toBe(true);
+      expect(r.success && r.data.usage).toBeUndefined();
+    }
   });
 });

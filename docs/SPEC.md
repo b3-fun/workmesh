@@ -47,11 +47,11 @@ What a hub may learn from a machine, and what it does with it. Each rule points 
   b3-fun/b3os-beta`), redacted first. A relay starts an agent for a handoff only once its person accepted it, or by
   their own policy for one they sent themselves (§31).
 - **Memory (v3, §35)** sends what an agent or person writes down on purpose for the team (a memory's title, body,
-  scope, links; a reason to retire one; a search query), at either sharing level, redacted first. An agent's memory
-  reaches other agents only after a person accepts it (or its own person chose to accept their agents' memories). A
-  hub may propose memories from a finished session's shared turn summaries, only for devices at `conversation`; a
-  person accepts each one, and going back to `metadata` deletes the proposals drawn from that device's sessions. To
-  search by meaning, B3's hub embeds memories and recall questions with Cloudflare Workers AI (its own account).
+  scope, links; a reason to retire one; a search query), at either sharing level, redacted first. A memory sent from a
+  machine reaches other agents only after a person accepts it on the board. A hub may propose memories from a finished
+  session's shared turn summaries, only for devices at `conversation`; a person accepts each one, and going back to
+  `metadata` deletes the proposals drawn from that device's sessions. To search by meaning, B3's hub embeds memories
+  and recall questions with Cloudflare Workers AI (its own account).
 - **Redaction on the machine**, before anything is queued (§9): keys, tokens, JWTs, private keys, credentials in URLs
   and secret-valued settings become `[redacted]`, home paths `~/…`. The hub blanks obvious secrets again before it
   stores text (§10).
@@ -1023,17 +1023,23 @@ device token names the person, requests carry ingest keys, answers carry hub key
   - `origin`: `agent` (an agent's `remember`), `person` (the board, a terminal, Ask on a person's confirm), `session`
     (the hub proposed it from a finished session, below), `note` (a v1 note).
   - `status`: `proposed` → `accepted` | `rejected`; an accepted memory becomes `superseded` when a memory naming it in
-    `supersedes` is accepted (`supersededBy` points at the newer one), or `retired` when a `forget` takes effect.
-    `retire` = `{ by, reason?, ts }` is a pending `forget` on an accepted memory, which stays accepted meanwhile. People
-    decide on the board (accept, edit, reject, retire, restore); relays only propose.
+    `supersedes` is accepted (`supersededBy` points at the newer one), or `retired` when a person retires it on the
+    board (a `forget` proposes that). `retire` = `{ by, reason?, ts }` is a pending retire: a `forget` on an accepted
+    memory, which stays accepted meanwhile. People decide on the board (accept, edit, reject, retire, restore); relays
+    only propose.
   - `usedAt` and `uses`: when an agent last had it (at a session's start, or in a recall's answer), and how often.
-- **Who decides.** The hub takes the person from the device token. A memory written with no `sessionKey` is the
-  person's own (a terminal) and is `accepted`; one written by an agent session is `proposed`, unless its person turned
-  on "accept my agents' memories" (on the hub; off by default) and it doesn't supersede someone else's memory. A
-  `forget` follows the same rule (an agent's on a memory its own person wrote, with that setting on, retires it at
-  once; anyone else's is a proposal), and an agent's `forget` of its own person's proposal withdraws it (`rejected`).
-  Only accepted memories reach agents: the brief, recall answers and the notes list below never carry a proposed,
-  rejected, superseded or retired one.
+- **Who decides.** Only a person signed in to the board writes an accepted memory, or accepts, rejects, retires,
+  restores or edits one. The hub takes the person from the device token. That token proves a machine, not a person at
+  its keyboard.
+  - Every memory written through a relay is `proposed`, with or without a `sessionKey`, and no hub setting accepts it.
+  - A memory named in `supersedes` stays accepted until a person accepts the newer one on the board.
+  - A `forget` on an accepted memory sets a pending retire. The memory stays accepted, and agents keep getting it,
+    until a person retires it on the board.
+  - An agent's `forget` of its own person's proposal withdraws it (`rejected`). A `forget` on someone else's proposal
+    is refused.
+  - Only accepted memories reach agents: the brief, recall answers and the notes list below never carry a proposed,
+    rejected, superseded or retired one.
+  - An older hub could answer a relay's write `accepted` or `retired`; a relay still reads both (§36).
 - **Recall** searches titles, bodies, tags and links of accepted memories, by words and by meaning (B3's hub: SQLite
   full-text search with bm25, fused with Workers AI embeddings; full text alone when the model doesn't answer).
   Memories scoped to the asker's `repo` weigh more (those whose paths cover one of the asker's `paths` more still),
@@ -1108,8 +1114,9 @@ device token names the person, requests carry ingest keys, answers carry hub key
   - `recall { query, kinds?, limit?, repo? }`: the session's repo and directory go along as `repo` and `paths`; the
     answer lists each hit as `[m12] gotcha · b3-fun/workmesh · Sean, 3 days ago`, its title, its body (cut at 600)
     and its links.
-  - `forget { id, reason? }` (`m12`, `M12`, `12`; the reason is for the reviewer): the answer says retired,
-    withdrawn (an agent's own proposal) or proposed.
+  - `forget { id, reason? }` (`m12`, `M12`, `12`; the reason is for the reviewer): the answer says proposed or
+    withdrawn (an agent's own proposal). Proposed is a pending retire (§35): agents keep getting the memory until a
+    person retires it on the board. A `retired` answer, from an older hub, is read too.
   - `memories { kind?, tag?, repo? }`: the brief, newest first.
   - `note` becomes `remember`: project-wide, as a note always was; kind `fact`, or `rule`/`convention` from a tag
     (or its plural); first line the title, the rest the body; the other tags stay tags. A `404` from the hub sends it
@@ -1123,8 +1130,9 @@ device token names the person, requests carry ingest keys, answers carry hub key
   …] [--pr …] [--tag …] [--supersedes]` (paths relative to the current directory, unless `--repo owner/name` names
   the repo they are relative to), `workmesh recall <words…> [--kind …] [--limit] [--repo]`, `workmesh forget <id>
   [--reason]`, `workmesh memories [--kind] [--tag] [--repo]` (the brief). From a terminal outside an agent session
-  these are the person's own words (§35: accepted at once). The caller is found as in §23, so a terminal in a live
-  agent session's directory reads as that session and its memory is a proposal: the safe side of the two mistakes.
+  `remember` and `forget` are proposals too (§35): the person accepts them on the board. The caller is found as in
+  §23, so a terminal in a live agent session's directory reads as that session, and its write carries that session's
+  key.
 - Text (title, body, reason, query) is redacted on the machine (§9) before it is sent.
 
 # Keeping current (relay 0.12.0, Sean 2026-11-25)

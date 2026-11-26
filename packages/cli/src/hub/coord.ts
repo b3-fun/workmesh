@@ -134,6 +134,8 @@ export interface CoordClientOptions {
   briefMinMs?: number;
   /** Who may reach this machine's sessions (SPEC §23). Absent: every message as the hub sent it. */
   policy?: InboxPolicy;
+  /** Synchronously arm the recipient before accepted external content leaves this relay. */
+  beforeExternalDelivery?: (key: string, sender: string) => void;
   /**
    * SPEC §47: the machines a sync names as new on this person's account, with the hub's clock. They go here and
    * nowhere else: the cached state that hooks and agents' calls read never holds them.
@@ -222,6 +224,7 @@ export class CoordClient {
   /** Ids of sync items refused for carrying the daemon's own notice prefix (each is logged once). */
   private readonly refusedIds = new Set<string>();
   private readonly onSync: CoordClientOptions["onSync"];
+  private readonly beforeExternalDelivery: CoordClientOptions["beforeExternalDelivery"];
   private readonly policy: InboxPolicy | undefined;
   waitingMessages: NonNullable<HubSyncAccepted["waitingMessages"]> = [];
   private readonly onNewDevices: CoordClientOptions["onNewDevices"];
@@ -270,6 +273,7 @@ export class CoordClient {
     this.staleMs = opts.staleMs ?? 90_000;
     this.onSync = opts.onSync;
     this.policy = opts.policy;
+    this.beforeExternalDelivery = opts.beforeExternalDelivery;
     this.onNewDevices = opts.onNewDevices;
     this.briefMinMs = opts.briefMinMs ?? 10_000;
   }
@@ -601,25 +605,39 @@ export class CoordClient {
 
   /** Consume once at the next tool call in this session, or clear at the end of its turn. */
   takeMessageSender(key: string): string | undefined {
-    const sender = this.afterMessage.get(key);
-    this.afterMessage.delete(key);
+    const family = CoordClient.family(key);
+    const sender = this.afterMessage.get(family);
+    this.afterMessage.delete(family);
     return sender ? Array.from(sender).join(", ") : undefined;
   }
 
+  /** Also used before an asynchronous idle wake, which may start running before the wake is acknowledged. */
+  prepareDelivery(ids: readonly string[]): void {
+    if (!this.beforeExternalDelivery) return;
+    for (const id of ids) {
+      const item = this.inbox.get(id)?.item;
+      if (!item || this.delivered.has(id) || item.release === "requested" || this.isOwn(item)) continue;
+      const key = this.recipientLocalKey(item);
+      if (key) this.beforeExternalDelivery(key, item.from.person);
+    }
+  }
+
   /** These messages reached their agent: never hand them over again, and ack them to the hub. */
-  markDelivered(ids: readonly string[]): void {
+  markDelivered(ids: readonly string[], prepared = false): void {
+    if (!prepared) this.prepareDelivery(ids);
     for (const id of ids) {
       if (this.delivered.has(id)) continue;
       this.delivered.add(id);
       const item = this.inbox.get(id)?.item;
       const to = item ? this.recipientLocalKey(item) : undefined;
       if (item && to !== undefined) {
-        if (!this.isOwn(item)) {
-          const senders = this.afterMessage.get(to) ?? new Set<string>();
+        if (!this.isOwn(item) && item.release !== "requested") {
+          const family = CoordClient.family(to);
+          const senders = this.afterMessage.get(family) ?? new Set<string>();
           if (!senders.size && this.afterMessage.size >= MAX_DELIVERED) this.afterMessage.delete(this.afterMessage.keys().next().value!);
           const name = label(item.from.person) || "a teammate";
           if (!senders.has(name)) senders.add(senders.size < 3 ? name : "other teammates");
-          this.afterMessage.set(to, senders);
+          this.afterMessage.set(family, senders);
         }
         this.received.push({
           to: CoordClient.family(to),

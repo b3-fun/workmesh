@@ -85,6 +85,8 @@ The hub uses the verified author's email to recognize your own reply. Other peop
 
 ### Messages held for you
 
+For an extra check on a machine with tools that can act on your behalf, enable `messages.confirmActions` in your config and restart the relay before accepting messages. This requires the updated native hooks on your machine. The next tool request shows an ID. Check the tool arguments in your session and match the ID on the board before approving. Each approval applies to that one call. The same rule covers later native tool calls in the session and its subagents, including after a resume. A new session starts fresh.
+
 An older hub may omit the delivery decision. Your relay then holds a teammate's message locally for you. Your machine can also hold automatically trusted senders in sessions that skip permission prompts.
 
 The menu bar lists the message under "Held messages", with the sender, the text and two buttons, Deliver and Drop.
@@ -215,9 +217,7 @@ Your accept covers the text you read. If the hub later lists the handoff with an
 is not started. It shows as "accepted, but its text changed after your accept: run it here?" until you read the new
 text and confirm.
 
-The started agent gets the Workmesh daemon's environment without the variables whose names look like secrets, such as
-`GITHUB_TOKEN` or `AWS_SECRET_ACCESS_KEY`. It keeps what Claude Code or Codex needs to sign in. If a handoff needs one
-more, add its name to `handoffs.env` in the config. The run's log (`agent.log` under
+A handoff starts with a small set of shell, locale and toolchain settings plus the selected model provider’s sign-in. SSH agent sockets, Git credential helpers and unrelated environment settings require an explicit entry in `handoffs.env`. The child runs as your OS user and can still access files available to that user. The run's log (`agent.log` under
 `~/.local/state/workmesh/handoffs/`) names what was left out.
 
 By default every handoff waits for your Accept, your own too. That is the `ask` policy. `workmesh handoffs policy

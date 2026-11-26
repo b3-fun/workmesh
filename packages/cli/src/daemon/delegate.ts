@@ -6,6 +6,7 @@ import type {
   HubHandoffAccepted,
   HubSyncAccepted,
 } from "@workmesh/protocol";
+import { MESSAGE_APPROVAL_PREFIX } from "./message-consent";
 import { CoordClient, isLocalNotice } from "../hub/coord";
 import type { HubSyncInboxItem } from "../hub/coord";
 import { gateApprovers, gateOwner, samePerson } from "../lib/person";
@@ -399,6 +400,13 @@ export class Delegate {
     if (this.toldApprovals.has(a.id)) return;
     this.toldApprovals.add(a.id);
     if (this.toldApprovals.size > 2000) this.toldApprovals.clear();
+    if (gate === "custom" && a.detail.startsWith(MESSAGE_APPROVAL_PREFIX)) {
+      if (a.status === "approved" && a.via === "board" && a.byEmail && a.byEmail === coord.self().email) {
+        coord.notify(local, "Workmesh: your board recorded a tool approval. The relay will check the exact call if retried.", { wake: true });
+        this.check();
+      }
+      return;
+    }
     const command = this.held.get(`${local}|${gate}|${a.detail}`)?.command ?? this.commandFor(a.id);
     coord.notify(local, decisionText(a, gate, command, coord.me(), coord.self().email), { wake: true, from: a.by ? label(a.by) : "Workmesh" });
     this.check();
@@ -707,13 +715,15 @@ export class Delegate {
       if (items.length === 0) continue;
       const text = wakeText(items);
       if (!text) continue;
+      const ids = text.items.map(i => i.id);
+      try { coord.prepareDelivery(ids); } catch { continue; }
       for (const i of text.items) this.codexTried.add(i.id);
       if (this.codexTried.size > 2000) this.codexTried.clear();
       const threadId = key.slice("codex:".length);
       void wake(threadId, text.text)
         .then((ok) => {
           if (ok) {
-            coord.markDelivered(text.items.map((i) => i.id));
+            coord.markDelivered(ids, true);
             this.log(`woke codex ${threadId.slice(0, 8)} for ${text.items.length} message${text.items.length === 1 ? "" : "s"}`);
           }
         })

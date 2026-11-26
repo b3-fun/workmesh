@@ -1150,9 +1150,7 @@ command run; a waiter that can't reach the daemon ends.
     offered here.
   - The config key `handoffs.runAccepted` is `confirm` when absent. With `auto`, this machine starts any handoff the
     hub lists as accepted for its person, as before B3-7235. That trusts the hub's word.
-  - **The agent starts with fewer secrets** (B3-7235). It gets the daemon's environment without the variables whose
-    name says the value is a secret. The redaction rules' reading of a name decides (§9): the last word counts, so
-    `GITHUB_TOKEN` and `AWS_SECRET_ACCESS_KEY` go, and `PATH`, `NVM_DIR` and `SSH_AUTH_SOCK` stay.
+  - Handoff subprocesses inherit a fixed list of shell, locale and toolchain variables. Credential sockets, credential helpers and unrelated environment variables stay in the parent unless the owner explicitly lists them in `handoffs.env`.
   - What the agent tool signs in with is kept. For Claude Code that is `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
     and `CLAUDE_CODE_OAUTH_TOKEN`. It is also the AWS or Google credentials when `CLAUDE_CODE_USE_BEDROCK` or
     `CLAUDE_CODE_USE_VERTEX` is set, and `ANTHROPIC_FOUNDRY_API_KEY` when `CLAUDE_CODE_USE_FOUNDRY` is set. For
@@ -1925,7 +1923,11 @@ The hub takes the sender identity from the authenticated device, board session o
 
 A released inbox item on `GET /relay/sync` carries an optional `release` field with one of `own`, `requested`, `accepted` or `trusted`. An older hub may omit it. The relay holds a cross-person item with absent or unrecognized provenance for a local decision. It recognizes ownership by device session key or verified email. Local sender and wake settings still apply. Sync may also carry `waitingMessages`, up to 50 records containing only an id and sender label. The menu bar opens the selected message in the signed-in browser for review. Account-wide mute, block and trust decisions use the recipient's board identity.
 
-Hook delivery, an explicit session inbox read and an idle wake use bounded, line-quoted message bodies. The relay asks the agent to obtain its user's authorization before taking action and to identify who requested it. After delivery, the next tool call in that turn produces a user-visible hook notice. The notice records sequence. Only the user and agent know whether a message motivated the call.
+Hook delivery, an explicit session inbox read and an idle wake use bounded, line-quoted message bodies. The relay asks the agent to obtain its user's authorization before taking action and to identify who requested it. After delivery, the next tool call in that turn, including a call by a subagent in the same session, produces a user-visible hook notice. The notice records sequence. Only the user and agent know whether a message motivated the call.
+
+With `messages.confirmActions` enabled, delivering an external message marks its entire local session family before handing over the text. Every subsequent native PreToolUse in that family needs a separate approval from the recipient’s own signed-in board account. A fresh session starts unmarked. Own messages and fixed outcomes do not mark a session. The setting applies to new deliveries, and a marked family stays protected across restarts and resumes.
+
+The hook fingerprints the complete tool input, tool name, working directory, session and subagent locally. The board receives the tool name, sender label and a random request ID. Review the tool arguments in your session and match that ID before approving. Only a matching, recent board decision can release the exact call once. The relay spends that decision before responding. A missing identity, expired request or unavailable daemon holds the call. This check requires native tool hooks. Local programs already running with the owner’s OS permissions remain outside its reach.
 
 ### Device authentication
 

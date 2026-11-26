@@ -27,6 +27,7 @@ import { deviceFetch } from "../hub/device-auth";
 import { CoordHooks } from "./coord-hooks";
 import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
+import { MessageConsent, CONSENT_UNAVAILABLE } from "./message-consent";
 import { MessageGate } from "./messages";
 import { AcceptedHere } from "./accepted-here";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
@@ -127,6 +128,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   let teamPoller: TeamPoller | undefined;
   // v1 (SPEC §21, §23): leases, holds, claims, messages (GET /relay/sync), read by hooks from memory.
   let coord: CoordClient | undefined;
+  const consent = new MessageConsent();
   // v0.6: the GitHub login `gh` reports, read once per start (the config's copy from `hub connect` until then).
   let githubLogin: string | undefined;
   let githubRead = false;
@@ -262,6 +264,9 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         delegate.onSync(next, previous);
       },
       policy: messages,
+      beforeExternalDelivery: (key, sender) => {
+        if (liveConfig.messages?.confirmActions) consent.arm(key, hub.deviceId, sender);
+      },
       onNewDevices: (list, hubNow) => {
         newDevices.observe(list, { board: hub.url, self: hub.deviceId, hubNow });
       },
@@ -362,6 +367,15 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         deny = undefined; // fail open
       }
     }
+    let checked: ReturnType<MessageConsent["check"]>;
+    if (!deny && hook === "PreToolUse") {
+      try {
+        checked = consent.check(CoordHooks.agentKey(event), event.detail?.tool ?? "tool", meta?.actionDigest, coord);
+      } catch {
+        checked = { deny: CONSENT_UNAVAILABLE };
+      }
+      deny = checked?.deny;
+    }
     if (deny) {
       // The tool won't run: keep the session alive, but nothing about the refused call goes anywhere.
       applyEvent({ ...event, kind: "heartbeat", activity: undefined, detail: undefined });
@@ -370,7 +384,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       applyEvent(event);
       if (forwarder?.isShared(`${event.source}:${event.sessionId}`)) coord?.poke();
     }
-    const answer = coordHooks.answer(event, hook, deny);
+    const context = coordHooks.answer(event, hook, deny);
+    const answer = checked ? { ...context, ...checked, consentChecked: true } : context;
     let note: string | undefined;
     try {
       note = staleNote(event, hook, meta, deny !== undefined);

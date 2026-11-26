@@ -1006,7 +1006,7 @@ export class CoordClient {
       this.holds.clear();
       return { ok: false, status: 401, error: "the hub rejected this device's token: run `workmesh hub connect` again" };
     }
-    if (res.status === 429) return { ok: false, status: 429, error: "the hub asked to slow down; try again in a minute" };
+    if (res.status === 429) return slowDown(raw, res.headers.get("retry-after"));
     if (resSchema === null) {
       return res.ok ? { ok: true, status: res.status, body: undefined as Res } : { ok: false, status: res.status, error: `hub responded ${res.status}` };
     }
@@ -1203,6 +1203,29 @@ export class CoordClient {
     if (res.status === 502) return { ok: false, status: 502, error: hubSaid ? `the hub's model failed (${hubSaid})` : "the hub's model failed to answer" };
     return { ok: false, status: res.status, error: hubSaid ?? `hub responded ${res.status}` };
   }
+}
+
+/**
+ * A hub's `429` (SPEC §21) as the caller reads it. The hub's body `{ ok: false, error }` names the limit that was hit,
+ * so the agent or person learns which one. The reason is cleaned to one line, and the wait `Retry-After` gives in
+ * seconds is added in plain words. With no reason, the answer says the hub asked to slow down.
+ */
+function slowDown(raw: unknown, retryAfter: string | null): Extract<CoordResult<never>, { ok: false }> {
+  const said = (raw as { error?: unknown } | null | undefined)?.error;
+  const reason = typeof said === "string" ? oneLine(said, 200).replace(/[\s.;,]+$/, "") : "";
+  const v = retryAfter?.trim() ?? "";
+  // RFC 9110 delta-seconds; an HTTP date gives no wait to repeat.
+  const secs = /^\d{1,7}$/.test(v) ? Number(v) : undefined;
+  const wait = secs === undefined ? undefined : `try again in ${waitWords(secs)}`;
+  const error = reason ? (wait ? `${reason}; ${wait}` : reason) : `the hub asked to slow down; ${wait ?? "try again in a minute"}`;
+  return { ok: false, status: 429, error, ...(secs === undefined ? {} : { retryAfterMs: secs * 1000 }) };
+}
+
+/** A wait as an answer says it, rounded up so that a caller who waits that long is not early: `40 s`, `2 min`, `3 h`. */
+function waitWords(secs: number): string {
+  if (secs < 60) return `${Math.max(1, secs)} s`;
+  if (secs < 2 * 3600) return `${Math.ceil(secs / 60)} min`;
+  return `${Math.ceil(secs / 3600)} h`;
 }
 
 /** A `Retry-After` in seconds (or an HTTP date) → ms, between 5 s and an hour; absent, a minute. */

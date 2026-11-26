@@ -524,7 +524,8 @@ as before (nothing is ever blocked because a hub can't coordinate).
 Code form: `packages/protocol/src/coord.ts` (two readings per body, as in §14) and `lease-paths.ts` (zod-free, also
 `@workmesh/protocol/lease-paths`). Every endpoint takes the device token (`Authorization: Bearer bp_…`) under the
 `/relay/*` Access bypass, and the hub takes the person from it, never from a body. Status codes as for ingest
-(§3.2): `400` schema error, `401` unknown or revoked token, `404` an older hub, `429` with `Retry-After`.
+(§3.2): `400` schema error, `401` unknown or revoked token, `404` an older hub, `429` with `Retry-After`. A `429`'s
+body is `{ ok: false, error }`, and `error` says which limit was hit.
 
 **Keys.** In a request, `sessionKey` (and a message's `from`) is the session's ingest `key` (`<source>:<sessionId>`,
 §3.2); the hub prefixes the device id. Everything a hub sends back names sessions by hub key
@@ -745,6 +746,9 @@ read and drops the rest one by one):
   minutes; other agent messages keep the hub's default (they don't wake). A claim, release, lease or unlease the hub
   took is applied to the cached sync at once, so `claims` and `leases` (and the hooks) show it before the next sync;
   so is the person's own gate policy from `gates set` (0.12.1; §31), and memory writes to the brief (§36).
+  When the hub answers a call with `429`, the answer gives the hub's reason on one line, at most 200 characters. A
+  `Retry-After` in seconds adds the wait in plain words ("try again in 40 s"). With no reason, the answer says that
+  the hub asked to slow down.
 - **Registration.** `workmesh setup` (and `setup --hooks-only`; `--no-mcp` skips it) registers the server with Claude
   Code at user scope (`claude mcp add -s user workmesh -- <node> <cli> mcp` when the `claude` CLI is on PATH, else a
   merge into `~/.claude.json`, written by rename) and with Codex as `[mcp_servers.workmesh]` in `~/.codex/config.toml`.

@@ -114,6 +114,12 @@ The recipient's machine also decides, and the sender is not told:
 - **It was dropped.** `messages.from` on the recipient's machine can limit whose messages it takes
   ([config](../reference/config.md#messages)).
 
+## The hub said to slow down
+
+The hub has limits, such as how many messages one person may send another in a minute. Over a limit, `send` and
+`handoff` fail with the hub's reason, and with the wait when the hub gives one: "Workmesh: …; try again in 40 s".
+Wait that long, then send again.
+
 ## An update went wrong
 
 `workmesh update` checks the new version (the daemon must come back on it; hooks and the MCP server must be in place)

@@ -334,10 +334,10 @@ export const hubSessionUpsertSchema = z.strictObject({
   mode: modeName.optional(),
   /** Background tasks running now, by kind. Metadata. */
   tasks: hubTasksSchema.optional(),
-  // SPEC §45: full token usage (relay 0.12.2).
+  // SPEC §45: full token usage (relay 0.12.3).
   /**
    * The session's own token totals by model and kind, since its transcript began (a subagent's under its own key,
-   * never folded into its parent's). Absent: the relay doesn't count them (relays before 0.12.2 sent `tokensOut` only).
+   * never folded into its parent's). Absent: the relay doesn't count them (relays before 0.12.3 sent `tokensOut` only).
    */
   usage: hubSessionUsageSchema.optional(),
 });

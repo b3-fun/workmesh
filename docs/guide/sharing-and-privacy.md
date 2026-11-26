@@ -27,7 +27,7 @@ out:
 
 | Level | What leaves your machine |
 |---|---|
-| `metadata` | Session state and Workmesh's activity label, tool names, repo-relative paths in shared repos, `owner/name` and branch, a program plus one subcommand from a fixed list (`git commit`, `gh pr`, `cargo test`), Linear issue ids, PR links, which subagents run under which, model and token counts, your GitHub login. |
+| `metadata` | Session state and Workmesh's activity label, tool names, repo-relative paths in shared repos, `owner/name` and branch, a program plus one subcommand from a fixed list (`git commit`, `gh pr`, `cargo test`), Linear issue ids, PR links, which subagents run under which, model and token counts (per model: input, cache reads and writes, output), your GitHub login. |
 | `conversation` | All of that, plus your prompts, the agent's text replies, a one-line description of each tool call (the Bash `description`, a search query, a fetched URL's host, an MCP tool's name), subagent task names, messages agents send each other, links to Slack messages agents posted or read, and how long each turn took. Prompts and replies are capped at 4,000 characters. |
 
 B3's default is `conversation`. Change it any time:

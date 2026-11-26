@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { HubTasks } from "@workmesh/protocol";
+import { HUB_MAX_USAGE_MODELS } from "@workmesh/protocol";
+import type { HubModelUsage, HubSessionUsage, HubTasks } from "@workmesh/protocol";
 import { TaskSet, applyToTasks, claudeMirrorItems, claudeMirrorLine } from "./mirror";
+import type { TaskKind } from "./mirror";
 
 /**
  * Local readers behind v0.6's session structure (docs/SPEC.md §15): who a
@@ -42,6 +44,98 @@ export interface Usage {
   model?: string;
   /** v0.11 (SPEC §26): a Claude Code agent's own background tasks running now (launches minus ending notices). */
   tasks?: HubTasks;
+  /** SPEC §45: every token kind by model since the transcript began, as the wire sends it. */
+  full?: HubSessionUsage;
+}
+
+/** SPEC §45: one model's running totals. */
+export interface ModelTotals {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cacheWrite1h: number;
+  output: number;
+  reasoning: number;
+  calls: number;
+}
+
+const KINDS = ["input", "cacheRead", "cacheWrite", "cacheWrite1h", "output", "reasoning", "calls"] as const;
+const zeroTotals = (): ModelTotals => ({ input: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, output: 0, reasoning: 0, calls: 0 });
+
+/** SPEC §45: token totals by model, added to and taken from as calls are read, sent as `usage.models`. */
+export class UsageTotals {
+  private readonly byModel = new Map<string, ModelTotals>();
+
+  get size(): number {
+    return this.byModel.size;
+  }
+
+  add(model: string, t: Partial<ModelTotals>, sign: 1 | -1 = 1): void {
+    const cur = this.byModel.get(model) ?? zeroTotals();
+    for (const k of KINDS) cur[k] = Math.max(0, cur[k] + sign * (t[k] ?? 0));
+    this.byModel.set(model, cur);
+  }
+
+  merge(other: UsageTotals): void {
+    for (const [model, t] of other.byModel) this.add(model, t);
+  }
+
+  clear(): void {
+    this.byModel.clear();
+  }
+
+  /**
+   * The wire form: one entry per model, the biggest first, at most HUB_MAX_USAGE_MODELS; optional parts only when
+   * there are any. `at` = when the latest call counted was made.
+   */
+  toWire(at?: number): HubSessionUsage {
+    const size = (t: ModelTotals) => t.input + t.cacheRead + t.cacheWrite + t.output;
+    const models: HubModelUsage[] = [...this.byModel]
+      .sort((a, b) => size(b[1]) - size(a[1]))
+      .slice(0, HUB_MAX_USAGE_MODELS)
+      .map(([model, t]) => ({
+        model,
+        input: t.input,
+        cacheRead: t.cacheRead,
+        cacheWrite: t.cacheWrite,
+        ...(t.cacheWrite1h ? { cacheWrite1h: Math.min(t.cacheWrite1h, t.cacheWrite) } : {}),
+        output: t.output,
+        ...(t.reasoning ? { reasoning: Math.min(t.reasoning, t.output) } : {}),
+        ...(t.calls ? { calls: t.calls } : {}),
+      }));
+    return at !== undefined && Number.isFinite(at) && at > 0 ? { models, at: Math.round(at) } : { models };
+  }
+
+  /** For the forwarder's state file. */
+  export(): Record<string, ModelTotals> {
+    return Object.fromEntries([...this.byModel].map(([m, t]) => [m, { ...t }]));
+  }
+
+  /** Reads a saved form back; anything malformed is skipped. */
+  static from(raw: unknown): UsageTotals {
+    const out = new UsageTotals();
+    if (!raw || typeof raw !== "object") return out;
+    for (const [model, t] of Object.entries(raw as Record<string, unknown>)) {
+      if (!cleanModel(model) || !t || typeof t !== "object") continue;
+      const v = t as Record<string, unknown>;
+      out.add(model, Object.fromEntries(KINDS.map((k) => [k, finiteInt(v[k])])) as unknown as ModelTotals);
+    }
+    return out;
+  }
+}
+
+/** Sums several readers' wire usage (a workflow's agents): per model, the latest `at`. */
+export function mergeUsage(parts: ReadonlyArray<HubSessionUsage | undefined>): HubSessionUsage | undefined {
+  const totals = new UsageTotals();
+  let at: number | undefined;
+  let any = false;
+  for (const p of parts) {
+    if (!p) continue;
+    any = true;
+    for (const m of p.models) totals.add(m.model, m);
+    if (p.at !== undefined) at = Math.max(at ?? 0, p.at);
+  }
+  return any ? totals.toWire(at) : undefined;
 }
 
 const MODEL_RE = /^[\w.:@/-]{1,80}$/;
@@ -147,46 +241,137 @@ async function readNewLines(
   }
 }
 
+/** What a Claude Code usage reader keeps across a daemon restart (SPEC §45: never read a file twice). */
+export interface ClaudeUsageState {
+  offset: number;
+  ino?: number;
+  skipping?: boolean;
+  totals?: Record<string, ModelTotals>;
+  /** The latest message ids with what they counted (a message's lines can straddle two reads). */
+  recent?: Array<[id: string, model: string, counted: Partial<ModelTotals>]>;
+  latestIn?: number;
+  out?: number;
+  model?: string;
+  at?: number;
+  tasks?: Array<{ id: string; kind: string }>;
+}
+
+export interface ClaudeUsageReaderOptions {
+  /** Bytes read per pass (default 2 MB). */
+  maxReadBytes?: number;
+  /** Message ids remembered for the once-per-message rule (lines of one message are adjacent; default 64). */
+  maxIds?: number;
+  /**
+   * A main thread's transcript: sidechain lines (older Claude Code wrote subagents' calls there) are skipped, since a
+   * subagent's own file counts them, and background tasks are left to the session mirror.
+   */
+  mainThread?: boolean;
+  /** Carry on from a saved state (same file). */
+  state?: ClaudeUsageState;
+}
+
+const SAVED_RECENT_IDS = 8;
+
 /**
- * Token use of one Claude Code transcript (see Usage), read incrementally
- * from the start (each pass reads only new complete lines). Output is counted
- * once per API message id: the lines of a multi-block message repeat it.
+ * Token use of one Claude Code transcript (see Usage), read incrementally from the start: each pass reads only new
+ * complete lines, at most `maxReadBytes`. A message split into several lines (one per content block) repeats its id
+ * and usage: it counts once, at its latest line's figures. SPEC §45: every kind by model (`full`), beside v0.6's
+ * context-now and output totals.
  */
 export class ClaudeUsageReader {
   private readonly cur: FileCursor = { offset: 0, skipping: false };
-  private readonly perMessage = new Map<string, number>();
-  /** Output of messages evicted from `perMessage` (bounded memory on long agents). */
-  private baseOut = 0;
+  private readonly recent = new Map<string, { model?: string; counted: ModelTotals }>();
+  private readonly sums = new UsageTotals();
+  /** Output over every counted line (v0.6 `tokensOut`, also lines with no model to price). */
+  private out = 0;
   /** Context of the latest call. */
   private latestIn = 0;
   private model: string | undefined;
+  /** When the latest counted call was made (the assistant line's timestamp). */
+  private at: number | undefined;
   /** v0.11: the agent's own background tasks (its transcript is read from the start, so the count is complete). */
   private readonly tasks = new TaskSet();
+  private readonly maxReadBytes: number;
+  private readonly maxIds: number;
+  readonly mainThread: boolean;
 
   constructor(
     readonly file: string,
-    private readonly maxReadBytes = 2 * 1024 * 1024,
-    private readonly maxIds = 4000,
-  ) {}
+    opts: ClaudeUsageReaderOptions = {},
+  ) {
+    this.maxReadBytes = opts.maxReadBytes ?? 2 * 1024 * 1024;
+    this.maxIds = Math.max(1, opts.maxIds ?? 64);
+    this.mainThread = opts.mainThread === true;
+    if (opts.state) this.restore(opts.state);
+  }
 
   /** Reads what's new; `more` = data past this pass's cap is waiting. Undefined when unreadable. */
   async read(): Promise<(Usage & { more: boolean }) | undefined> {
     const res = await readNewLines(this.file, this.cur, this.maxReadBytes);
     if (!res) return undefined;
-    if (res.restarted) {
-      this.perMessage.clear();
-      this.baseOut = 0;
-      this.latestIn = 0;
-      this.tasks.replace([]);
-    }
+    if (res.restarted) this.reset();
     for (const line of res.lines) this.take(line);
     return { ...this.totals(), more: res.more };
   }
 
   totals(): Usage {
-    let tokensOut = this.baseOut;
-    for (const out of this.perMessage.values()) tokensOut += out;
-    return { tokensIn: this.latestIn, tokensOut, model: this.model, tasks: this.tasks.counts() };
+    return {
+      tokensIn: this.latestIn,
+      tokensOut: this.out,
+      model: this.model,
+      tasks: this.mainThread ? undefined : this.tasks.counts(),
+      full: this.sums.toWire(this.at),
+    };
+  }
+
+  /** What a restart needs to carry on from here. */
+  exportState(): ClaudeUsageState {
+    const recent = [...this.recent].slice(-SAVED_RECENT_IDS).map(([id, r]) => [id, r.model ?? "", { ...r.counted }] as [string, string, ModelTotals]);
+    return {
+      offset: this.cur.offset,
+      ...(this.cur.ino !== undefined ? { ino: this.cur.ino } : {}),
+      ...(this.cur.skipping ? { skipping: true } : {}),
+      totals: this.sums.export(),
+      recent,
+      latestIn: this.latestIn,
+      out: this.out,
+      ...(this.model ? { model: this.model } : {}),
+      ...(this.at !== undefined ? { at: this.at } : {}),
+      ...(this.mainThread || !this.tasks.size ? {} : { tasks: this.tasks.entries() }),
+    };
+  }
+
+  private restore(st: ClaudeUsageState): void {
+    if (typeof st.offset !== "number" || !Number.isFinite(st.offset) || st.offset < 0) return;
+    this.cur.offset = Math.floor(st.offset);
+    if (typeof st.ino === "number") this.cur.ino = st.ino;
+    this.cur.skipping = st.skipping === true;
+    this.sums.merge(UsageTotals.from(st.totals));
+    if (Array.isArray(st.recent)) {
+      for (const r of st.recent.slice(-this.maxIds)) {
+        if (!Array.isArray(r) || typeof r[0] !== "string") continue;
+        const counted = zeroTotals();
+        const c = (r[2] ?? {}) as Record<string, unknown>;
+        for (const k of KINDS) counted[k] = finiteInt(c[k]);
+        this.recent.set(r[0], { model: cleanModel(r[1]), counted });
+      }
+    }
+    this.latestIn = finiteInt(st.latestIn);
+    this.out = finiteInt(st.out);
+    this.model = cleanModel(st.model);
+    this.at = typeof st.at === "number" && st.at > 0 ? st.at : undefined;
+    if (!this.mainThread && Array.isArray(st.tasks)) {
+      for (const t of st.tasks) if (t && typeof t.id === "string" && TASK_KIND_SET.has(t.kind)) this.tasks.add(t.id, t.kind as TaskKind);
+    }
+  }
+
+  private reset(): void {
+    this.recent.clear();
+    this.sums.clear();
+    this.out = 0;
+    this.latestIn = 0;
+    this.at = undefined;
+    this.tasks.replace([]);
   }
 
   /** v0.11: background launches (structured tool results) and the notices that end them; counts only. */
@@ -204,94 +389,201 @@ export class ClaudeUsageReader {
 
   private take(line: string): void {
     if (line.length > MAX_LINE_BYTES) return;
-    if (claudeMirrorLine(line) && this.takeTasks(line)) return;
+    if (!this.mainThread && claudeMirrorLine(line) && this.takeTasks(line)) return;
     if (!line.includes('"usage"') || !line.includes('"assistant"')) return;
-    let e: { type?: unknown; isApiErrorMessage?: unknown; message?: { id?: unknown; model?: unknown; usage?: unknown } };
+    let e: {
+      type?: unknown;
+      isApiErrorMessage?: unknown;
+      isSidechain?: unknown;
+      timestamp?: unknown;
+      message?: { id?: unknown; model?: unknown; usage?: unknown };
+    };
     try {
       e = JSON.parse(line) as typeof e;
     } catch {
       return;
     }
     if (e?.type !== "assistant" || e.isApiErrorMessage === true) return;
+    if (this.mainThread && e.isSidechain === true) return;
     const m = e.message;
     const u = m?.usage as Record<string, unknown> | undefined;
     if (!m || !u || typeof u !== "object") return;
     const model = cleanModel(m.model);
     if (model) this.model = model;
+    const cacheWrite = finiteInt(u.cache_creation_input_tokens);
+    const split = u.cache_creation as Record<string, unknown> | undefined;
+    const counted: ModelTotals = {
+      input: finiteInt(u.input_tokens),
+      cacheRead: finiteInt(u.cache_read_input_tokens),
+      cacheWrite,
+      cacheWrite1h: Math.min(cacheWrite, finiteInt(split && typeof split === "object" ? split.ephemeral_1h_input_tokens : 0)),
+      output: finiteInt(u.output_tokens),
+      reasoning: 0,
+      calls: 1,
+    };
+    this.latestIn = counted.input + counted.cacheWrite + counted.cacheRead;
+    const ts = typeof e.timestamp === "string" ? Date.parse(e.timestamp) : Number.NaN;
+    if (Number.isFinite(ts) && ts > 0) this.at = Math.max(this.at ?? 0, ts);
     const id = typeof m.id === "string" ? m.id : undefined;
-    this.latestIn = finiteInt(u.input_tokens) + finiteInt(u.cache_creation_input_tokens) + finiteInt(u.cache_read_input_tokens);
-    const out = finiteInt(u.output_tokens);
-    if (!id) {
-      this.baseOut += out;
-      return;
+    if (id) {
+      const prev = this.recent.get(id);
+      if (prev) {
+        // Another line of the same message: replace what it counted.
+        this.out -= prev.counted.output;
+        if (prev.model) this.sums.add(prev.model, prev.counted, -1);
+        this.recent.delete(id); // re-insert: newest last, so eviction drops the oldest
+      }
+      this.recent.set(id, { model, counted });
+      while (this.recent.size > this.maxIds) this.recent.delete(this.recent.keys().next().value as string);
     }
-    this.perMessage.delete(id); // re-insert: newest last, so eviction drops the oldest
-    this.perMessage.set(id, out);
-    while (this.perMessage.size > this.maxIds) {
-      const [oldId, old] = this.perMessage.entries().next().value as [string, number];
-      this.perMessage.delete(oldId);
-      this.baseOut += old;
-    }
+    this.out += counted.output;
+    if (model) this.sums.add(model, counted);
   }
 }
 
-/** Reads the last `bytes` of a file as complete lines (the first partial line dropped). */
-async function readTailLines(file: string, bytes: number): Promise<string[] | undefined> {
-  let fh: fs.promises.FileHandle | undefined;
-  try {
-    fh = await fs.promises.open(file, "r");
-    const st = await fh.stat();
-    const start = Math.max(0, st.size - bytes);
-    const buf = Buffer.alloc(st.size - start);
-    const { bytesRead } = await fh.read(buf, 0, buf.length, start);
-    const lines = buf.subarray(0, bytesRead).toString("utf8").split("\n");
-    if (start > 0) lines.shift();
-    return lines.filter(Boolean);
-  } catch {
-    return undefined;
-  } finally {
-    await fh?.close().catch(() => {});
-  }
+const TASK_KIND_SET: ReadonlySet<string> = new Set(["shells", "monitors", "agents", "workflows", "other"]);
+
+/** What a Codex usage reader keeps across a daemon restart. */
+export interface CodexUsageState {
+  offset: number;
+  ino?: number;
+  skipping?: boolean;
+  totals?: Record<string, ModelTotals>;
+  /** The thread's cumulative counters at the last `token_count` read. */
+  last?: Partial<CodexCounters>;
+  latestIn?: number;
+  model?: string;
+  at?: number;
+}
+
+interface CodexCounters {
+  input: number;
+  cached: number;
+  cacheWrite: number;
+  output: number;
+  reasoning: number;
 }
 
 /**
- * A Codex thread's token use (see Usage) and model from the end of its
- * rollout: the last `token_count` line's `last_token_usage.input_tokens` is
- * its context now, `total_token_usage.output_tokens` (cumulative) what it has
- * generated. Undefined when the tail holds neither.
+ * A Codex thread's token use (see Usage) from its rollout, read incrementally from the start. `token_count` lines
+ * carry the thread's cumulative `total_token_usage` (cached input and cache writes inside `input_tokens`, reasoning
+ * inside `output_tokens`); SPEC §45 credits the growth between two of them to the model of the latest `turn_context`
+ * before it. v0.6's `tokensIn` is the last call's input (its context now), `tokensOut` the cumulative output.
  */
-export async function readCodexUsage(file: string, tailBytes = 512 * 1024): Promise<Usage | undefined> {
-  const lines = await readTailLines(file, tailBytes);
-  if (!lines) return undefined;
-  let usage: { in: number; out: number } | undefined;
-  let model: string | undefined;
-  for (let i = lines.length - 1; i >= 0 && (!usage || !model); i--) {
-    const line = lines[i]!;
-    if (line.length > MAX_LINE_BYTES) continue;
+export class CodexUsageReader {
+  private readonly cur: FileCursor = { offset: 0, skipping: false };
+  private readonly sums = new UsageTotals();
+  private last: CodexCounters | undefined;
+  private latestIn = 0;
+  private model: string | undefined;
+  private at: number | undefined;
+  private readonly maxReadBytes: number;
+
+  constructor(
+    readonly file: string,
+    opts: { maxReadBytes?: number; state?: CodexUsageState } = {},
+  ) {
+    this.maxReadBytes = opts.maxReadBytes ?? 2 * 1024 * 1024;
+    if (opts.state) this.restore(opts.state);
+  }
+
+  async read(): Promise<(Usage & { more: boolean }) | undefined> {
+    const res = await readNewLines(this.file, this.cur, this.maxReadBytes);
+    if (!res) return undefined;
+    if (res.restarted) {
+      this.sums.clear();
+      this.last = undefined;
+      this.latestIn = 0;
+      this.at = undefined;
+    }
+    for (const line of res.lines) this.take(line);
+    return { ...this.totals(), more: res.more };
+  }
+
+  totals(): Usage {
+    return { tokensIn: this.latestIn, tokensOut: this.last?.output ?? 0, model: this.model, full: this.sums.toWire(this.at) };
+  }
+
+  exportState(): CodexUsageState {
+    return {
+      offset: this.cur.offset,
+      ...(this.cur.ino !== undefined ? { ino: this.cur.ino } : {}),
+      ...(this.cur.skipping ? { skipping: true } : {}),
+      totals: this.sums.export(),
+      ...(this.last ? { last: { ...this.last } } : {}),
+      latestIn: this.latestIn,
+      ...(this.model ? { model: this.model } : {}),
+      ...(this.at !== undefined ? { at: this.at } : {}),
+    };
+  }
+
+  private restore(st: CodexUsageState): void {
+    if (typeof st.offset !== "number" || !Number.isFinite(st.offset) || st.offset < 0) return;
+    this.cur.offset = Math.floor(st.offset);
+    if (typeof st.ino === "number") this.cur.ino = st.ino;
+    this.cur.skipping = st.skipping === true;
+    this.sums.merge(UsageTotals.from(st.totals));
+    if (st.last && typeof st.last === "object") {
+      const l = st.last as Record<string, unknown>;
+      this.last = { input: finiteInt(l.input), cached: finiteInt(l.cached), cacheWrite: finiteInt(l.cacheWrite), output: finiteInt(l.output), reasoning: finiteInt(l.reasoning) };
+    }
+    this.latestIn = finiteInt(st.latestIn);
+    this.model = cleanModel(st.model);
+    this.at = typeof st.at === "number" && st.at > 0 ? st.at : undefined;
+  }
+
+  private take(line: string): void {
+    if (line.length > MAX_LINE_BYTES) return;
     const isCount = line.includes('"token_count"');
     const isContext = line.includes('"turn_context"');
-    if (!isCount && !isContext) continue;
-    let e: { type?: unknown; payload?: Record<string, unknown> };
+    if (!isCount && !isContext) return;
+    let e: { type?: unknown; timestamp?: unknown; payload?: Record<string, unknown> };
     try {
       e = JSON.parse(line) as typeof e;
     } catch {
-      continue;
+      return;
     }
-    const p = e.payload;
-    if (!p || typeof p !== "object") continue;
-    if (!usage && e.type === "event_msg" && p.type === "token_count") {
-      const info = p.info as { total_token_usage?: Record<string, unknown>; last_token_usage?: Record<string, unknown> } | undefined;
-      const total = info?.total_token_usage;
-      const last = info?.last_token_usage;
-      if (total && typeof total === "object") {
-        usage = { in: finiteInt(last && typeof last === "object" ? last.input_tokens : total.input_tokens), out: finiteInt(total.output_tokens) };
-      }
-    } else if (!model && e.type === "turn_context") {
-      model = cleanModel(p.model);
+    const p = e?.payload;
+    if (!p || typeof p !== "object") return;
+    if (e.type === "turn_context") {
+      this.model = cleanModel(p.model) ?? this.model;
+      return;
     }
+    if (e.type !== "event_msg" || p.type !== "token_count") return;
+    const info = p.info as { total_token_usage?: Record<string, unknown>; last_token_usage?: Record<string, unknown> } | null | undefined;
+    const total = info?.total_token_usage;
+    if (!total || typeof total !== "object") return; // a rate-limit-only update
+    const now: CodexCounters = {
+      input: finiteInt(total.input_tokens),
+      cached: finiteInt(total.cached_input_tokens),
+      cacheWrite: finiteInt(total.cache_write_input_tokens),
+      output: finiteInt(total.output_tokens),
+      reasoning: finiteInt(total.reasoning_output_tokens),
+    };
+    const last = info?.last_token_usage;
+    this.latestIn = finiteInt(last && typeof last === "object" ? last.input_tokens : total.input_tokens);
+    const prev = this.last ?? { input: 0, cached: 0, cacheWrite: 0, output: 0, reasoning: 0 };
+    this.last = now;
+    if (now.input < prev.input || now.output < prev.output || now.cached < prev.cached) return; // counters restarted: a new baseline
+    const d = {
+      input: now.input - prev.input,
+      cached: now.cached - prev.cached,
+      cacheWrite: Math.max(0, now.cacheWrite - prev.cacheWrite),
+      output: now.output - prev.output,
+      reasoning: Math.max(0, now.reasoning - prev.reasoning),
+    };
+    if (d.input === 0 && d.output === 0) return; // a repeat of the last totals
+    this.sums.add(this.model ?? "unknown", {
+      input: Math.max(0, d.input - d.cached - d.cacheWrite),
+      cacheRead: Math.min(d.cached, d.input),
+      cacheWrite: Math.min(d.cacheWrite, Math.max(0, d.input - d.cached)),
+      output: d.output,
+      reasoning: Math.min(d.reasoning, d.output),
+      calls: 1,
+    });
+    const ts = typeof e.timestamp === "string" ? Date.parse(e.timestamp) : Number.NaN;
+    if (Number.isFinite(ts) && ts > 0) this.at = Math.max(this.at ?? 0, ts);
   }
-  if (!usage && !model) return undefined;
-  return { tokensIn: usage?.in ?? 0, tokensOut: usage?.out ?? 0, model };
 }
 
 export interface CodexThreadMeta {

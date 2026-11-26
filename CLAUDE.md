@@ -234,6 +234,15 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   doctor asks `codex app-server` `hooks/list` for trust (`adapters/codex-doctor.ts`) and follows notify chains.
   Harness and evidence: `~/Documents/b3/b3os-orch/scratch/team-hub/evidence/codex-parity/`.
 
+- 0.12.3 full token usage (SPEC §45, B3-7227): `hub/agents.ts` `ClaudeUsageReader` (main threads with
+  `mainThread: true`: sidechain lines skipped, tasks left to the mirror; subagents and workflow agents as before) sums
+  `message.usage` by model and kind once per message id (the latest line's figures; a small LRU of ids, lines of one
+  message are adjacent), with the one-hour cache writes from `cache_creation`, and `at` = the latest counted call's
+  timestamp; `CodexUsageReader` credits the growth of the rollout's cumulative `token_count` to the latest
+  `turn_context` model. Both read from the file's start in passes of ≤ 2 MB (at most 4 catch-up passes per tick) and
+  export their offset + totals into `hub-forward.json` (`usageReaders`, `transcript`); a state from an older relay
+  reads each transcript once. Upserts carry `usage` beside `tokensIn`/`tokensOut` (main threads now send those too).
+  Checked on copies of real transcripts: same totals as a Python sum, a 51 MB transcript in ~90 ms.
 - 0.12 Keeping current (SPEC §40, §41): `commands/update.ts` (`workmesh update`: `lib/install-method.ts` reads the
   install from the CLI's own path, table-tested; installs the release the same way; the NEW version's hidden
   `update --finish` re-runs hooks/MCP/service and restarts the daemon, then checks; exit 2 makes the old process roll

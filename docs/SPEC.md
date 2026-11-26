@@ -29,7 +29,7 @@ What a hub may learn from a machine, and what it does with it. Each rule points 
 - **Two levels, chosen per machine** (§8). `metadata`: session state, Workmesh's activity label, tool names,
   repo-relative paths, `owner/name` and branch, a program and one allow-listed subcommand, issue ids, PR links; since
   v0.6 also which agents run under which (parent, role, agent type, model, token counts, a status line from the relay's
-  vocabulary; since relay 0.12.2 the counts by model and kind, §45), which agent wrote to which, links to Linear issues and to PRs and issues on shared repos, and the
+  vocabulary; since relay 0.12.3 the counts by model and kind, §45), which agent wrote to which, links to Linear issues and to PRs and issues on shared repos, and the
   person's GitHub login (§15). `conversation`: also prompt text, the agent's text messages, a one-line description per
   tool call, and turn durations; since v0.6 a subagent's task description, the text agents send each other, and links
   to Slack messages agents posted or read (§15). A machine that goes back to `metadata` has its stored text deleted
@@ -357,7 +357,7 @@ after such a 400, as it does for `message`/`turn`.
 | `title` | string ≤ 200 | conversation | a subagent's task description, redacted (§9); the hub accepts ≤ 1,000 and cuts |
 | `model` | string ≤ 80 | metadata | the model id the agent's transcript reports |
 | `tokensIn`, `tokensOut` | int ≥ 0 | metadata | as Claude Code counts an agent: `tokensIn` its context now (input, cache reads and cache writes of its latest call), `tokensOut` what it has generated (output summed over its calls); Claude Code's own "tokens" is tokensIn + the latest call's output |
-| `costUsd` | number ≥ 0 | metadata | only when the agent records it; never estimated by the relay (Claude Code and Codex record none per agent today, so the relay sends none). Since relay 0.12.2 `usage` (§45) carries every token kind by model, for the hub to price |
+| `costUsd` | number ≥ 0 | metadata | only when the agent records it; never estimated by the relay (Claude Code and Codex record none per agent today, so the relay sends none). Since relay 0.12.3 `usage` (§45) carries every token kind by model, for the hub to price |
 | `statusLine` | string ≤ 120 | metadata | from the relay's fixed vocabulary only: "waiting on 1 shell", "running commands", "editing vm.rs" |
 
 `ActivityEvent` adds:
@@ -1283,7 +1283,7 @@ relays paired with a local hub as two people) found what follows. No wire change
 
 ---
 
-# Full token usage (relay 0.12.2, Sean 2026-11-25)
+# Full token usage (relay 0.12.3, Sean 2026-11-25)
 
 The board's Usage view (B3-7222) could only say what agents cost "at least": relays sent `tokensOut` and a context
 size per agent, no input or cache tokens, and nothing at all for a Claude Code main thread, the biggest session of most
@@ -1321,7 +1321,7 @@ days. Linear B3-7227. Token counts are metadata: they go at both sharing levels,
 - **The hub reads** the growth since the totals it last saw for the session and model, and places it at `at` (else
   the session's `updatedAt`). A total that went down (the relay read a replaced or truncated transcript again from its
   start) is a new baseline, never a credit. A session whose upserts carry `usage` is counted in full; one whose
-  upserts carry only `tokensOut` (relays before 0.12.2) is a floor. `tokensIn`/`tokensOut` keep their §15 meaning
+  upserts carry only `tokensOut` (relays before 0.12.3) is a floor. `tokensIn`/`tokensOut` keep their §15 meaning
   and are still sent beside `usage`.
 - **Accept reading:** a malformed `usage` reads as absent, an entry the hub can't read is dropped on its own, a model
   named twice keeps its first entry, missing kinds read as 0, a part larger than its whole reads as the whole.
@@ -1346,6 +1346,8 @@ shapes and numbers only):
   `output_tokens` with `reasoning_output_tokens` inside it). The growth between two lines goes to the model of the
   latest `turn_context` before it: `input` = input − cached − cache writes, `cacheRead` = cached, `cacheWrite` = cache
   writes, `output`, `reasoning`. A line that repeats the last totals adds nothing.
-- **Incremental.** Each transcript is read from its start once, in bounded passes off the hook path, and then only the
-  lines appended since; the reader's offset and totals are saved with the forwarder's state (§24), so a daemon restart
-  carries on where it stopped and never reads a file twice. A replaced or truncated file is read again from its start.
+- **Incremental.** Each transcript is read from its start once, in passes of at most 2 MB off the hook path (at most
+  four such catch-up passes a second across sessions), and then only the lines appended since; the reader's offset and
+  totals are saved with the forwarder's state (§24: `usageReaders`), so a daemon restart carries on where it stopped
+  and never reads a file twice. A state file from an older relay has no readers: those transcripts are read once from
+  their start. A replaced or truncated file is read again from its start.

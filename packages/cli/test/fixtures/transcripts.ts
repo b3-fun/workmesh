@@ -255,3 +255,118 @@ export const mirrorLines = {
   codexPlan: (plan: Array<{ step: string; status: string }>, callId: string, ts = 1): string =>
     codex("response_item", { type: "function_call", status: "completed", id: `fc_${callId}`, name: "update_plan", arguments: JSON.stringify({ explanation: "PLAN_EXPLANATION", plan }), call_id: callId }, ts),
 };
+
+/**
+ * SPEC §45 usage shapes (Claude Code 2.1.331 transcripts, Codex 0.164 rollouts; keys, enum values and the way lines
+ * repeat copied from real files, every number and text made up).
+ */
+export interface ClaudeCallUsage {
+  input?: number;
+  cacheRead?: number;
+  cacheWrite5m?: number;
+  cacheWrite1h?: number;
+  output?: number;
+}
+const claudeUsageObject = (u: ClaudeCallUsage) => {
+  const w5 = u.cacheWrite5m ?? 0;
+  const w1 = u.cacheWrite1h ?? 0;
+  const one = { input_tokens: u.input ?? 0, output_tokens: u.output ?? 0, cache_read_input_tokens: u.cacheRead ?? 0, cache_creation_input_tokens: w5 + w1 };
+  return {
+    ...one,
+    output_tokens_details: { thinking_tokens: Math.floor((u.output ?? 0) / 3) },
+    server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
+    service_tier: "standard",
+    cache_creation: { ephemeral_1h_input_tokens: w1, ephemeral_5m_input_tokens: w5 },
+    inference_geo: "global",
+    iterations: [{ ...one, cache_creation: { ephemeral_1h_input_tokens: w1, ephemeral_5m_input_tokens: w5 }, type: "message" }],
+    speed: "standard",
+    fallback_credit: null,
+  };
+};
+export const usageLines = {
+  /** One content block of an API message (Claude Code writes one line per block, each repeating id and usage). */
+  claudeCall: (
+    msgId: string,
+    u: ClaudeCallUsage,
+    ts: number,
+    o: { model?: string; block?: "thinking" | "text" | "tool_use"; sidechain?: boolean; apiError?: boolean } = {},
+  ): string => {
+    const block =
+      o.block === "thinking"
+        ? { type: "thinking", thinking: "", signature: "SIG" }
+        : o.block === "tool_use"
+          ? { type: "tool_use", id: `toolu_${++n}`, name: "Bash", input: { command: "TOOL_INPUT" } }
+          : { type: "text", text: "ASSISTANT_TEXT" };
+    return JSON.stringify({
+      ...claudeBase(ts),
+      isSidechain: o.sidechain === true,
+      ...(o.sidechain ? { agentId: "a0123456789abcdef" } : {}),
+      type: "assistant",
+      uuid: uuid(),
+      requestId: `req_${msgId}`,
+      ...(o.apiError ? { isApiErrorMessage: true } : {}),
+      message: {
+        model: o.model ?? "claude-opus-5-5",
+        id: msgId,
+        type: "message",
+        role: "assistant",
+        content: [block],
+        stop_reason: "tool_use",
+        stop_sequence: null,
+        usage: claudeUsageObject(u),
+      },
+    });
+  },
+  /** Claude Code's request record beside each call (no usage of its own). */
+  apiRequest: (ts: number): string =>
+    JSON.stringify({ type: "api-request", sessionId: "s", id: uuid(), timestamp: iso(ts), version: "2.1.331", querySource: "repl_main_thread", params: { model: "claude-opus-5-5", max_tokens: 64000 } }),
+  compactBoundary: (ts: number): string =>
+    JSON.stringify({
+      ...claudeBase(ts),
+      type: "system",
+      subtype: "compact_boundary",
+      content: "Conversation compacted",
+      isMeta: false,
+      level: "info",
+      uuid: uuid(),
+      logicalParentUuid: uuid(),
+      compactMetadata: { trigger: "auto", preTokens: 180_000, postTokens: 9_000, durationMs: 41_000 },
+    }),
+  compactSummary: (ts: number): string =>
+    JSON.stringify({ ...claudeBase(ts), type: "user", uuid: uuid(), isCompactSummary: true, message: { role: "user", content: "COMPACT_SUMMARY_TEXT" } }),
+  derivedFrom: (via: "resume" | "compact"): string =>
+    JSON.stringify({ type: "derived-from", v: 1, sessionId: "s", sessions: [{ type: "claude_code_session", id: "s", via }] }),
+  /** Claude Code's own `/cost` record (counts the main thread, subagents and side calls together: never read). */
+  costState: (): string =>
+    JSON.stringify({ type: "cost-state", sessionId: "s", totalCostUSD: 12.5, modelUsage: { "claude-opus-5-5": { inputTokens: 1, outputTokens: 1, costUSD: 12.5 } } }),
+  /** A Codex token_count: the thread's cumulative totals and the last call's. `null` info = a rate-limit-only update. */
+  codexCount: (
+    total: { input: number; cached: number; output: number; reasoning?: number; cacheWrite?: number } | null,
+    ts: number,
+    lastInput = 0,
+  ): string =>
+    codex(
+      "event_msg",
+      {
+        type: "token_count",
+        info: total
+          ? {
+              total_token_usage: {
+                input_tokens: total.input,
+                cached_input_tokens: total.cached,
+                cache_write_input_tokens: total.cacheWrite ?? 0,
+                output_tokens: total.output,
+                reasoning_output_tokens: total.reasoning ?? 0,
+                total_tokens: total.input + total.output,
+              },
+              last_token_usage: { input_tokens: lastInput, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: lastInput + 1 },
+              model_context_window: 258_400,
+            }
+          : null,
+        rate_limits: { primary: { used_percent: 12.0, window_minutes: 300 } },
+      },
+      ts,
+    ),
+  codexTurnContext: (model: string, ts: number): string =>
+    codex("turn_context", { cwd: "/repo", model, approval_policy: "on-request", sandbox_policy: { type: "workspace-write" }, effort: "high", summary: "auto" }, ts),
+};

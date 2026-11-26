@@ -60,9 +60,10 @@ import {
   codexHomeOfRollout,
   readCodexThreadMeta,
   readCodexThreadName,
-  readCodexUsage,
+  CodexUsageReader,
+  mergeUsage,
 } from "./agents";
-import type { CodexThreadMeta, Usage } from "./agents";
+import type { ClaudeUsageState, CodexThreadMeta, CodexUsageState, Usage } from "./agents";
 import {
   extractCmd,
   extractGithubLink,
@@ -284,7 +285,12 @@ interface Tracked {
   workflowDir?: string;
   /** Token totals and model, refreshed off the hook path. */
   usage?: Usage;
-  usageReaders?: Map<string, ClaudeUsageReader>;
+  /** SPEC §45: one incremental reader per transcript the session's own calls are in, by path. */
+  usageReaders?: Map<string, ClaudeUsageReader | CodexUsageReader>;
+  /** SPEC §45: a Claude Code main thread's transcript (its usage is read from the start, whatever the tail does). */
+  transcript?: string;
+  /** SPEC §45: a reader stopped at its per-pass cap: the next tick goes on (within a per-tick budget). */
+  usageCatchingUp?: boolean;
   usageDirty?: boolean;
   usageNextAt?: number;
   usagePending?: boolean;
@@ -365,6 +371,8 @@ const SUBAGENT_IDLE_END_MS = 30 * 60_000;
 const SUBAGENT_CONFIRM_MS = 2_000;
 /** Usage (tokens, model) re-read at most this often per session. */
 const USAGE_REFRESH_MS = 5000;
+/** SPEC §45: passes that pick up a long transcript from its start, per tick (each ≤ maxReadBytes). */
+const USAGE_CATCH_UP_PER_TICK = 4;
 /** Agent transcripts read per workflow run. */
 const MAX_WORKFLOW_TRANSCRIPTS = 64;
 const AGENT_ID_SHAPE = /^a[0-9a-f]{8,32}$/;
@@ -853,6 +861,12 @@ export class HubForwarder {
       return;
     }
     if (!d || d.agentId) return;
+    if (event.source === "claude-code") {
+      // SPEC §45: the main thread's own usage comes from its transcript.
+      const file = acceptClaudeTranscript(d.transcriptPath);
+      if (file) t.transcript = file;
+      t.usageDirty = true;
+    }
     if (d.hookEvent === "Stop" && d.backgroundTasks) {
       // v0.11: the session's running background tasks, the whole truth at this moment.
       (this.mirrorOf(t).tasks ??= new TaskSet()).replace(d.backgroundTasks);
@@ -1406,8 +1420,10 @@ export class HubForwarder {
       if (!t.tail || (!t.tailDirty && !t.pendingTurn)) continue;
       t.tailDirty = false;
       const tail = t.tail;
+      const before = tail.offset;
       const res = await readTail(tail, this.maxReadBytes);
       if (t.tail !== tail) continue; // moved while reading
+      if (tail.offset !== before) t.usageDirty = true; // SPEC §45: new calls may be in it
       if (res.reset) this.log(`hub: a transcript was ${res.reset}; reading from its new end`);
       for (const item of res.items) this.handleItem(t, item);
       if (res.more) {
@@ -1612,7 +1628,7 @@ export class HubForwarder {
   /** v0.6 upsert fields of a store session: role, parent, agent type, title, model, tokens, status line. */
   private structureFields(s: AgentSession, t: Tracked, ended: boolean): Partial<HubSessionUpsert> {
     const usage = t.usage
-      ? { model: t.usage.model, tokensIn: t.usage.tokensIn || undefined, tokensOut: t.usage.tokensOut || undefined }
+      ? { model: t.usage.model, tokensIn: t.usage.tokensIn || undefined, tokensOut: t.usage.tokensOut || undefined, usage: t.usage.full }
       : {};
     if (s.source === "workflow") {
       const parent = s.orchestrator && this.sessions.get(s.orchestrator)?.shared ? s.orchestrator : undefined;
@@ -1701,6 +1717,7 @@ export class HubForwarder {
         model: t.usage?.model,
         tokensIn: t.usage?.tokensIn || undefined,
         tokensOut: t.usage?.tokensOut || undefined,
+        usage: t.usage?.full,
       },
       SESSION_REQUIRED,
     );
@@ -1751,6 +1768,8 @@ export class HubForwarder {
    */
   private async refreshAgents(now: number): Promise<void> {
     let budget = 24;
+    // SPEC §45: reads that pick up a long transcript from its start, at most this many per tick (2 MB each).
+    let catchUp = USAGE_CATCH_UP_PER_TICK;
     for (const t of [...this.sessions.values()]) {
       if (budget <= 0) break;
       // Shared sessions, subagents, and workflow runs (shared through their orchestrator at reconcile).
@@ -1794,33 +1813,60 @@ export class HubForwarder {
       const working = t.sub ? t.sub.ended === undefined : t.last?.state === "working";
       if (!t.usageDirty && !working) continue;
       if (now < (t.usageNextAt ?? 0) || t.usagePending) continue;
+      if (t.usageCatchingUp && catchUp <= 0) continue;
       budget--;
       t.usagePending = true;
       t.usageDirty = false; // a read that stopped at its cap sets it again
+      let more = false;
       try {
         const usage = await this.readUsage(t);
-        if (usage) t.usage = usage;
+        if (usage) {
+          more = usage.more;
+          const { more: _more, ...rest } = usage;
+          t.usage = rest;
+        }
       } finally {
         t.usagePending = false;
-        t.usageNextAt = now + USAGE_REFRESH_MS;
+        if (t.usageCatchingUp) catchUp--;
+        t.usageCatchingUp = more;
+        // A pass that stopped at its cap goes on next tick; otherwise at most every USAGE_REFRESH_MS.
+        t.usageNextAt = more ? now : now + USAGE_REFRESH_MS;
       }
     }
   }
 
-  private async readUsage(t: Tracked): Promise<Usage | undefined> {
+  /** One reader per file, kept on the session (and in the state file, SPEC §45). */
+  private usageReader<R extends ClaudeUsageReader | CodexUsageReader>(t: Tracked, file: string, make: () => R): R {
+    const readers = (t.usageReaders ??= new Map());
+    let r = readers.get(file) as R | undefined;
+    if (!r) {
+      r = make();
+      readers.set(file, r);
+    }
+    return r;
+  }
+
+  /**
+   * SPEC §15, §45: the session's token totals from its own transcripts, read incrementally. `more`: a reader stopped at
+   * its per-pass cap.
+   */
+  private async readUsage(t: Tracked): Promise<(Usage & { more: boolean }) | undefined> {
     if (t.sub?.transcript) {
-      const readers = (t.usageReaders ??= new Map());
-      let r = readers.get(t.sub.transcript);
-      if (!r) {
-        readers.clear();
-        r = new ClaudeUsageReader(t.sub.transcript, this.maxReadBytes);
-        readers.set(t.sub.transcript, r);
-      }
+      const file = t.sub.transcript;
+      if (t.usageReaders && !t.usageReaders.has(file)) t.usageReaders.clear(); // the subagent's transcript moved
+      const r = this.usageReader(t, file, () => new ClaudeUsageReader(file, { maxReadBytes: this.maxReadBytes }));
       const got = await r.read();
       if (got?.more) t.usageDirty = true;
-      return got ? { tokensIn: got.tokensIn, tokensOut: got.tokensOut, model: got.model, tasks: got.tasks } : undefined;
+      return got;
     }
-    if (t.key.startsWith("codex:") && t.rollout) return readCodexUsage(t.rollout);
+    if (t.key.startsWith("codex:")) {
+      const file = t.rollout;
+      if (!file) return undefined;
+      const r = this.usageReader(t, file, () => new CodexUsageReader(file, { maxReadBytes: this.maxReadBytes }));
+      const got = await r.read();
+      if (got?.more) t.usageDirty = true;
+      return got;
+    }
     if (t.workflowDir) {
       let names: string[];
       try {
@@ -1830,24 +1876,31 @@ export class HubForwarder {
       } catch {
         return undefined;
       }
-      const readers = (t.usageReaders ??= new Map());
       let tokensIn = 0;
       let tokensOut = 0;
       let model: string | undefined;
+      let more = false;
+      const full = [];
       for (const name of names) {
         const file = path.join(t.workflowDir, name);
-        let r = readers.get(file);
-        if (!r) {
-          r = new ClaudeUsageReader(file, this.maxReadBytes);
-          readers.set(file, r);
-        }
+        const r = this.usageReader(t, file, () => new ClaudeUsageReader(file, { maxReadBytes: this.maxReadBytes }));
         const got = (await r.read()) ?? r.totals();
-        if ("more" in got && got.more) t.usageDirty = true;
+        if ("more" in got && got.more) more = true;
         tokensIn += got.tokensIn;
         tokensOut += got.tokensOut;
         model ??= got.model;
+        full.push(got.full);
       }
-      return names.length > 0 ? { tokensIn, tokensOut, model } : undefined;
+      if (more) t.usageDirty = true;
+      return names.length > 0 ? { tokensIn, tokensOut, model, full: mergeUsage(full), more } : undefined;
+    }
+    // SPEC §45: a Claude Code main thread (a tail restored from an older state file names its transcript too).
+    const main = t.transcript ?? (t.tail?.format === "claude-code" ? t.tail.path : undefined);
+    if (main && !t.key.startsWith("workflow:")) {
+      const r = this.usageReader(t, main, () => new ClaudeUsageReader(main, { maxReadBytes: this.maxReadBytes, mainThread: true }));
+      const got = await r.read();
+      if (got?.more) t.usageDirty = true;
+      return got;
     }
     return undefined;
   }
@@ -2167,6 +2220,10 @@ export class HubForwarder {
         sub: t.sub ? { ...t.sub } : undefined,
         subs: t.subs ? [...t.subs] : undefined,
         usage: t.usage,
+        transcript: t.transcript,
+        usageReaders: t.usageReaders?.size
+          ? [...t.usageReaders].map(([file, r]) => ({ file, codex: r instanceof CodexUsageReader ? true : undefined, main: r instanceof ClaudeUsageReader && r.mainThread ? true : undefined, state: r.exportState() }))
+          : undefined,
         sentLinks: t.sentLinks ? [...t.sentLinks].slice(-200) : undefined,
         sentMessages: t.sentMessages ? [...t.sentMessages].slice(-500) : undefined,
         mirror: t.mirror
@@ -2232,6 +2289,21 @@ export class HubForwarder {
         if (typeof p.workflowDir === "string") t.workflowDir = p.workflowDir;
         if (p.bg) t.bg = p.bg;
         if (p.usage) t.usage = p.usage;
+        if (typeof p.transcript === "string" && path.isAbsolute(p.transcript)) t.transcript = p.transcript;
+        // SPEC §45: each reader carries on from its saved offset and totals (a state from before 0.12.3 has none:
+        // those transcripts are read once from the start).
+        if (Array.isArray(p.usageReaders)) {
+          for (const u of p.usageReaders.slice(0, MAX_WORKFLOW_TRANSCRIPTS)) {
+            if (!u || typeof u.file !== "string" || !path.isAbsolute(u.file) || !u.state || typeof u.state !== "object") continue;
+            const readers = (t.usageReaders ??= new Map());
+            readers.set(
+              u.file,
+              u.codex
+                ? new CodexUsageReader(u.file, { maxReadBytes: this.maxReadBytes, state: u.state as CodexUsageState })
+                : new ClaudeUsageReader(u.file, { maxReadBytes: this.maxReadBytes, mainThread: u.main === true, state: u.state as ClaudeUsageState }),
+            );
+          }
+        }
         t.usageDirty = true;
         if (Array.isArray(p.sentLinks)) t.sentLinks = new Set(p.sentLinks.filter((x): x is string => typeof x === "string"));
         if (Array.isArray(p.sentMessages)) t.sentMessages = new Set(p.sentMessages.filter((x): x is string => typeof x === "string"));
@@ -2329,6 +2401,9 @@ interface PersistedTracked {
   sub?: SubState;
   subs?: string[];
   usage?: Usage;
+  /** SPEC §45: a main thread's transcript, and each usage reader's offset and totals. */
+  transcript?: string;
+  usageReaders?: Array<{ file: string; codex?: true; main?: true; state: ClaudeUsageState | CodexUsageState }>;
   sentLinks?: string[];
   sentMessages?: string[];
   /** v0.11 (SPEC §26): title (raw, local file only), mode, model, running background tasks by id. */

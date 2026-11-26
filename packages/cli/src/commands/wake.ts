@@ -140,9 +140,9 @@ export async function runWakeWait(source: string): Promise<void> {
 /** Whose messages a wake rule lets start a turn (SPEC §23), as `workmesh wake` says it. */
 export function wakeRuleText(rule: MessageWakeRule): string {
   if (rule === "team") return "any teammate's message";
-  if (rule === "self") return "your own messages only";
-  if (Array.isArray(rule)) return `your own messages, and messages from ${rule.join(", ")}`;
-  return "your own messages, and a reply to a message the session sent";
+  if (rule === "self") return "your own messages";
+  if (Array.isArray(rule)) return `your own messages and messages from ${rule.join(", ")}`;
+  return "your own messages and replies to messages the session sent";
 }
 
 /**
@@ -155,7 +155,7 @@ export async function runWake(value?: string): Promise<void> {
   const rule = messageSettings(config).wake;
   if (value === undefined) {
     console.log(
-      `${bold(current ? "on" : "off")} — ${current ? `an idle session starts a turn for ${wakeRuleText(rule)}, and for an approval or a handoff result` : "messages wait for the session's next turn"}`,
+      `${bold(current ? "on" : "off")} — ${current ? `an idle session starts a turn for ${wakeRuleText(rule)}, an approval or a handoff result` : "messages wait for the session's next turn"}`,
     );
     console.log(dim(`  who may wake: ${Array.isArray(rule) ? "a list of people" : rule} (workmesh wake replies | team | self; a list of people goes in the config file as messages.wake)`));
     return;

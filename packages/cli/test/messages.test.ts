@@ -380,10 +380,10 @@ describe("the `messages` config section", () => {
   });
 
   it("says in words whose messages a rule lets wake a session", () => {
-    expect(wakeRuleText("replies")).toBe("your own messages, and a reply to a message the session sent");
+    expect(wakeRuleText("replies")).toBe("your own messages and replies to messages the session sent");
     expect(wakeRuleText("team")).toBe("any teammate's message");
-    expect(wakeRuleText("self")).toBe("your own messages only");
-    expect(wakeRuleText(["Sam Lee", "Bo"])).toBe("your own messages, and messages from Sam Lee, Bo");
+    expect(wakeRuleText("self")).toBe("your own messages");
+    expect(wakeRuleText(["Sam Lee", "Bo"])).toBe("your own messages and messages from Sam Lee, Bo");
   });
 });
 

@@ -44,9 +44,9 @@ For what to run when, start with the [guide](../guide/getting-started.md).
 | [`workmesh note`](#workmesh-note) | Leave a note every teammate's agent can read |
 | [`workmesh notes`](#workmesh-notes) | Your team's newest shared notes |
 | [`workmesh ask`](#workmesh-ask) | Ask the team board about teammates' agents, in plain words (read-only) |
-| [`workmesh remember`](#workmesh-remember) | Write down a decision, convention, gotcha, rule or fact for your team's agents |
+| [`workmesh remember`](#workmesh-remember) | Write down a decision, convention, gotcha, rule or fact for your team's agents (a person accepts it on the board) |
 | [`workmesh recall`](#workmesh-recall) | Search your team's accepted memories (this repo's first) |
-| [`workmesh forget`](#workmesh-forget) | Retire a team memory that no longer holds (yours at once; an agent's is a proposal) |
+| [`workmesh forget`](#workmesh-forget) | Propose retiring a team memory that no longer holds (a person retires it on the board) |
 | [`workmesh memories`](#workmesh-memories) | Your team's accepted memories, newest first |
 | [`workmesh whoami`](#workmesh-whoami) | Who you are on the team hub, and which agent session this is |
 | [`workmesh handoff`](#workmesh-handoff) | Hand a task to a teammate (or `me`: one of your other machines); their machine starts an agent for it once they accept |
@@ -130,11 +130,13 @@ Commands:
   ask [options] <question...>        Ask the team board about teammates' agents,
                                      in plain words (read-only)
   remember [options] <title...>      Write down a decision, convention, gotcha,
-                                     rule or fact for your team's agents
+                                     rule or fact for your team's agents (a
+                                     person accepts it on the board)
   recall [options] <words...>        Search your team's accepted memories (this
                                      repo's first)
-  forget [options] <id>              Retire a team memory that no longer holds
-                                     (yours at once; an agent's is a proposal)
+  forget [options] <id>              Propose retiring a team memory that no
+                                     longer holds (a person retires it on the
+                                     board)
   memories [options]                 Your team's accepted memories, newest first
   whoami [options]                   Who you are on the team hub, and which
                                      agent session this is
@@ -729,6 +731,7 @@ Options:
 Usage: workmesh remember [options] <title...>
 
 Write down a decision, convention, gotcha, rule or fact for your team's agents
+(a person accepts it on the board)
 
 Arguments:
   title                the memory in one line
@@ -772,8 +775,8 @@ Options:
 ```text
 Usage: workmesh forget [options] <id>
 
-Retire a team memory that no longer holds (yours at once; an agent's is a
-proposal)
+Propose retiring a team memory that no longer holds (a person retires it on the
+board)
 
 Arguments:
   id               e.g. m12

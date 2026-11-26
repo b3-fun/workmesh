@@ -126,8 +126,8 @@ export function runAsk(words: string[], opts: CoordCliOptions): Promise<void> {
 // --- v3 Memory (SPEC §36) ---------------------------------------------------------------
 
 /**
- * `workmesh remember <title…>`: from a terminal outside an agent session these are the person's own words (accepted at
- * once); from an agent's shell, the agent's proposal.
+ * `workmesh remember <title…>`: a proposal, from a terminal outside an agent session and from an agent's shell alike
+ * (SPEC §35); a person accepts it on the board. From an agent's shell it carries that session's key.
  */
 export function runRemember(
   words: string[],

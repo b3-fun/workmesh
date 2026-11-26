@@ -99,6 +99,18 @@ All relay endpoints live under `/relay/*`, JSON bodies, max 256 KB per request.
 The person opens `verifyUrl` (Access login), sees "Connect *seans-mac-studio* to B3 as *Sean*?", and approves:
 `POST /api/pair/approve { "code": "ABCD-1234" }` (Access-authenticated).
 
+**The relay opens only the hub's own link** (B3-7237). The link is text from the hub's answer, and opening it hands
+it to the system's `open` command. So the relay checks it first (`workmesh hub connect`, `checkPairLink`):
+
+- It must be `https` on the host and port of the hub URL the person gave. Plain `http` passes only for a hub on
+  `localhost`, `127.0.0.1` or `[::1]`.
+- It must carry no user name or password.
+- A link that passes is printed and opened in its parsed form, never as the text the hub sent.
+- Any other link is neither printed nor opened. The relay prints the code, the hub's own pairing page
+  (`<hub url>/pair`) and the reason.
+
+Under every code the relay prints one line: approve only a code you see in your own terminal.
+
 `POST /relay/pair/poll` `{ "deviceId", "pollSecret" }`
 → `{ "status": "pending" | "complete" | "expired", "deviceToken"?: "bp_…", "person"?: { "email", "name" }, "project"?: { "id": "b3", "name": "B3", "include": {…}, "issueKeys": [...] } }`
 `deviceToken` is returned exactly once, on the first `complete` poll. Codes expire after 10 minutes. Rate limit pair

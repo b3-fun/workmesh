@@ -33,6 +33,19 @@ connected ans-laptop to B3 as An (an@example.com)
 Your machine is now on the board, with no sessions until an agent works in a `b3-fun` repo. Running `init` again is
 safe: it keeps the pairing and only fixes what is missing.
 
+Approve only a code you see in your own terminal. Whoever approves a code adds that machine to their own account, so
+a code or a link that someone sends you is not yours to approve.
+
+The approve page opens only when the hub's link is `https` on the hub address you typed. For any other link, `init`
+prints the reason and the hub's own pairing page, where you enter the code yourself:
+
+```text
+  pairing code: BFNH-0792
+  the hub's link was not opened: it leads to other.example, not to workmesh.b3os.org
+  open the hub's pairing page yourself and enter the code there: https://workmesh.b3os.org/pair
+  approve only a code you see in your own terminal
+```
+
 Useful flags: `--machine <name>` if two of your machines share a hostname, `--no-open` on a box without a browser (open
 the printed link on your laptop), `--no-codex` to leave Codex alone. The full list is in the
 [CLI reference](../reference/cli.md#workmesh-init).

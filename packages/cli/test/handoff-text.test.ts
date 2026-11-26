@@ -79,15 +79,15 @@ describe("what Accept starts, in one line", () => {
 
 describe("the list's line", () => {
   it("is one line, from or to, with repo, issue and the running mark", () => {
-    expect(handoffListLine(handoff(), { me: "sam", runningHere: false })).toBe("- h_1 · offered · from Alex · example/app, APP-12: Fix the typo in the README");
-    expect(handoffListLine(handoff({ status: "started", repo: undefined, issue: undefined }), { me: "Alex", runningHere: true })).toBe(
+    expect(handoffListLine(handoff(), { toMe: true, runningHere: false })).toBe("- h_1 · offered · from Alex · example/app, APP-12: Fix the typo in the README");
+    expect(handoffListLine(handoff({ status: "started", repo: undefined, issue: undefined }), { toMe: false, runningHere: true })).toBe(
       "- h_1 · started · to Sam [running here]: Fix the typo in the README",
     );
   });
 
   it("drops what a person can't see, and keeps a task with line breaks on one line", () => {
     const task = `Fix${ESC}[31m the${ZERO_WIDTH_SPACE} typo${BEL}\n\nin${RIGHT_TO_LEFT_OVERRIDE} the README${TAG_LETTERS}`;
-    const line = handoffListLine(handoff({ task, note: `done${ESC}[0m\nsecond line` }), { me: "sam", runningHere: false });
+    const line = handoffListLine(handoff({ task, note: `done${ESC}[0m\nsecond line` }), { toMe: true, runningHere: false });
     expect(line).toBe("- h_1 · offered · from Alex · example/app, APP-12: Fix the typo in the README (done second line)");
     for (const c of UNSEEN) expect(line.includes(c), `code point ${c.codePointAt(0)?.toString(16)}`).toBe(false);
   });
@@ -100,16 +100,16 @@ describe("the list's line", () => {
     expect(hasMoreText(handoff({ context: "Start from PR 12." }))).toBe(true);
     // A context with nothing visible in it is no more text to read.
     expect(hasMoreText(handoff({ context: ZERO_WIDTH_SPACE + TAG_LETTERS }))).toBe(false);
-    const line = handoffListLine(handoff({ task: long }), { me: "sam", runningHere: false });
+    const line = handoffListLine(handoff({ task: long }), { toMe: true, runningHere: false });
     expect(line.endsWith("… [more: workmesh handoffs show h_1]")).toBe(true);
     expect(line.split("\n")).toHaveLength(1);
-    expect(handoffListLine(handoff({ context: "Start from PR 12." }), { me: "sam", runningHere: false })).toBe(
+    expect(handoffListLine(handoff({ context: "Start from PR 12." }), { toMe: true, runningHere: false })).toBe(
       "- h_1 · offered · from Alex · example/app, APP-12: Fix the typo in the README [more: workmesh handoffs show h_1]",
     );
   });
 
   it("a task with nothing visible says so", () => {
-    expect(handoffListLine(handoff({ task: TAG_LETTERS }), { me: "sam", runningHere: false })).toBe(
+    expect(handoffListLine(handoff({ task: TAG_LETTERS }), { toMe: true, runningHere: false })).toBe(
       `- h_1 · offered · from Alex · example/app, APP-12: ${NOTHING_VISIBLE}`,
     );
   });

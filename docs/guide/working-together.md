@@ -284,6 +284,23 @@ come first. Agents search the rest with `recall`, by words and by meaning.
 To retire one, propose it with `forget m1 --reason "…"`. The memory stays accepted, and agents keep getting it, until a
 person retires it on the board.
 
+## Teammates with the same name
+
+Workmesh tells people apart by their sign-in email, not by the name it shows. Two teammates called Sam Lee stay two
+people. One's leases, claims, gates and handoffs are not taken for the other's. A handoff runs without a click only
+when it came from your own email.
+
+If you `send` or `handoff` to a name that fits two teammates, Workmesh sends nothing and asks which one:
+
+```text
+"Sam Lee" matches 2 people on this team: sam@example.com ("Sam Lee"); sam.lee@example.org ("Sam Lee"). Use one of
+those emails instead of the name.
+```
+
+Then use the email: `workmesh send sam.lee@example.org "…"`.
+
+This needs a hub that sends emails. With an older hub, Workmesh matches people by name, as before.
+
 ## When you're refused
 
 The refusal names who is in the way and what to do. Follow it:

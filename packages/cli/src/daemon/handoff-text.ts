@@ -125,15 +125,15 @@ export function cleanHandoff(h: HubHandoffAccepted): HubHandoffAccepted {
 }
 
 /**
- * One handoff as one line of the list. `runHere` is set for one that waits for this person's "run it here": the
- * line says so where the status would be, and names the command.
+ * One handoff as one line of the list. `toMe` says it went to this machine's person: the caller decides that
+ * (`CoordClient.isMe`, SPEC §49), and the line then names its sender. `runHere` is set for one that waits for this
+ * person's "run it here": the line says so where the status would be, and names the command.
  */
 export function handoffListLine(
   h: HubHandoffAccepted,
-  o: { me?: string | undefined; runningHere: boolean; runHere?: string | undefined },
+  o: { toMe: boolean; runningHere: boolean; runHere?: string | undefined },
 ): string {
-  const toMe = o.me !== undefined && h.to.person.toLowerCase() === o.me.toLowerCase();
-  const who = toMe ? `from ${oneLine(h.from.person, 120)}` : `to ${oneLine(h.to.person, 120)}`;
+  const who = o.toMe ? `from ${oneLine(h.from.person, 120)}` : `to ${oneLine(h.to.person, 120)}`;
   const where = [h.repo, h.issue].filter(Boolean).join(", ");
   const here = o.runningHere ? " [running here]" : "";
   const task = oneLine(h.task, LIST_TASK_MAX) || NOTHING_VISIBLE;

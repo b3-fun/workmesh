@@ -53,6 +53,8 @@ import type {
   HubSyncAccepted,
 } from "@workmesh/protocol";
 import type { z } from "zod";
+import { emailKey, gateOwner, samePerson, surelyMe } from "../lib/person";
+import type { PersonRef } from "../lib/person";
 import { cleanText, label, oneLine } from "../lib/untrusted";
 import { parseRetryAfter } from "./forwarder";
 
@@ -109,6 +111,8 @@ export interface CoordClientOptions {
   deviceId: string;
   /** The person's display name from pairing (`me` in a sync answer wins). */
   person?: string;
+  /** The person's email from pairing (`me.email` in a sync answer wins). People are matched by it (SPEC §49). */
+  personEmail?: string;
   /** True while any shared session is live: poll fast. */
   active?: () => boolean;
   fetchImpl?: typeof fetch;
@@ -176,6 +180,7 @@ export class CoordClient {
   private readonly url: string;
   private readonly token: string;
   private readonly pairedPerson: string | undefined;
+  private readonly pairedEmail: string | undefined;
   private readonly active: () => boolean;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
@@ -222,7 +227,7 @@ export class CoordClient {
   /** v2 endpoints this hub answered 404 to, and until when that is remembered. */
   private readonly v2Absent = new Map<string, number>();
   /** Teammates' messages handed to this device's sessions, newest last, for telling a reply from new chatter. */
-  private readonly received: Array<{ to: string; id: string; thread?: string; fromKey?: string; fromName?: string; fromPerson: string; at: number }> = [];
+  private readonly received: Array<{ to: string; id: string; thread?: string; fromKey?: string; fromName?: string; fromPerson: string; fromEmail?: string; at: number }> = [];
   /** Ask (SPEC §29): questions being answered, by asker (a session's key, or `person`). */
   private readonly asking = new Set<string>();
   /** Ask is off on this hub (404, 503), or rate-limited (429), until then, and why. */
@@ -250,6 +255,7 @@ export class CoordClient {
     this.token = opts.token;
     this.deviceId = opts.deviceId;
     this.pairedPerson = opts.person;
+    this.pairedEmail = emailKey(opts.personEmail);
     this.active = opts.active ?? (() => false);
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.now = opts.now ?? Date.now;
@@ -324,6 +330,29 @@ export class CoordClient {
   /** The device's person as the hub names people. */
   me(): string | undefined {
     return this.state?.me?.person ?? this.pairedPerson;
+  }
+
+  /** The device's person with their email, when the hub sent one on sync or at pairing (SPEC §49). */
+  self(): PersonRef {
+    return { person: this.me(), email: emailKey(this.state?.me?.email) ?? this.pairedEmail };
+  }
+
+  /**
+   * Whether a person the hub names is this device's person: by email when both have one, else by display name. Two
+   * people can share a display name, so a hub that sends emails is matched on them.
+   */
+  isMe(other: PersonRef | undefined): boolean {
+    return samePerson(this.self(), other);
+  }
+
+  /**
+   * Whether a person the hub names is surely this device's person, for anything the relay does without asking the
+   * person (`surelyMe`, SPEC §49). Once the last sync carried this person's email (`me.email`), an entry without an
+   * email is someone else. Before that (an older hub), `isMe` decides. So it never says yes where `isMe` says no.
+   */
+  surelyMe(other: PersonRef | undefined): boolean {
+    const fromHub = emailKey(this.state?.me?.email);
+    return fromHub === undefined ? this.isMe(other) : surelyMe({ person: this.me(), email: fromHub }, other);
   }
 
   /** The hub's clock, as best known. */
@@ -430,7 +459,6 @@ export class CoordClient {
   /** Another person's sessions that edited `repo`/`relPath` in the last 10 minutes (newest first). */
   recentEditsByOthers(repo: string, relPath: string, now = this.now()): HubSyncEdit[] {
     if (!this.state || !this.fresh(now)) return [];
-    const me = this.me()?.toLowerCase();
     const since = this.hubNow(now) - HUB_RECENT_EDIT_MS;
     return this.state.edits
       .filter(
@@ -439,7 +467,7 @@ export class CoordClient {
           e.path === relPath &&
           e.ts >= since &&
           this.localKey(e.sessionKey) === undefined &&
-          (me === undefined || e.person.toLowerCase() !== me),
+          !this.isMe(e),
       )
       .sort((a, b) => b.ts - a.ts);
   }
@@ -581,6 +609,7 @@ export class CoordClient {
           fromKey: item.from.sessionKey,
           fromName: item.from.sessionName,
           fromPerson: item.from.person,
+          fromEmail: item.from.email,
           at: this.now(),
         });
         if (this.received.length > 500) this.received.splice(0, this.received.length - 500);
@@ -601,7 +630,7 @@ export class CoordClient {
    * carried, or to the session that wrote to it in the last 30 minutes. Such a reply wakes its recipient; an agent's
    * unsolicited message doesn't.
    */
-  isReply(localKey: string, to: { session?: string; agent?: string; person?: string }, thread?: string, now = this.now()): boolean {
+  isReply(localKey: string, to: { session?: string; agent?: string; person?: string; email?: string }, thread?: string, now = this.now()): boolean {
     const mine = CoordClient.family(localKey);
     // The target session's name, for a message whose sender named only its session.
     const targetName =
@@ -617,7 +646,7 @@ export class CoordClient {
       if (to.session !== undefined && r.fromKey === undefined && targetName && r.fromName?.toLowerCase() === targetName.toLowerCase()) return true;
       if (to.agent !== undefined && r.fromName !== undefined && r.fromName.toLowerCase() === to.agent.toLowerCase()) return true;
       // An agent of that person wrote: the hub hands a person's message to their newest session.
-      if (to.person !== undefined && r.fromKey !== undefined && r.fromPerson.toLowerCase() === to.person.toLowerCase()) return true;
+      if (to.person !== undefined && r.fromKey !== undefined && samePerson({ person: r.fromPerson, email: r.fromEmail }, to)) return true;
     }
     return false;
   }
@@ -1057,7 +1086,7 @@ export class CoordClient {
       if (req.action === "claim") {
         const claim = r.body.claim ?? {
           issue: req.issue,
-          holder: { person: this.me() ?? "me", sessionKey: this.hubKey(CoordClient.family(req.sessionKey)), sessionName: undefined },
+          holder: { person: this.me() ?? "me", email: this.self().email, sessionKey: this.hubKey(CoordClient.family(req.sessionKey)), sessionName: undefined },
           since: this.hubNow(),
           note: req.note,
         };
@@ -1092,10 +1121,16 @@ export class CoordClient {
     // 0.12.1: `gates` (and the gate in the hook path) see the new policy at once, not after the next sync.
     const st = this.state;
     if (r.ok && r.body.ok && st?.gates !== undefined) {
-      const owner = r.body.gates?.owner ?? this.me();
-      if (owner !== undefined) {
-        const was = st.gates.find((g) => g.owner.toLowerCase() === owner.toLowerCase());
-        const policy = r.body.gates ?? { owner, actions: req.actions, approvers: was?.approvers };
+      const owner = r.body.gates ? gateOwner(r.body.gates) : this.self();
+      if (owner.person !== undefined) {
+        const was = st.gates.find((g) => samePerson(gateOwner(g), owner));
+        const policy = r.body.gates ?? {
+          owner: owner.person,
+          ownerEmail: owner.email,
+          actions: req.actions,
+          approvers: was?.approvers,
+          approverEmails: was?.approverEmails,
+        };
         this.state = { ...st, gates: [...st.gates.filter((g) => g !== was), policy] };
       }
     }

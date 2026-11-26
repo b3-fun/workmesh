@@ -15,6 +15,8 @@ import type { AgentSession } from "@workmesh/core";
 import { CoordClient } from "../hub/coord";
 import type { CoordResult } from "../hub/coord";
 import { scrubText } from "../hub/redact";
+import { emailKey, gateOwner, samePerson } from "../lib/person";
+import type { PersonRef } from "../lib/person";
 import { QUOTE_MARK, cleanData, label, messageBlock, oneLine, quoted } from "../lib/untrusted";
 import type { AcceptedBy } from "./accepted-here";
 import { formatInbox } from "./coord-hooks";
@@ -273,6 +275,8 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
     key ? undefined : fail(`Workmesh can't tell which agent session is asking, and ${what} belongs to one. Run it from inside a Claude Code or Codex session.`);
   const unavailable = view.available === false ? fail("Workmesh coordination isn't on this team's hub yet.") : undefined;
   const ctx = { coord, key, cwd, home, now, classify: deps.classify };
+  /** This machine's person: matched by email when the hub sends emails, else by display name (SPEC §49). */
+  const myself: PersonRef = { person: coord.me() ?? hub.person?.name, email: coord.self().email };
 
   switch (req.op) {
     case "whoami": {
@@ -314,7 +318,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       const text = scrubText(str(a.text, 16_000), { home, max: 4000 })?.text;
       if (!toRaw) return fail("`send` needs `to`: a person (name, email or GitHub login), an agent's session name, or a session's hub key.");
       if (!text) return fail("`send` needs `text`.");
-      const to = recipient(toRaw, str(a.kind, 20), st);
+      const to = recipient(toRaw, str(a.kind, 20), st, myself);
       if ("error" in to) return fail(to.error);
       const thread = str(a.thread, 64);
       // v2 (SPEC §30): wake an idle recipient. Absent: an agent's reply (in a thread it was sent, or to the session
@@ -555,9 +559,10 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       const task = scrubText(str(a.task, 16_000), { home, max: 4000 })?.text;
       if (!toRaw) return fail("`handoff` needs `to`: a person (name, email or GitHub login), or `me` for one of your other machines.");
       if (!task) return fail("`handoff` needs `task`: what to do, in a few sentences.");
-      const me = coord.me() ?? hub.person?.name;
-      const person = /^(me|myself|self)$/i.test(toRaw) ? me : personOf(toRaw, st);
-      if (!person) return fail(`Workmesh doesn't know who ${toRaw} is on this team (\`roster\` lists people).`);
+      const target = /^(me|myself|self)$/i.test(toRaw) ? (myself.person ? { person: myself.person, email: myself.email } : undefined) : personOf(toRaw, st, myself);
+      if (!target) return fail(`Workmesh doesn't know who ${toRaw} is on this team (\`roster\` lists people).`);
+      if ("error" in target) return fail(target.error);
+      const person = target.person;
       const repoArg = str(a.repo, 200);
       const repo = repoArg ?? (cwd ? deps.classify(cwd)?.repo : undefined);
       if (repo && !/^[\w.-]+\/[\w.-]+$/.test(repo)) return fail("`repo` is owner/name, e.g. b3-fun/workmesh.");
@@ -567,7 +572,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       const r = await coord.handoff({
         action: "create",
         ...(key ? { from: CoordClient.family(key) } : {}),
-        to: { person },
+        to: { person, ...(target.email ? { email: target.email } : {}) },
         task,
         ...(repo ? { repo } : {}),
         ...(issue ? { issue } : {}),
@@ -576,7 +581,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       if (!r.ok) return delegateError(r);
       if (!r.body.ok) return fail(`Workmesh: ${hubSaid(r.body.error, "the hub didn't take the handoff")}`);
       const h = r.body.handoff;
-      const self = me !== undefined && person.toLowerCase() === me.toLowerCase();
+      const self = samePerson(myself, target);
       const to = label(person);
       return {
         ok: true,
@@ -636,7 +641,6 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       const st = coord.view().state;
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
       if (st.handoffs === undefined) return fail("This team's hub has no handoffs yet (it predates Workmesh v2).");
-      const me = coord.me()?.toLowerCase();
       const running = deps.runningHandoffs?.() ?? new Set<string>();
       if (action === "show") {
         // The whole handoff, for a person to read before they answer it.
@@ -645,7 +649,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         const h = st.handoffs.find((x) => x.id === id);
         if (!h) return fail(`No handoff ${id} for you or from you in the hub's list (\`handoffs\` lists them).`);
         const runningHere = running.has(h.id);
-        const canAccept = h.status === "offered" && !runningHere && me !== undefined && h.to.person.toLowerCase() === me;
+        const canAccept = h.status === "offered" && !runningHere && coord.isMe(h.to);
         // Accepted somewhere else, or changed since it was accepted here: it waits for this person's "run it here".
         const runHere = runningHere ? undefined : deps.runHereQuestion?.(h);
         const canRun = runHere !== undefined;
@@ -660,7 +664,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       if (st.handoffs.length === 0) return { ok: true, text: "No handoffs.", data: { handoffs: [] } };
       const lines = st.handoffs
         .slice(0, 30)
-        .map((h) => handoffListLine(h, { me, runningHere: running.has(h.id), runHere: deps.runHereQuestion?.(h) }));
+        .map((h) => handoffListLine(h, { toMe: coord.isMe(h.to), runningHere: running.has(h.id), runHere: deps.runHereQuestion?.(h) }));
       return { ok: true, text: lines.join("\n"), data: { handoffs: st.handoffs.map(cleanHandoff) } };
     }
 
@@ -688,7 +692,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       }
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
       if (st.gates === undefined) return fail("This team's hub has no approval gates yet (it predates Workmesh v2).");
-      const mine = st.gates.find((g) => me !== undefined && g.owner.toLowerCase() === me.toLowerCase());
+      const mine = st.gates.find((g) => samePerson(myself, gateOwner(g)));
       const others = st.gates.filter((g) => g !== mine && g.actions.length > 0);
       const lines = [
         mine && mine.actions.length > 0
@@ -814,31 +818,61 @@ function delegateError(r: Extract<CoordResult<unknown>, { ok: false }>): CoordOp
   return fail(r.unavailable ? "This team's hub has no delegation yet (it predates Workmesh v2); nothing was sent." : `Workmesh: ${oneLine(r.error, 300)}`);
 }
 
-/** A `to` string → the person the roster names (display name, GitHub login), else the string itself. */
-export function personOf(
-  to: string,
-  st: { roster: ReadonlyArray<{ person: string; github?: string }> } | undefined,
-): string | undefined {
+/** A person on the roster, as far as a typed name needs them. */
+type RosterPerson = { person: string; email?: string; github?: string };
+/** Who a typed name stands for: the person (with their email when the roster has it), or why it can't be told. */
+type ResolvedPerson = { person: string; email?: string } | { error: string };
+
+/**
+ * The roster person a typed display name, email or GitHub login names (SPEC §49); undefined when the roster has
+ * nobody by it. A name that fits several people who each have an email is refused with the choices, never guessed.
+ * With no emails to tell them apart (a hub that sends none), the name alone goes to the hub, as before.
+ */
+function rosterPerson(to: string, roster: ReadonlyArray<RosterPerson> | undefined, me?: PersonRef): ResolvedPerson | undefined {
   const low = to.toLowerCase();
-  for (const p of st?.roster ?? []) {
-    if (p.person.toLowerCase() === low || p.github?.toLowerCase() === low) return p.person;
-  }
-  return to.includes("@") || /^[\w .'-]{1,120}$/.test(to) ? to : undefined;
+  const people: RosterPerson[] = [...(roster ?? [])];
+  // This machine's own person counts even when the roster leaves them out: their name must not go to a namesake.
+  if (me?.person && !people.some((p) => samePerson(p, me))) people.push({ person: me.person, email: me.email });
+  // A typed email names a person by email only: a display name that looks like someone's email never competes with it.
+  const typed = emailKey(to);
+  const hits = people.filter((p) => (typed !== undefined ? emailKey(p.email) === typed : p.person.toLowerCase() === low || p.github?.toLowerCase() === low));
+  const first = hits[0];
+  if (!first) return undefined;
+  // One entry per email: a person the roster lists twice is still one person.
+  const byEmail = new Map<string | undefined, RosterPerson>();
+  for (const p of hits) if (!byEmail.has(emailKey(p.email))) byEmail.set(emailKey(p.email), p);
+  // An entry without an email: nothing tells it apart from a namesake, so the hub resolves the name, as before.
+  if (byEmail.has(undefined)) return { person: first.person };
+  if (byEmail.size === 1) return { person: first.person, email: first.email };
+  // The email leads, and the display name is quoted: a name can hold any text, an email is checked on the wire.
+  const list = [...byEmail.values()]
+    .slice(0, 8)
+    .map((p) => `${p.email} (${JSON.stringify(p.person.replace(/\s+/g, " ").trim())})`)
+    .join("; ");
+  return { error: `"${to}" matches ${byEmail.size} people on this team: ${list}. Use one of those emails instead of the name.` };
+}
+
+/** A `to` string → the person the roster names (display name, email, GitHub login), else the string itself. */
+export function personOf(to: string, st: { roster: ReadonlyArray<RosterPerson> } | undefined, me?: PersonRef): ResolvedPerson | undefined {
+  const hit = rosterPerson(to, st?.roster, me);
+  if (hit) return hit;
+  return to.includes("@") || /^[\w .'-]{1,120}$/.test(to) ? { person: to } : undefined;
 }
 
 /** A `to` string → the wire recipient, using the roster to tell people from agents and sessions. */
 export function recipient(
   to: string,
   kind: string | undefined,
-  st: { roster: ReadonlyArray<{ person: string; github?: string; sessions: ReadonlyArray<{ hubKey: string; name: string; state?: string }> }> } | undefined,
+  st: { roster: ReadonlyArray<RosterPerson & { sessions: ReadonlyArray<{ hubKey: string; name: string; state?: string }> }> } | undefined,
+  /** This machine's own person, who counts as a choice even when the roster leaves them out. */
+  me?: PersonRef,
 ): HubMessageTo | { error: string } {
-  if (kind === "person") return { person: to };
+  if (kind === "person") return rosterPerson(to, st?.roster, me) ?? { person: to };
   if (/^dev_[0-9A-Z]{26}:/.test(to)) return { session: to };
   const low = to.toLowerCase();
   if (kind !== "session" && kind !== "agent") {
-    for (const p of st?.roster ?? []) {
-      if (p.person.toLowerCase() === low || p.github?.toLowerCase() === low) return { person: p.person };
-    }
+    const person = rosterPerson(to, st?.roster, me);
+    if (person) return person;
   }
   const sessions = (st?.roster ?? []).flatMap((p) => p.sessions.map((x) => ({ ...x, person: p.person })));
   // A session's short key (`claude-code:<id>`, or the start of its id), as hooks and transcripts name it.

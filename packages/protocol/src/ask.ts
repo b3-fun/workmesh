@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hubPersonEmailAcceptSchema, hubPersonEmailSchema } from "./fields.js";
 
 /**
  * `POST /relay/ask` (docs/SPEC.md §29): an agent asks the board's Ask about the team's agents, through its relay with
@@ -31,6 +32,8 @@ const askSession = z.object({
   hubKey: z.string().min(1).max(300),
   name: z.string().max(120),
   person: z.string().max(120),
+  /** The person's email (§48): two people can share a display name. */
+  email: hubPersonEmailSchema.optional(),
   state: z.string().max(40),
 });
 
@@ -46,6 +49,7 @@ const askSessionAccept = z.object({
   hubKey: z.string().min(1).max(300),
   name: cut(120).catch(""),
   person: cut(120).catch(""),
+  email: hubPersonEmailAcceptSchema,
   state: cut(40).catch(""),
 });
 export const hubAskResponseAcceptSchema = z.object({

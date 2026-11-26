@@ -1391,6 +1391,7 @@ reader, §14).
 | Approvals (§30) | `owner`, `by` | `ownerEmail`, `byEmail` |
 | Memories (§35), the brief's too | `by.person`, `retire.by.person` | `by.email`, `retire.by.email` |
 | `GET /relay/team` (§16) | `needsMe[].owner`, `sessions[].owner` | `needsMe[].ownerEmail`, `sessions[].ownerEmail` |
+| An Ask answer (§29) | `sessions[].person` | `sessions[].email` |
 
 - **The team view** already had `me.email` and `people[].email` beside `name` (§16). Pairing already answers with the
   person's email (§3.1).
@@ -1407,7 +1408,6 @@ reader, §14).
 - **The matching rule.** Two entries name the same person when both carry an email and the emails are equal, read
   case-insensitively. When either has no email, they are compared by display name, case-insensitively, as before.
   So equal names with different emails are different people, and one email under two names is one person.
-- **Not covered.** The sessions an Ask answer names (§29) carry a display name only. Nothing is decided from them.
 
 ## 49. The relay side (`packages/cli`)
 

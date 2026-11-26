@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   HUB_PERSON_EMAIL_MAX,
   hubApprovalResponseAcceptSchema,
+  hubAskResponseAcceptSchema,
+  hubAskResponseSchema,
   hubApprovalResponseSchema,
   hubClaimResponseAcceptSchema,
   hubClaimResponseSchema,
@@ -262,6 +264,26 @@ describe("answers that name a person (SPEC §48)", () => {
     const read = hubMemoryResponseAcceptSchema.parse(hubMemoryResponseSchema.parse(older));
     expect(read.ok && read.memory?.by.person).toBe("Sam Lee");
     expect(read.ok && read.memory?.by.email).toBeUndefined();
+  });
+
+  it("the sessions an Ask answer names say whose they are by email too", () => {
+    const answer = {
+      ok: true,
+      answer: "Two agents are on the docs.",
+      sessions: [
+        { hubKey: "dev_S:claude-code:s1", name: "docs-1", person: "Sam Lee", email: SAM, state: "working" },
+        { hubKey: "dev_O:claude-code:o1", name: "docs-1", person: "Sam Lee", email: OTHER_SAM, state: "idle" },
+      ],
+    };
+    const built = hubAskResponseSchema.parse(answer);
+    expect(built).toEqual(answer);
+    expect(hubAskResponseAcceptSchema.parse(built)).toEqual(answer);
+    const loose = hubAskResponseAcceptSchema.parse({ ...answer, sessions: [{ ...answer.sessions[0], email: "Sam Lee" }, { hubKey: "k", name: "x", person: "An", state: "idle" }] });
+    expect(loose.sessions).toEqual([
+      { hubKey: "dev_S:claude-code:s1", name: "docs-1", person: "Sam Lee", state: "working" },
+      { hubKey: "k", name: "x", person: "An", state: "idle" },
+    ]);
+    expect(hubAskResponseSchema.safeParse({ ...answer, sessions: [{ ...answer.sessions[0], email: "Sam Lee" }] }).success).toBe(false);
   });
 
   it("the team view names each session's owner by email too", () => {

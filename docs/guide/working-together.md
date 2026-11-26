@@ -290,6 +290,10 @@ Workmesh tells people apart by their sign-in email, not by the name it shows. Tw
 people. One's leases, claims, gates and handoffs are not taken for the other's. A handoff runs without a click only
 when it came from your own email.
 
+Messages work the same way. Your own messages may wake a session, are never held, and pass `messages.from: self`. A
+message counts as yours only when it came from your email or from a session on this machine. A namesake's message is
+a teammate's, so it wakes, is held or is dropped by a teammate's rules.
+
 If you `send` or `handoff` to a name that fits two teammates, Workmesh sends nothing and asks which one:
 
 ```text

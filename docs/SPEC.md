@@ -695,9 +695,11 @@ read and drops the rest one by one):
   - **Who may wake** (`messages.wake`, while `wake` is on). A message must first ask to wake: its `wake` flag says
     so, or it has none and a person wrote it (§30). Then the receiving machine's rule must allow its sender. The rule
     is `replies` (the default), `team`, `self`, or a list of people.
-    - A person's own messages always pass. A message is their own when one of this device's sessions sent it, or
-      when the hub names its sender as it names this device's person: another of their machines, the board, a
-      terminal.
+    - A person's own messages always pass. A message is their own when one of this device's sessions sent it. It is
+      also their own when the hub names a sender that is surely this device's person: another of their machines,
+      the board, a terminal. "Surely" means §49's stricter check. An own message may wake, is never held and passes
+      `messages.from: self`, all without asking the person. Once a sync carried `me.email`, a sender is the person
+      only by that email. Before that (an older hub), the display name decides.
     - A message the hub made from another source (`via`, §21) is never the person's own, also when its sender's
       name is theirs. Linear names the author of a prompt, and no paired machine or signed-in member vouches for
       that name. So such a message follows a teammate's rules everywhere: `messages.from` may drop it, it wakes only
@@ -1742,6 +1744,9 @@ reader, §14).
     only when it equals `me.email`. So a handoff from a teammate with the same display name waits for an Accept like
     any other teammate's, also when the hub sent it without an email.
   - Without `me.email` (an older hub), the rule above decides.
+  - The same check decides whether a message is the person's own (§23). An own message may wake a session, is never
+    held, and passes `messages.from: self`. So a message from a teammate with the same display name follows a
+    teammate's rules.
 - **Everything else keeps the rule above.** An email the hub leaves out never makes the relay stop seeing its own
   lease, claim or gate policy as its own.
 - **A name a person or an agent typed** (`send`, §23; `handoff`, §31). The relay looks it up in the last sync's

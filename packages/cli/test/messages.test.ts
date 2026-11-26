@@ -765,6 +765,49 @@ describe("who may message this machine's sessions at all", () => {
   });
 });
 
+describe("my own message, on a hub that sends emails (SPEC §49)", () => {
+  /** The hub names this device's person with their email. */
+  const ME_EMAIL: Partial<HubSyncResponse> = { me: { person: "An", email: "an@example.com" } };
+  /** A person's message (no sending session) asks to wake. */
+  const mine = message({ id: "wm_me", from: { person: "An", email: "AN@example.com" }, wake: undefined });
+  /** My display name with no email, or with someone else's: another person. */
+  const bare = message({ id: "wm_bare", from: { person: "An" }, wake: undefined });
+  const namesake = message({ id: "wm_namesake", from: { person: "An", email: "an@example.org" }, wake: undefined });
+  const inbox = [mine, bare, namesake];
+
+  it("wakes under every rule only when its email is mine; the others wake as a teammate's would", () => {
+    for (const wake of ["replies", "self", ["Bo"]] as const) {
+      const x = harness({ settings: { wake: wake as MessageSettings["wake"] } });
+      x.sync({ ...ME_EMAIL, inbox });
+      expect(wakes(x), String(wake)).toEqual(["wm_me"]);
+    }
+    const team = harness({ settings: { wake: "team" } });
+    team.sync({ ...ME_EMAIL, inbox });
+    expect(wakes(team)).toEqual(["wm_me", "wm_bare", "wm_namesake"]);
+  });
+
+  it("is never held when its email is mine; the others are held for a session with no permission prompts", () => {
+    const x = started();
+    x.sync({ ...ME_EMAIL, inbox });
+    expect(x.gate.heldMessages().map((m) => m.id)).toEqual(["wm_bare", "wm_namesake"]);
+    expect(x.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual(["wm_me"]);
+  });
+
+  it("passes `messages.from: self` when its email is mine; the others are dropped", async () => {
+    const x = harness({ settings: { from: "self" } });
+    x.sync({ ...ME_EMAIL, inbox });
+    expect(x.coord.inboxItems().map((i) => i.id)).toEqual(["wm_me"]);
+    await flush();
+    expect(x.acked().sort()).toEqual(["wm_bare", "wm_namesake"]);
+  });
+
+  it("on a hub that sends no email of mine, the display name decides, as before", () => {
+    const x = harness({ settings: { wake: "self" } });
+    x.sync({ inbox });
+    expect(wakes(x)).toEqual(["wm_me", "wm_bare", "wm_namesake"]);
+  });
+});
+
 describe("a message the hub made from a Linear prompt", () => {
   /** Linear names its author. No session sent it. */
   const linear = (over: Partial<Message> = {}): Message => message({ id: "wm_lin", from: { person: "Sam" }, via: "linear", ...over });

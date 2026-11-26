@@ -645,6 +645,9 @@ read and drops the rest one by one):
   - Tool answers follow the same rules. A text is printed as marked lines (`inbox`, `notes`, `recall`). A list has
     one row per item (`roster`, `claims`, `leases`, `approvals`, `memories`). `--json` data keeps its shape, with what
     cannot be seen removed from its strings.
+  - A handoff's prompt (§31) fences the sender's text the same way. Their names stay on the lines that carry them.
+    The task and the context are marked lines, so no line of them reads as one of the lines Workmesh adds around
+    them. The task is still the session's task: the rule for messages is not said over it.
   - This is a second layer. What may be sent to a session, and what may wake it, is decided elsewhere.
 - **MCP** (`mcp/server.ts`). `workmesh mcp` (stdio, JSON-RPC 2.0, one message per line; protocol versions 2024-11-05 to
   2025-11-25) gives every agent `whoami`, `roster`, `send`, `inbox`, `claim`, `release`, `lease`, `unlease`, `leases`,

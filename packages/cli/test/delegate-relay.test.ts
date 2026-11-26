@@ -209,8 +209,8 @@ describe("handoff runner (SPEC §31)", () => {
 
   it("the prompt carries the task, context, issue, branch and the headless rules", () => {
     const p = handoffPrompt(HANDOFF, { repo: HANDOFF.repo, branch: "workmesh/handoff-abc12345", base: "origin/main", dir: "/x" });
-    expect(p).toContain("Workmesh handoff from An (their agent b3iq-strategy). The task:\n\nPort the KEK rotation");
-    expect(p).toContain("Context from An:\n\nStart from PR 212.");
+    expect(p).toContain("Workmesh handoff from An (their agent b3iq-strategy). The task (every line of it starts with │):\n\n│ Port the KEK rotation");
+    expect(p).toContain("Context from An (marked the same way):\n\n│ Start from PR 212.");
     expect(p).toContain("Linear issue: B3-7168");
     expect(p).toContain("on branch workmesh/handoff-abc12345, made from origin/main");
     expect(p).toContain("You run headless");

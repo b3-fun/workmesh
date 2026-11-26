@@ -139,8 +139,8 @@ export interface MessageGateDeps {
   /** This machine's rules (config `messages`), read each time: a change applies without a restart. */
   settings: () => MessageSettings;
   /**
-   * A session's permission mode as its transcript last said it (the forwarder's mirror, SPEC §26), for a session
-   * whose hooks did not report one.
+   * A session's permission mode as its transcript last said it (the forwarder's mirror, SPEC §26). It is read beside
+   * what the session's last hook said.
    */
   mirrorMode?: (localKey: string) => string | undefined;
   /** Where the records are kept. Absent: in memory only. */
@@ -240,6 +240,17 @@ export class MessageGate implements InboxPolicy {
     return this.modes.get(key) ?? this.deps.mirrorMode?.(key);
   }
 
+  /**
+   * Whether this machine's rule holds a teammate's message for this session now. The relay knows the mode from two
+   * places, the session's last hook and its transcript. Either one naming a held mode is enough: when they disagree,
+   * the message waits for the person.
+   */
+  private holdsNow(localKey: string): boolean {
+    const rule = this.deps.settings().hold;
+    const key = CoordClient.family(localKey);
+    return holdsFor(rule, this.modes.get(key)) || holdsFor(rule, this.deps.mirrorMode?.(key));
+  }
+
   // --- the policy the sync client asks (hub/coord.ts) ---------------------------------
 
   /**
@@ -296,7 +307,7 @@ export class MessageGate implements InboxPolicy {
     // Dropped, and waiting for its ack to reach the hub: it never goes to the session.
     if (this.dropped.has(id) || this.heldIds.has(id)) return true;
     if (this.deps.coord()?.isOwn(item)) return false;
-    if (!holdsFor(this.deps.settings().hold, this.modeOf(localKey))) return false;
+    if (!this.holdsNow(localKey)) return false;
     if (this.heldIds.size >= HELD_MAX) this.heldIds.delete(this.heldIds.keys().next().value!);
     this.heldIds.set(id, { session: localKey, since: this.now() });
     this.touch();
@@ -312,7 +323,8 @@ export class MessageGate implements InboxPolicy {
    */
   sweep(): void {
     const coord = this.deps.coord();
-    if (!coord) return;
+    // Before the first good sync the inbox is not known: what was held before a restart must not be forgotten.
+    if (!coord || coord.view().fetchedAt === undefined) return;
     const now = this.now();
     // Reading the inbox asks `holds` for every message not yet handed over.
     const waiting = new Map(coord.inboxItems().filter((m) => !m.delivered).map((m) => [m.id, m]));

@@ -680,10 +680,10 @@ read and drops the rest one by one):
     - The rule is `bypass` (the default), `unattended`, `always` or `never`. `bypass` holds for a session whose mode
       is Claude Code's `bypassPermissions` or `dontAsk`, or a Codex thread with no sandbox (`full-access`, §26).
       `unattended` also holds for `auto`. `always` holds for every session, and `never` for none.
-    - The mode is what the session's last hook said: `permission_mode` in the hook's input, kept in the event's
-      local-only detail (`permissionMode`). Without one, it is what the session's transcript last said (§26). A
-      subagent's message follows its session's mode. When the mode is not known, the message is not held, except
-      under `always`.
+    - The relay knows a session's mode from two places. One is its last hook: `permission_mode` in the hook's input,
+      kept in the event's local-only detail (`permissionMode`). The other is its transcript (§26). A message is held
+      when either names a mode the rule holds for, so a disagreement makes the message wait. A subagent's message
+      follows its session's mode. When neither place knows the mode, the message is not held, except under `always`.
     - A held message is not in a hook's context, not in a wake, and not in the agent's `inbox`. The session is told
       nothing. The person sees it. The menu bar lists it with Deliver and Drop, and `workmesh inbox --held` lists it
       with its id. `workmesh inbox deliver <id>` and `workmesh inbox drop <id>` answer one. All three refuse a caller

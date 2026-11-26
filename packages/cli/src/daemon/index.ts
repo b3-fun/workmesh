@@ -137,7 +137,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   const messages = new MessageGate({
     coord: () => coord,
     settings: () => readSettings().messages,
-    // A session's mode as its transcript last said it, for one whose hooks did not report it (SPEC §26).
+    // A session's mode as its transcript last said it (SPEC §26), read beside what its last hook said.
     mirrorMode: (key) => forwarder?.modeOf(key),
     file: messagesStatePath(),
     log,
@@ -226,7 +226,11 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       log,
       onSync: (next, previous) => {
         // Held messages first (what waited too long is dropped), then wakes and handoffs.
-        messages.sweep();
+        try {
+          messages.sweep();
+        } catch {
+          // Fail open: held messages are looked at again at the next sync.
+        }
         delegate.onSync(next, previous);
       },
       policy: messages,

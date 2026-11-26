@@ -553,19 +553,31 @@ describe("a teammate's message for a session with no permission prompts", () => 
     expect(holdsFor("bypass", undefined)).toBe(false);
   });
 
-  it("reads the mode from the session's transcript when its hooks did not say, and a hook's word comes first", () => {
+  it("reads the mode from the session's transcript too, and holds when either source names a held mode", () => {
     const x = harness();
     x.mirror.set(LOCAL, "full-access");
     x.sync({ inbox: [message()] });
     expect(x.gate.modeOf(LOCAL)).toBe("full-access");
     // Held at the sync already: its person sees it though the session sits idle and no hook fires.
     expect(x.gate.heldMessages().map((m) => m.id)).toEqual(["wm_01"]);
+    // The hook says one thing and the transcript another: the message waits for the person.
     const y = harness();
     y.mirror.set(LOCAL, "full-access");
     y.boundary("s1", "default");
     expect(y.gate.modeOf(`${LOCAL}/a1b2c3d4e5f60718`)).toBe("default");
     y.sync({ inbox: [message()] });
-    expect(y.gate.heldMessages()).toEqual([]);
+    expect(y.gate.heldMessages().map((m) => m.id)).toEqual(["wm_01"]);
+    const z = harness();
+    z.mirror.set(LOCAL, "default");
+    z.boundary("s1", "bypassPermissions");
+    z.sync({ inbox: [message()] });
+    expect(z.gate.heldMessages().map((m) => m.id)).toEqual(["wm_01"]);
+    // Both know the mode and neither is a held one: delivered.
+    const w = harness();
+    w.mirror.set(LOCAL, "auto");
+    w.boundary("s1", "default");
+    w.sync({ inbox: [message()] });
+    expect(w.gate.heldMessages()).toEqual([]);
   });
 
   it("holds a message that arrived before the mode was known, and keeps it held when the mode changes", () => {
@@ -615,6 +627,8 @@ describe("held messages across a daemon restart", () => {
 
     // A new daemon: nothing is known about the session's mode, and the hub lists all three again (no ack landed).
     const y = harness({ file });
+    // Asked before the first sync (the menu bar polls at once): nothing is listed yet, and nothing is forgotten.
+    expect(y.gate.heldMessages()).toEqual([]);
     y.sync({ inbox });
     expect(y.gate.heldMessages()).toMatchObject([{ id: "wm_held", since: T, dropAt: T + 60 * 60_000 }]);
     expect(y.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual(["wm_released"]);

@@ -626,7 +626,7 @@ read and drops the rest one by one):
   calling from the caller's parent process (Claude Code's `~/.claude/sessions/<pid>.json`), else
   `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`, else the live session in the caller's directory that moved last;
   none of them means the person at a terminal. Message and note text is redacted (§9) before it is sent.
-  `send`'s `to` (0.11.x) resolves on the machine from the last sync's roster: a person (name or GitHub login), a
+  `send`'s `to` (0.11.x) resolves on the machine from the last sync's roster: a person (name or GitHub login; §49), a
   session by the name the board shows or its key (`claude-code:<id>`, or the start of the id, 6+ characters), or a hub
   key; a name that fits several live sessions is refused, listing them, rather than guessed (`--kind session|agent|
   person` narrows it). An agent's reply wakes its recipient (§30 `wake: true`) when it is in a thread a message to the
@@ -1424,7 +1424,7 @@ reader, §14).
     and whether a decision's notice says "Your person". An approver is matched against `approverEmails` (§48).
   - Leases, claims and recent edits (§23): "your own other session" in a lease refusal, the open-claims line at a
     session's start, and whose recent edit gets a heads-up.
-  - Replies (§23): a message to a person counts as a reply only when an agent of that same person wrote first.
+  - Replies (§23): whether the person a message goes to is the one whose agent wrote first.
 - **A name a person or an agent typed** (`send`, §23; `handoff`, §31). The relay looks it up in the last sync's
   roster by display name, GitHub login or email. Its own person counts as a choice, even when the roster leaves
   them out.

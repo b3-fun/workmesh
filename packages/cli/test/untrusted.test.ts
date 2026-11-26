@@ -126,4 +126,13 @@ describe("messageBlock", () => {
     const unmarked = out.split("\n").filter((l) => !l.startsWith(QUOTE_MARK));
     expect(unmarked).toEqual(['<workmesh-message from="Sam">', "</workmesh-message>"]);
   });
+
+  it("cut at max, the block still closes", () => {
+    const out = messageBlock({ person: "Sam" }, "word ".repeat(400), 60);
+    const lines = out.split("\n");
+    expect(lines.at(-1)).toBe("</workmesh-message>");
+    expect(lines).toHaveLength(3);
+    expect(lines[1]!.endsWith("…")).toBe(true);
+    expect(lines[1]!.length).toBeLessThanOrEqual(62);
+  });
 });

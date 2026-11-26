@@ -263,14 +263,14 @@ describe("wake-wait, the asyncRewake Stop hook (SPEC §31)", () => {
       daemonUp: async () => true,
       wait: async (_port, key, ms) => {
         asked.push([key, ms]);
-        return asked.length < 2 ? {} : { wake: "Workmesh woke this idle session…\nMessage from An: ping" };
+        return asked.length < 2 ? {} : { wake: 'Workmesh woke this idle session…\n<workmesh-message from="An">\n│ ping\n</workmesh-message>' };
       },
       stderr: (t) => {
         err += t;
       },
     });
     expect(code).toBe(2);
-    expect(err).toBe("Workmesh woke this idle session…\nMessage from An: ping\n");
+    expect(err).toBe('Workmesh woke this idle session…\n<workmesh-message from="An">\n│ ping\n</workmesh-message>\n');
     expect(asked[0]?.[0]).toBe("claude-code:s1");
     expect(asked[0]![1]).toBeLessThanOrEqual(55_000);
   });

@@ -140,6 +140,9 @@ agent starts, in which permission mode, and where. `workmesh handoffs accept <id
 `Accept and start an agent? [y/N]`. It always asks, so it needs a terminal. Without one nothing is accepted: use the
 menu bar or the board.
 
+In the menu bar, **Show all** opens the whole task and context. For a long handoff the first click on **Accept** opens
+them too, and the button then reads **Accept and run**. The line above the buttons says what starts.
+
 Which handoffs run without a click is your choice, `workmesh handoffs policy`: `auto-self` (the default: ones you send
 yourself run at once; teammates' wait for your Accept), `ask`, or `never`. If a handoff can't find your checkout, add
 where your repos live: `workmesh roots add ~/code`.

@@ -1016,6 +1016,10 @@ command run; a waiter that can't reach the daemon ends.
     permissionMode?, text }`. The line to show is `text`. Example: "Starts a Claude Code agent on this Mac in auto
     mode, in a new worktree of b3-fun/b3os-beta." The `agent` is absent when this machine can't run the handoff.
   - These fields are additive: an older app shows two lines of `task` as before.
+  - Workmesh.app shows a task of up to 80 characters whole, with the `onAccept` line under it. A longer task, or a
+    handoff with a context, shows two lines and "Show all". That opens the whole task and context in a box that
+    scrolls and whose text can be selected. On such a row the first click on Accept opens the box and accepts
+    nothing. The button then reads "Accept and run", and the next click accepts.
 - **`workmesh init <hub-url>`.** Hooks and MCP (as `setup --hooks-only`), the daemon (the service when it can,
   restarted on this build; else in the background), and `hub connect` unless this machine is paired with that hub and
   the hub still accepts its token (`--repair` pairs again; `--share` sets the level either way).

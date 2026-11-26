@@ -30,8 +30,22 @@ app is presentation + control only, so there's zero logic to keep in sync.
   with a small computer). A wait the hub also lists shows once, with the hub's
   reason as its line.
 - **Handoffs for you** (v2): tasks a teammate handed you, with who, repo and
-  issue, and **Accept** / **Decline** (Accept starts an agent for it on this
-  Mac); ones already running here say so. Up to four, the header counts all.
+  issue, and **Accept** / **Decline**; ones already running here say so. Up to
+  four, the header counts all. Accept starts an agent on this Mac, and the
+  sender's text becomes its instructions, so you read all of it first:
+  - A short task (up to 80 characters, one line, no context) is shown whole.
+    Under it is the daemon's line about what starts, such as "Starts a Claude
+    Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta."
+    Its button reads **Accept and run**, or plain **Accept** when this Mac
+    can't run the handoff (the line then says why).
+  - A longer task, or a handoff with a context, shows two lines and **Show
+    all**. That opens the whole task and context in a box you can scroll and
+    select text in. The first click on **Accept** opens the box too and accepts
+    nothing. The button then reads **Accept and run**, and the next click
+    accepts.
+  - The task, the context and the line come from the daemon (`task`, `context`
+    and `onAccept` in `GET /team`'s `delegate`). An older daemon sends the first
+    500 characters of the task and no line.
 - **Approvals** (v2): merges, deploys, publishes, force-pushes and spends an
   agent may not do without a yes. Ones you may decide get **Approve** /
   **Deny** (orange header); your own agents' asks that someone else decides say
@@ -204,7 +218,10 @@ real SHA-256; without it, a placeholder that won't unpack) and
 
 Snapshot mode renders the menu to a PNG and exits: set `WORKMESH_SNAPSHOT` to
 the output path, optionally `WORKMESH_SNAPSHOT_EXPAND=An` (comma-separated
-names) and `WORKMESH_SNAPSHOT_APPEARANCE=dark`. `WORKMESH_SNAPSHOT_SHEET=update-running`
+names) and `WORKMESH_SNAPSHOT_APPEARANCE=dark`. With `--scenario delegate`,
+`WORKMESH_SNAPSHOT_HANDOFF=h_1` opens that handoff's whole text, and
+`WORKMESH_SNAPSHOT_ACCEPT=h_1,h_1` clicks Accept on it twice before the picture
+(once opens the text, twice accepts; `MOCK_DAEMON_VERBOSE=1` logs the calls). `WORKMESH_SNAPSHOT_SHEET=update-running`
 (or `update-finished`, `update-failed`, `update-cant`, `update-app-failed`)
 draws the update window in that state with fixture output instead (no daemon
 read; build the app at 0.12.0 so `update-finished` shows the relaunch offer). It hosts the menu in an

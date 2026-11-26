@@ -387,7 +387,8 @@ describe("the `messages` config section", () => {
   });
 });
 
-const PERSON = { cwd: "/nowhere" };
+/** The person at their own terminal: the CLI, in a folder where no agent session runs. */
+const PERSON = { cwd: "/nowhere", client: "cli" };
 const BLOCK = '<workmesh-message from="Sam" session="auth-refactor">\n│ Can you rebase?\n</workmesh-message>';
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -509,6 +510,66 @@ describe("a teammate's message for a session with no permission prompts", () => 
     expect((await x.op("inbox", { action: "drop", id: "9001" }, PERSON)).text).toBe("Several held messages end in 9001: give the whole id (`workmesh inbox --held` lists them).");
     // Fewer than four characters name nothing.
     expect((await x.op("inbox", { action: "drop", id: "_01" }, PERSON)).text).toBe("No held message _01 (`workmesh inbox --held` lists them).");
+  });
+
+  it("only a person's own surface reads or answers a held message: the CLI or the menu bar, with no agent session behind the call", async () => {
+    const x = started();
+    x.sync({ inbox: [message()] });
+    const refusal = "Held messages are your person's to read, deliver or drop, in the menu bar or in their own terminal, not an agent's.";
+    const callers: Array<[string, CoordOpRequest["caller"]]> = [
+      // A caller the daemon cannot name as an agent session is still not the person.
+      ["a caller that names no client", {}],
+      ["a caller that names no client, in a folder with no session", { cwd: "/nowhere" }],
+      ["an MCP client the daemon finds no session for", { cwd: "/nowhere", client: "claude-code" }],
+      ["another MCP client the daemon finds no session for", { cwd: "/nowhere", client: "codex-mcp-client" }],
+      ["an MCP client that calls itself the CLI", { cwd: "/nowhere", client: "mcp:cli" }],
+      ["an MCP client that calls itself the menu bar", { cwd: "/nowhere", client: "mcp:menubar" }],
+      // The CLI run where an agent session is known speaks for that session.
+      ["the CLI under a session's process", { ppid: 4242, client: "cli" }],
+      ["the CLI in a session's folder", { cwd: ROOT, client: "cli" }],
+      ["the CLI with a session's id in its environment", { cwd: "/nowhere", claudeSessionId: "s1", client: "cli" }],
+    ];
+    for (const [who, caller] of callers) {
+      for (const args of [{ held: true }, { action: "deliver", id: "wm_01" }, { action: "drop", id: "wm_01" }]) {
+        expect(await x.op("inbox", args, caller), `${who}: ${JSON.stringify(args)}`).toMatchObject({ ok: false, text: refusal });
+      }
+    }
+    // Nothing moved: the message is still held, its session got nothing, and the hub still lists it.
+    expect(x.gate.heldMessages().map((m) => m.id)).toEqual(["wm_01"]);
+    expect(x.boundary("s1", "bypassPermissions")).toBeUndefined();
+    await flush();
+    expect(x.acked()).toEqual([]);
+    // The CLI at the person's terminal, and the menu bar app (it names itself and nothing else).
+    expect((await x.op("inbox", { held: true }, { cwd: "/nowhere", client: "cli" })).ok).toBe(true);
+    expect((await x.op("inbox", { held: true }, { client: "menubar" })).ok).toBe(true);
+    expect((await x.op("inbox", { action: "deliver", id: "wm_01" }, { client: "menubar" })).ok).toBe(true);
+    expect(x.boundary("s1", "bypassPermissions")).toContain(BLOCK);
+  });
+
+  it("the machine's whole list shows a held message to the person only", async () => {
+    const x = started();
+    // The second session's mode is not known: its message is not held.
+    const other = message({ id: "wm_02", to: `${DEV}:${OTHER}`, text: "Second one." });
+    x.sync({ inbox: [message(), other] });
+    expect(x.gate.heldMessages().map((m) => m.id)).toEqual(["wm_01"]);
+    const mine = await x.op("inbox", {}, PERSON);
+    expect(mine.text).toContain("- to claude-code:s1 (held for you):");
+    expect(mine.text).toContain("│ Can you rebase?");
+    expect(mine.text).toContain("│ Second one.");
+    expect((mine.data as { messages: Array<{ id: string }> }).messages.map((m) => m.id)).toEqual(["wm_01", "wm_02"]);
+    // A caller the daemon cannot name as a person's own surface gets the list without it: no text, no row, no hint.
+    const callers: CoordOpRequest["caller"][] = [{ cwd: "/nowhere" }, { cwd: "/nowhere", client: "claude-code" }, { cwd: "/nowhere", client: "mcp:cli" }];
+    for (const caller of callers) {
+      const r = await x.op("inbox", {}, caller);
+      expect(r.text, JSON.stringify(caller)).toContain("│ Second one.");
+      expect(r.text, JSON.stringify(caller)).not.toContain("Can you rebase?");
+      expect(r.text, JSON.stringify(caller)).not.toMatch(/held/i);
+      expect((r.data as { messages: Array<{ id: string }> }).messages.map((m) => m.id)).toEqual(["wm_02"]);
+    }
+    // With nothing but a held message, such a caller reads an empty list.
+    const y = started();
+    y.sync({ inbox: [message()] });
+    expect(await y.op("inbox", {}, { cwd: "/nowhere", client: "claude-code" })).toMatchObject({ ok: true, text: "No messages waiting for this machine's agents.", data: { messages: [] } });
   });
 
   it("a held message does not wake its session; a delivered one does", async () => {

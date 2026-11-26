@@ -121,7 +121,7 @@ export interface CoordOpsDeps {
   sent?: (localKey: string, to: HubMessageTo, info: { id: string; thread?: string; person?: string }) => void;
   /**
    * The messages held for the person (SPEC §23), and their answers. Only the person reads, delivers or drops them:
-   * the operation refuses an agent caller before it asks.
+   * the operation refuses every caller but a person's own surface (`PERSON_CLIENTS`) before it asks.
    */
   held?: { list(): HeldMessage[]; deliver(id: string): HeldAnswer; drop(id: string): HeldAnswer };
   /** Ask: this machine's IANA time zone, for "today" and clock times (default: the process's). */
@@ -333,10 +333,14 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
 
     case "inbox": {
       const action = str(a.action, 20);
+      // A held message is the person's to read and to answer, by the rule a handoff's Accept follows: the call names
+      // one of a person's own surfaces, and the daemon reads no agent session behind it. Every call through the MCP
+      // server is an agent's, also one whose session the daemon can't name.
+      const person = key === undefined && PERSON_CLIENTS.includes(req.caller.client ?? "");
       if (action !== undefined || a.held === true) {
         if (action !== undefined && action !== "deliver" && action !== "drop") return fail("`inbox` takes deliver or drop, with the id of a held message.");
-        // A held message is the person's to read and to answer. An agent gets none of it: not the text, not the choice.
-        if (key) return fail("Held messages are your person's to read, deliver or drop, in the menu bar or in their own terminal, not an agent's.");
+        // An agent gets none of it: not the text, not the choice.
+        if (!person) return fail("Held messages are your person's to read, deliver or drop, in the menu bar or in their own terminal, not an agent's.");
         const held = deps.held;
         if (!held) return fail("This daemon holds no messages.");
         if (action === undefined) return heldList(held.list(), now);
@@ -371,7 +375,9 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         coord.markDelivered(block.items.map((i) => i.id));
         return { ok: true, text: block.text, data: { messages: block.items } };
       }
-      const all = coord.inboxItems();
+      // The machine's whole list. Only the person's own surfaces see a held message in it: any other caller gets
+      // the list without one, and no word that it exists.
+      const all = coord.inboxItems().filter((m) => person || !m.held);
       if (all.length === 0) return { ok: true, text: "No messages waiting for this machine's agents.", data: { messages: [] } };
       const lines = all.map((m) => {
         const s = m.localKey ? deps.getSession(CoordClient.family(m.localKey)) : undefined;

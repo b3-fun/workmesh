@@ -103,7 +103,8 @@ Deliver hands the message to the session at its next prompt or tool call. Drop r
 is dropped after 60 minutes. Your own messages are never held.
 
 Your agent is told nothing about a held message. It cannot list, deliver or drop one: those commands only work for
-you, at your own terminal or in the menu bar.
+you, at your own terminal or in the menu bar. In a terminal, run them from a folder where none of your agent sessions
+is running. The daemon reads a call from a session's folder as that session's, and refuses it.
 
 The `messages.hold` key in the config file changes which sessions this covers. `unattended` adds `auto` mode, `always`
 holds for every session, and `never` turns it off ([reference](../reference/config.md#messages)).

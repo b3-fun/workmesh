@@ -698,8 +698,17 @@ read and drops the rest one by one):
       follows its session's mode. When neither place knows the mode, the message is not held, except under `always`.
     - A held message is not in a hook's context, not in a wake, and not in the agent's `inbox`. The session is told
       nothing. The person sees it. The menu bar lists it with Deliver and Drop, and `workmesh inbox --held` lists it
-      with its id. `workmesh inbox deliver <id>` and `workmesh inbox drop <id>` answer one. All three refuse a caller
-      the daemon identifies as an agent session, as approvals do (§31).
+      with its id. `workmesh inbox deliver <id>` and `workmesh inbox drop <id>` answer one.
+    - Only a person reads, delivers or drops a held message, by the rule a handoff's Accept follows (§31). The
+      daemon takes the three calls only from a person's own surfaces: the CLI and the menu bar app (`caller.client`
+      is `cli` or `menubar`). It must also read no agent session behind the call. Any other caller gets this
+      refusal, and nothing changes: "Held messages are your person's to read, deliver or drop, in the menu bar or in
+      their own terminal, not an agent's."
+    - So every call through the MCP server is refused, also one whose session the daemon can't name. The MCP `inbox`
+      tool takes no arguments. The machine's whole list (`inbox` with no session behind the call) shows a held
+      message to the same two surfaces only. Any other caller gets the list without it, and no word that it exists.
+    - Like the gates, this is a cooperative guard rail, not a sandbox: anything running as the person can call the
+      hub.
     - Deliver puts the message into the session's next context, whatever its mode. It wakes the session if it sits
       idle and `wake` is on. Drop removes the message. A held message nobody answers is dropped after
       `messages.holdMinutes` (default 60), and the daemon log says so.

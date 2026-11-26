@@ -674,7 +674,7 @@ export class CoordClient {
     const holds = new Map<string, { hold: HubSyncHold; seenAt: number }>();
     for (const h of s.holds) holds.set(h.sessionKey, { hold: h, seenAt: now });
     for (const [k, h] of holds) {
-      if (!this.holds.has(k) && this.localKey(k) !== undefined) this.log(`hub: ${k} held by ${h.hold.by}`);
+      if (!this.holds.has(k) && this.localKey(k) !== undefined) this.log(`hub: ${oneLine(k, 300)} held by ${label(h.hold.by)}`);
     }
     this.holds = holds;
     // The hub lists an item until it is acked: one it no longer lists that was delivered is done. One never delivered

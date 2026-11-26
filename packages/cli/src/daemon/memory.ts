@@ -1,5 +1,6 @@
 import { HUB_MEMORY_KIND_ORDER, leasePathsOverlap, normalizeLeasePath } from "@workmesh/protocol";
 import type { HubMemoryKind } from "@workmesh/protocol";
+import { cleanText, label, oneLine } from "../lib/untrusted";
 
 /**
  * v3 Memory at session start (docs/SPEC.md §36): which of the team's accepted memories a new session gets, picked on
@@ -154,13 +155,16 @@ export function firstSentence(body: string): string {
   return s;
 }
 
-/** `- [m12] gotcha: <title> — <the body's first sentence> (Sean)`, at most 240 characters. */
+/**
+ * `- [m12] gotcha: <title> — <the body's first sentence> (Sean)`, at most 240 characters. Title, sentence and name are
+ * their writer's text: each is cleaned (`lib/untrusted.ts`) and stays on this one line.
+ */
 export function memoryLine(m: BriefMemory, max = MEMORY_LINE_MAX): string {
-  const title = m.title.replace(/\s+/g, " ").trim();
-  let sentence = firstSentence(m.body);
+  const title = oneLine(m.title, max);
+  let sentence = oneLine(firstSentence(cleanText(m.body)), max);
   const bare = (x: string): string => x.toLowerCase().replace(/[\s.!?]+$/, "");
   if (sentence && bare(sentence) === bare(title)) sentence = "";
-  const person = m.by.person.replace(/\s+/g, " ").trim().slice(0, 40) || "someone";
+  const person = label(m.by.person, 40) || "someone";
   const head = `- [${m.id}] ${m.kind}: `;
   const tail = ` (${person})`;
   let text = sentence ? `${title} — ${sentence}` : title;

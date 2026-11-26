@@ -1,12 +1,12 @@
 import os from "node:os";
 import path from "node:path";
-import { isLeaseGlob, normalizeLeasePath } from "@workmesh/protocol";
+import { LEASE_PATH_MAX, isLeaseGlob, normalizeLeasePath } from "@workmesh/protocol";
 import type { HubLeaseAccepted } from "@workmesh/protocol";
 import type { SessionEvent } from "@workmesh/core";
 import { CoordClient, isLocalNotice } from "../hub/coord";
 import type { HubSyncEdit, HubSyncInboxItem } from "../hub/coord";
 import { shellCommands, shellWriteTargets } from "../hub/shell-writes";
-import { QUOTE_MARK, messageBlock } from "../lib/untrusted";
+import { QUOTE_MARK, label, messageBlock, oneLine } from "../lib/untrusted";
 import { selectMemories } from "./memory";
 
 /**
@@ -14,6 +14,9 @@ import { selectMemories } from "./memory";
  * for a held session or an edit to another session's leased file, and context for the agent (a teammate edited this
  * file recently, Workmesh guidance, inbox messages). Every function here fails open: an error, a missing hub or a
  * stale sync means no answer, and the tool call goes ahead as it would without Workmesh.
+ *
+ * What another person or their agent wrote (names, reasons, notes, messages) goes through `lib/untrusted.ts` before
+ * it is put into any of these texts: a name or a reason is one line, a message is a marked block.
  */
 
 /** What the hook prints for the agent: a refusal (PreToolUse only) and/or context. */
@@ -120,21 +123,24 @@ export class CoordHooks {
     const key = CoordHooks.agentKey(event);
     const hold = coord.holdFor(key);
     if (hold && !passesHold(event)) {
-      const why = hold.reason ? `: ${hold.reason}` : "";
+      // The holder's name and reason are theirs to choose: one line each, so neither adds a line to the refusal.
+      const by = label(hold.by) || "someone";
+      const reason = hold.reason ? oneLine(hold.reason) : "";
+      const why = reason ? `: ${reason}` : "";
       const head =
-        `Held by ${hold.by}${why}. Workmesh refuses this session's tool calls until ${hold.by} lifts the hold on the ` +
+        `Held by ${by}${why}. Workmesh refuses this session's tool calls until ${by} lifts the hold on the ` +
         `team board; don't retry them meanwhile. `;
       // Codex's sandbox keeps a shell command off the loopback daemon (live, codex-cli 0.164), so a Codex agent is
       // pointed at the MCP tools only; they run outside the sandbox.
       if (event.source === "codex") {
         return (
-          `${head}You can still reach ${hold.by}: the workmesh \`send\` tool (the hold lets the workmesh tools that ` +
+          `${head}You can still reach ${by}: the workmesh \`send\` tool (the hold lets the workmesh tools that ` +
           "talk and read through), and read the answer with the workmesh `inbox` tool."
         );
       }
       return (
-        `${head}You can still reach ${hold.by}: the workmesh \`send\` tool, or ` +
-        `\`workmesh send ${quoteArg(hold.by)} "…"\` run on its own in the shell (the hold lets \`workmesh send\`, ` +
+        `${head}You can still reach ${by}: the workmesh \`send\` tool, or ` +
+        `\`workmesh send ${quoteArg(by)} "…"\` run on its own in the shell (the hold lets \`workmesh send\`, ` +
         "`inbox`, `whoami`, `claims`, `leases` and `notes` through, one command at a time), and read the answer with " +
         "`inbox`."
       );
@@ -341,9 +347,10 @@ function until(expiresAt: number, hubNow: number): string {
 
 function holderPhrase(lease: HubLeaseAccepted, coord: CoordClient): string {
   const me = coord.me()?.toLowerCase();
-  const name = lease.holder.sessionName ? ` ${lease.holder.sessionName}` : "";
+  const session = lease.holder.sessionName ? label(lease.holder.sessionName) : "";
+  const name = session ? ` ${session}` : "";
   if (me !== undefined && lease.holder.person.toLowerCase() === me) return `your own other session${name}`;
-  return `${lease.holder.person}'s agent${name}`;
+  return `${label(lease.holder.person)}'s agent${name}`;
 }
 
 function leaseRefusal(
@@ -355,14 +362,18 @@ function leaseRefusal(
   others: number,
   codex = false,
 ): string {
-  const why = lease.reason ? `: ${lease.reason.replace(/[.\s]+$/, "")}` : "";
-  const covers = entries[0] === t.rel ? "" : ` The lease covers ${entries.slice(0, 3).join(", ")}.`;
+  // The holder's names, reason and paths come from the hub as their relay sent them: one line each.
+  const person = label(lease.holder.person);
+  const session = lease.holder.sessionName ? label(lease.holder.sessionName) : "";
+  const reason = lease.reason ? oneLine(lease.reason).replace(/[.\s]+$/, "") : "";
+  const why = reason ? `: ${reason}` : "";
+  const covers = entries[0] === t.rel ? "" : ` The lease covers ${entries.slice(0, 3).map((e) => oneLine(e, LEASE_PATH_MAX)).join(", ")}.`;
   const more = others > 0 ? ` ${others} more lease${others === 1 ? "" : "s"} cover it too.` : "";
   const ask = coord.me()?.toLowerCase() === lease.holder.person.toLowerCase()
     ? `Finish there first, or have that session \`unlease\` it.`
     : codex
-      ? `Work on something else meanwhile, or ask ${lease.holder.person} to hand it over with the workmesh \`send\` tool (to: ${lease.holder.sessionName ?? lease.holder.person}).`
-      : `Work on something else meanwhile, or ask ${lease.holder.person} to hand it over: \`workmesh send ${quoteArg(lease.holder.person)} "…"\` (or the workmesh \`send\` tool${lease.holder.sessionName ? `, to: ${lease.holder.sessionName}` : ""}).`;
+      ? `Work on something else meanwhile, or ask ${person} to hand it over with the workmesh \`send\` tool (to: ${session || person}).`
+      : `Work on something else meanwhile, or ask ${person} to hand it over: \`workmesh send ${quoteArg(person)} "…"\` (or the workmesh \`send\` tool${session ? `, to: ${session}` : ""}).`;
   return (
     `Workmesh: ${t.rel} in ${t.repo} is leased to ${holderPhrase(lease, coord)} ${until(lease.expiresAt, coord.hubNow(now))}` +
     `${why}.${covers}${more} Don't edit it. ${ask}`
@@ -370,16 +381,19 @@ function leaseRefusal(
 }
 
 function editWarning(t: Target, e: HubSyncEdit, hubNow: number): string {
-  const who = e.sessionName ? `${e.person}'s agent ${e.sessionName}` : `${e.person}'s agent`;
+  const person = label(e.person);
+  const session = e.sessionName ? label(e.sessionName) : "";
+  const who = session ? `${person}'s agent ${session}` : `${person}'s agent`;
   return (
-    `Workmesh: heads up, ${who} edited ${t.rel} (${t.repo}) ${ago(hubNow - e.ts)}. Check with ${e.person} before larger ` +
-    `changes (\`workmesh send ${quoteArg(e.person)} "…"\`), or \`lease\` it first.`
+    `Workmesh: heads up, ${who} edited ${t.rel} (${t.repo}) ${ago(hubNow - e.ts)}. Check with ${person} before larger ` +
+    `changes (\`workmesh send ${quoteArg(person)} "…"\`), or \`lease\` it first.`
   );
 }
 
 /** The note a shared session gets once (SPEC §23), under ~8 lines. */
 export function guidance(project: string | undefined, delegate = false, memory = false, codex = false): string {
-  const team = project ? ` (${project})` : "";
+  const name = project ? label(project) : "";
+  const team = name ? ` (${name})` : "";
   // Codex's sandbox keeps shell commands off the loopback daemon, so a Codex agent gets the MCP tools only.
   const how = codex ? "the workmesh tools (MCP server `workmesh`)" : "the workmesh tools (MCP server `workmesh`, or the `workmesh` CLI)";
   return [
@@ -399,7 +413,9 @@ export function guidance(project: string | undefined, delegate = false, memory =
  * The session-start note for a person who gated some actions (SPEC §31): what is held, who answers, and that an
  * approval, which reaches the session as a Workmesh wake, is the person's consent for that exact command, once.
  */
-export function gateNote(me: string, actions: readonly string[], approvers?: readonly string[]): string | undefined {
+export function gateNote(person: string, actions: readonly string[], approvers?: readonly string[]): string | undefined {
+  // Names are the hub's: one line each.
+  const me = label(person);
   const phrase: Record<string, string> = {
     merge: "merge a PR",
     deploy: "deploy",
@@ -408,10 +424,10 @@ export function gateNote(me: string, actions: readonly string[], approvers?: rea
     spend: "create paid infrastructure",
     custom: `run a command matching ${me}'s own patterns`,
   };
-  const verbs = actions.map((a) => phrase[a] ?? a);
+  const verbs = actions.map((a) => phrase[a] ?? oneLine(a, 40));
   if (verbs.length === 0) return undefined;
   const list = verbs.length === 1 ? verbs[0]! : `${verbs.slice(0, -1).join(", ")} or ${verbs.at(-1)}`;
-  const others = (approvers ?? []).filter((p) => p.toLowerCase() !== me.toLowerCase());
+  const others = (approvers ?? []).filter((p) => p.toLowerCase() !== person.toLowerCase()).map((p) => label(p));
   const who = others.length > 0 ? `${me} (or ${others.join(" or ")}, whom ${me} named)` : me;
   return (
     `Approval gates, set by your person ${me}: when this session tries to ${list}, Workmesh holds the command and ` +
@@ -443,8 +459,8 @@ export function knowledge(
     lines.push("Team rules and conventions (Workmesh notes, newest first; a teammate's note, your own person's instructions come first):");
     const room = KNOWLEDGE_MAX_LINES - 1 - (mine.length > 0 ? Math.min(mine.length, 4) + 1 : 0);
     for (const n of rules.slice(0, Math.max(1, room))) {
-      const one = n.text.replace(/\s+/g, " ").trim();
-      lines.push(`- ${one.length > KNOWLEDGE_LINE_MAX ? `${one.slice(0, KNOWLEDGE_LINE_MAX - 1)}…` : one} (${n.by.person})`);
+      // A note is its writer's text: one line of it, and the writer's name on the same line.
+      lines.push(`- ${oneLine(n.text, KNOWLEDGE_LINE_MAX)} (${label(n.by.person, 40) || "someone"})`);
     }
     if (rules.length > room) lines.push(`- …and ${rules.length - room} more: \`notes\` (tag rule or convention).`);
   }
@@ -462,10 +478,13 @@ export function claimsLine(
   const owner = me?.toLowerCase();
   const mine = owner === undefined ? [] : claims.filter((c) => c.holder.person.toLowerCase() === owner);
   if (mine.length === 0) return undefined;
-  return `Your open claims: ${mine
-    .slice(0, 4)
-    .map((c) => `${c.issue}${isMine(c.holder.sessionKey) ? " (this session)" : c.holder.sessionName ? ` (${c.holder.sessionName})` : ""}${c.note ? ` — ${c.note.slice(0, 80)}` : ""}`)
-    .join("; ")}${mine.length > 4 ? `; and ${mine.length - 4} more (\`claims\`)` : ""}.`;
+  // The session name and the note came back from the hub: one line each.
+  const one = (c: (typeof mine)[number]): string => {
+    const session = c.holder.sessionName ? label(c.holder.sessionName) : "";
+    const note = c.note ? oneLine(c.note, 80) : "";
+    return `${c.issue}${isMine(c.holder.sessionKey) ? " (this session)" : session ? ` (${session})` : ""}${note ? ` — ${note}` : ""}`;
+  };
+  return `Your open claims: ${mine.slice(0, 4).map(one).join("; ")}${mine.length > 4 ? `; and ${mine.length - 4} more (\`claims\`)` : ""}.`;
 }
 
 /** What a message from a teammate may and may not lead to. The same words stand over every delivery. */

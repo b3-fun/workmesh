@@ -617,11 +617,17 @@ read and drops the rest one by one):
   under one heading (below). The boundary is `additionalContext` on PostToolUse and UserPromptSubmit, Claude Code and
   Codex alike. They are then acked (`POST /relay/inbox/ack`). A message for a subagent (`<key>/<agentId>`) reaches
   only that subagent. The MCP `inbox` tool and `workmesh inbox` list them too.
-- **A teammate's text** (`lib/untrusted.ts`, B3-7233). A message is text another person or their agent wrote. The hub
-  passes it on as written. So the relay cleans and marks it on the machine that reads it.
+- **A teammate's text** (`lib/untrusted.ts`, B3-7233). A message, a note, a name or a reason is text another person or
+  their agent wrote. The hub passes it on as written. So the relay cleans and marks it on the machine that reads it.
+  This holds wherever it goes into an agent's context.
   - Nothing a reader cannot see stays in it. Terminal escape sequences and control characters are removed, tab and
     line feed excepted. So are invisible characters: zero-width and direction marks, and the Unicode tag block. Every
     kind of line break reads as one.
+  - A name, a note or a reason is one line. Names are a person's, a session's or the project's: at most 80
+    characters, without `"`, `<` and `>`. Notes and reasons are a hold's or a lease's reason, a claim's note, and an
+    approval's note and detail. The same goes for a lease's paths, a handoff's task and note in a notice, a memory's
+    title and first sentence, and what the hub says went wrong. So none of them adds a line to a refusal, a heads-up
+    or a notice.
   - A message is a block: `<workmesh-message from="An" session="b3iq-strategy">`, its text with every line behind
     `│ `, then `</workmesh-message>`. Markup an agent tool or Workmesh would write (`<system-reminder>`,
     `</workmesh-message>`) reads `&lt;…` inside it. The only unmarked lines in a delivery are the heading, each
@@ -966,8 +972,8 @@ command run; a waiter that can't reach the daemon ends.
   over 5 s old, so a person at a terminal sees a handoff offered a moment ago.
 - **Notices.** The daemon writes notices for its own sessions (an approval decided, a handoff's progress) into the
   same inbox as teammates' messages, delivered the same way and never acked to the hub. A notice is printed as
-  Workmesh's own line, outside any block. Only the daemon can make a notice: a sync item that carries a notice's id
-  prefix is refused (§42).
+  Workmesh's own line, outside any block. So the names, notes and tasks the hub passed on are one line each in it
+  (§23). Only the daemon can make a notice: a sync item that carries a notice's id prefix is refused (§42).
 - **Wake.** An inbox item wakes an idle session when its `wake` says so, else when a person wrote it; the daemon's
   notices about outcomes wake too. Claude Code: `workmesh setup` (and `init`; `--no-wake` skips it) adds a Stop hook
   `{ type: "command", command: "<node> <cli> wake-wait claude-code", asyncRewake: true, timeout: 3600, rewakeMessage,

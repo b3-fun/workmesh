@@ -220,9 +220,9 @@ export type HubApprovalResponseAccepted = z.infer<typeof hubApprovalResponseAcce
 // ------------------------------------------------------------------ handoffs
 
 /**
- * `offered` → `accepted` (by the person it went to: the board, the menu bar, an agent of theirs, or their relay's
- * policy for one they sent themselves) → `started` (a relay started a session for it) → `done` | `failed`; or
- * `offered` → `declined`.
+ * `offered` → `accepted` (by the person it went to: on the board, in the menu bar or in their own terminal, never by
+ * an agent of theirs; or by their relay's policy for one they sent themselves) → `started` (a relay started a
+ * session for it) → `done` | `failed`; or `offered` → `declined`.
  */
 export const hubHandoffStatusSchema = z.enum(["offered", "accepted", "declined", "started", "done", "failed"]);
 export type HubHandoffStatus = z.infer<typeof hubHandoffStatusSchema>;

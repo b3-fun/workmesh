@@ -1,11 +1,25 @@
 import { loadConfigSafe } from "../lib/config";
-import { getState } from "../lib/daemon-client";
+import { getState, getTeamState } from "../lib/daemon-client";
 import type { DaemonState } from "../lib/daemon-client";
+import type { NewDeviceNotice } from "../daemon/new-devices";
 import { bold, dim, formatDuration, renderTable, yellow } from "../lib/ui";
 import { updateNotice } from "./update";
 
 export interface StatusOptions {
   json?: boolean;
+}
+
+/**
+ * Machines that joined this person's account, as the daemon lists them (SPEC §47): heard of in the last 24 hours and
+ * not dismissed. None from a daemon that predates the list, or when this machine isn't paired.
+ */
+export async function newMachineNotices(port: number): Promise<NewDeviceNotice[]> {
+  try {
+    const list = (await getTeamState(port)).newDevices;
+    return Array.isArray(list) ? list.filter((n) => typeof n?.text === "string" && n.text !== "") : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function runStatus(opts: StatusOptions): Promise<void> {
@@ -28,11 +42,21 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
   // 0.12 (SPEC §41): a newer Workmesh, as the daemon last heard (from the hub, else npm): offered, or still inside
   // the waiting time; and a menu bar release that failed the signing check.
   const notice = await updateNotice(config.port);
+  const machines = await newMachineNotices(config.port);
   if (opts.json) {
     const { text: _text, ...update } = notice ?? { text: "" };
-    console.log(JSON.stringify({ ok: true, ...state, ...(notice ? { update } : {}) }, null, 2));
+    console.log(
+      JSON.stringify(
+        { ok: true, ...state, ...(notice ? { update } : {}), ...(machines.length > 0 ? { newDevices: machines } : {}) },
+        null,
+        2,
+      ),
+    );
     return;
   }
+
+  // First, since it is about the account, not about a session.
+  for (const m of machines) console.log(yellow(m.text));
 
   if (state.paused) {
     console.log(

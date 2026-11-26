@@ -108,6 +108,11 @@ export function handoffsDir(): string {
   return path.join(stateDir(), "handoffs");
 }
 
+/** v2 (SPEC §31): the ids of the handoffs that were accepted on this machine (0600). Only those are started here. */
+export function acceptedHandoffsPath(): string {
+  return path.join(stateDir(), "handoffs-accepted.json");
+}
+
 /** v2: the main checkout of each shared repo this machine's sessions worked in (for handoffs). */
 export function checkoutsPath(): string {
   return path.join(stateDir(), "checkouts.json");
@@ -126,6 +131,11 @@ export function updateCheckPath(): string {
 /** 0.12: the version each agent session started under, and which sessions were told about an update (0600). */
 export function sessionVersionsPath(): string {
   return path.join(stateDir(), "session-versions.json");
+}
+
+/** SPEC §47: the new machines on this person's account that the daemon already told them about (0600). */
+export function newDevicesPath(): string {
+  return path.join(stateDir(), "new-devices.json");
 }
 
 /** 0.12: the copy of the installed package `workmesh update` keeps until the new version passes its checks. */

@@ -40,13 +40,15 @@ export async function runRoots(action?: string, dir?: string): Promise<void> {
   throw new Error(`unknown action "${action}" — use add, remove or list`);
 }
 
-/** `workmesh handoffs policy [ask|auto-self|never]`: show or set which handoffs this machine takes without a click. */
+/** `workmesh handoffs policy [ask|auto-self|never]`: show or set which handoffs this machine takes without a click (default `ask`: none). */
 export async function runHandoffPolicy(value?: string): Promise<void> {
   const config = loadConfig();
   const s = delegateSettings(config);
   const words: Record<string, string> = {
-    "auto-self": "handoffs you send yourself run on one of your machines at once; teammates' wait for your Accept",
-    ask: "every handoff waits for your Accept (board or menu bar), your own too",
+    ask: "every handoff waits for your Accept (menu bar, board or your terminal), your own too",
+    "auto-self":
+      "handoffs you send yourself start here with no click; teammates' wait for your Accept. " +
+      "This trusts every machine and token of yours: each of them, and any agent running there, can start an agent on this machine",
     never: "this machine runs no handoffs (decline or accept them elsewhere)",
   };
   if (value === undefined) {

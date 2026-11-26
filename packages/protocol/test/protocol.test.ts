@@ -182,6 +182,10 @@ describe("pairing (SPEC §3.1)", () => {
   it("normalizes a typed code and refuses other shapes", () => {
     expect(hubPairCodeSchema.parse(" abcd-1234 ")).toBe("ABCD-1234");
     expect(hubPairApproveRequestSchema.parse({ code: "rbfg-5310" })).toEqual({ code: "RBFG-5310" });
+    // B3-7237: the person's confirmation for a pairing approved from another network. Only `true` counts.
+    expect(hubPairApproveRequestSchema.parse({ code: "RBFG-5310", confirmRemote: true })).toEqual({ code: "RBFG-5310", confirmRemote: true });
+    expect(hubPairApproveRequestSchema.parse({ code: "RBFG-5310", confirmRemote: false })).toEqual({ code: "RBFG-5310" });
+    expect(hubPairApproveRequestSchema.parse({ code: "RBFG-5310", confirmRemote: "yes" })).toEqual({ code: "RBFG-5310" });
     for (const c of ["ABCD1234", "ABC-1234", "ABCD-12345", ""]) expect(hubPairCodeSchema.safeParse(c).success).toBe(false);
   });
 

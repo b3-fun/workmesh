@@ -129,10 +129,18 @@ export const configSchema = z.object({
   handoffs: z
     .object({
       /**
-       * `auto-self` (default): a handoff you sent yourself runs on one of your machines at once; others' wait for
-       * your Accept. `ask`: every handoff waits for your Accept. `never`: this machine runs no handoffs.
+       * `ask` (default): every handoff waits for your Accept, your own too. `auto-self`: a handoff you sent yourself
+       * starts on one of your machines at once, with no click; others' wait for your Accept. It trusts every machine
+       * and token of yours: each of them, and any agent running there, can start an agent here. `never`: this machine
+       * runs no handoffs.
        */
       accept: z.enum(["ask", "auto-self", "never"]).optional().catch(undefined),
+      /**
+       * What happens to a handoff that was accepted somewhere else, on the board or on another machine. `confirm`
+       * (default): it waits here until you say "run it here". `auto`: this machine starts it. `auto` trusts the hub's
+       * word that you accepted it.
+       */
+      runAccepted: z.enum(["confirm", "auto"]).optional().catch(undefined),
       /** The agent CLI that runs handoffs (default: claude when found, else codex). */
       agent: z.enum(["claude", "codex"]).optional().catch(undefined),
       /** Dirs whose git repos count as checkouts for handoffs (`workmesh roots add <dir>`). */
@@ -145,6 +153,11 @@ export const configSchema = z.object({
       /** The model a handoff's agent runs on (`--model` / `-m`, e.g. `haiku`, `sonnet`); absent: the agent's default. */
       model: z.string().regex(/^[\w.:\[\]/-]{1,80}$/).optional().catch(undefined),
       maxMinutes: z.number().int().min(5).max(24 * 60).optional().catch(undefined),
+      /**
+       * Environment variables a handoff's agent gets although their names look like secrets (`GH_TOKEN`). The agent
+       * starts without such variables, except what its own tool signs in with. Names only, never values.
+       */
+      env: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)).max(100).optional().catch(undefined),
     })
     .optional()
     .catch(undefined),
@@ -324,6 +337,7 @@ export function updateWaitHours(config: Pick<Config, "update">): number {
 export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {
   wake: boolean;
   accept: "ask" | "auto-self" | "never";
+  runAccepted: "confirm" | "auto";
   agent?: "claude" | "codex";
   roots: string[];
   worktree: boolean;
@@ -331,12 +345,14 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
   permissionMode: string;
   model?: string;
   maxMinutes: number;
+  env: string[];
   customGates: string[];
 } {
   const h = config.handoffs;
   return {
     wake: config.wake ?? true,
-    accept: h?.accept ?? "auto-self",
+    accept: h?.accept ?? "ask",
+    runAccepted: h?.runAccepted ?? "confirm",
     agent: h?.agent,
     roots: h?.roots ?? [],
     worktree: h?.worktree ?? true,
@@ -344,6 +360,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
     permissionMode: h?.permissionMode ?? "auto",
     ...(h?.model ? { model: h.model } : {}),
     maxMinutes: h?.maxMinutes ?? 120,
+    env: h?.env ?? [],
     customGates: config.gates?.custom ?? [],
   };
 }

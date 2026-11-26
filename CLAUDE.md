@@ -96,12 +96,18 @@ Any tool (curl) ───┼─────────────────�
 ### Daemon loopback API (127.0.0.1:4519, bearer secret except /health)
 
 - `GET /health` · `GET /state` · `POST /event` · `POST /resume`
+- Two checks run before anything else on every request, `/health` included (B3-7243). The `Host` header must name
+  `127.0.0.1`, `localhost` or `[::1]` in any case, else `421` (`isLoopbackHost` in `daemon/server.ts`). Its port is
+  not compared, so a port forward keeps working. A request with an `Origin` header gets `403`. No CORS headers are
+  sent, ever. The CLI, hooks, MCP server and menu bar app call `127.0.0.1` and send no `Origin`; a new client must
+  do the same.
 - `POST /pause` — empty body pauses until resumed; `{for: "30m"|"1h"|"tomorrow"}` or `{until}` snoozes, the pusher's sweep tick auto-resumes (`lib/snooze.ts`); `/state.pausedUntil`
 - `POST /sessions/dismiss {key}` — drops a session (`SessionStore.remove`); it returns with its next event
 - `GET /config` — token-free `safeConfig` view · `POST /config` — live-tune `granularity`/`statusPolicy`/`showProject`/`repoPrefix` (validated by `liveConfigPatchSchema`, applied via `pusher.applyConfig()`, persisted). Used by the menu bar app.
 - `GET /update` (0.12, SPEC §41) — `{current, latest, available, waiting, waitHours, source, install: {method, canUpdate, hint}, run, auto, last, signing, menubar, menubarHeld}` for the menu bar, `status` and `doctor`; `/health` carries `version`
 - `GET /hub` — hub forwarder status (`{enabled:false}` when not paired) · `POST /hub/reload` — re-read the config's `hub` section and restart the forwarder (used by `workmesh hub connect|disconnect|include|exclude`)
 - `GET /team` (v0.5) — the team from the hub's `/relay/team` (polled by `hub/team.ts`), with `hubUrl`, `boardUrl`, `share`, `connected`, `halted`, `available` (false = older hub, 404); `?open=1` = the menu is open (15 s polling). The menu bar's team section reads only this.
+- New machines (SPEC §46, §47, B3-7237): `GET /team` adds `newDevices` (machines that joined this person's account, heard of in the last 24 h and not dismissed, each with its notice `text`); `POST /new-devices/dismiss {id}` takes one down. `status` and `doctor` print it, the menu bar notifies and shows a row.
 - v1 (SPEC §21, §23): `POST /event` with an `x-workmesh-hook: <HookEvent>` header answers `{ok, coord?: {deny?, context?}}`
   from the cached coordination state (`daemon/coord-hooks.ts`; the hook prints it as hook JSON); `POST /coord/op
   {op, args, caller}` runs an MCP/CLI coordination call (`daemon/coord-ops.ts`; the daemon resolves the caller's
@@ -197,7 +203,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   v2 calls (a `404` there turns off only v2, for 10 min); the daemon writes its own notices into the inbox (`wm_` ids,
   never acked). `daemon/delegate.ts`: approval gates in `PreToolUse` (matcher `daemon/gates.ts`, table-tested; asks in
   the background; approved runs its command once, denied refuses, a failed ask lets it run), handoff policy
-  (`handoffs.accept`, default `auto-self`), sender notices, and wake waiters (`POST /wake/wait`, long-poll ≤ 55 s).
+  (`handoffs.accept`, default `ask` since B3-7235), sender notices, and wake waiters (`POST /wake/wait`, long-poll ≤ 55 s).
   `daemon/handoff-runner.ts`: checkout index (`checkouts.json` + `handoffs.roots`), worktree, detached `claude -p
   --session-id` / `codex exec` wrapped in `sh` (exit code file), done/fail, `handoffs/running.json`. Claude Code wake is
   the `wake-wait claude-code` asyncRewake Stop hook (exit 2 + stderr), Codex is `codex queue` (`daemon/codex-wake.ts`).
@@ -234,6 +240,12 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   doctor asks `codex app-server` `hooks/list` for trust (`adapters/codex-doctor.ts`) and follows notify chains.
   Harness and evidence: `~/Documents/b3/b3os-orch/scratch/team-hub/evidence/codex-parity/`.
 
+- Pairing notices (SPEC §3.1, §46, §47, B3-7237): `hub connect` opens the hub's approve link only when it is https on
+  the hub's own host (`checkPairLink`, http for a local hub), else prints the code and `<hub>/pair`. The sync's
+  optional `newDevices` goes to `daemon/new-devices.ts` (`NewDeviceNotices`: told once per id, `new-devices.json`
+  0600, ≤ 200, a notice up for 24 h or until dismissed) and nowhere else: `CoordClient.apply` leaves it out of the
+  cached state, so no hook context, inbox or coordination call carries it. Hub text is put on one line by
+  `lib/untrusted.ts` (`oneLine`).
 - 0.12.3 full token usage (SPEC §45, B3-7227): `hub/agents.ts` `ClaudeUsageReader` (main threads with
   `mainThread: true`: sidechain lines skipped, tasks left to the mirror; subagents and workflow agents as before) sums
   `message.usage` by model and kind once per message id (the latest line's figures; a small LRU of ids, lines of one

@@ -34,6 +34,12 @@ export const HUB_SYNC_MAX_NOTES = 50;
 export const HUB_ACK_MAX_IDS = 200;
 /** How long a file another person's session edited counts as "being worked on" (`edits`, §21). */
 export const HUB_RECENT_EDIT_MS = 10 * 60_000;
+/** New machines one sync lists (`newDevices`, §46). */
+export const HUB_SYNC_MAX_NEW_DEVICES = 50;
+/** A machine's name, as pairing sends it (§3.1). */
+export const HUB_MACHINE_NAME_MAX = 120;
+/** Where a new machine joined from: a short place and network description (§46). */
+export const HUB_DEVICE_WHERE_MAX = 200;
 
 // ------------------------------------------------------------------ fields
 
@@ -406,6 +412,30 @@ export const hubRecentEditSchema = z.object({
 });
 export type HubRecentEdit = z.infer<typeof hubRecentEditSchema>;
 
+/**
+ * A machine added to this device's person's account in the last 24 hours, other than the machine asking (§46). A relay
+ * shows it to the person, and never to an agent.
+ */
+export const hubNewDeviceSchema = z.object({
+  /** The new machine's device id. */
+  id: recordId,
+  /** Its name, as it paired (§3.1). */
+  machine: z.string().min(1).max(HUB_MACHINE_NAME_MAX),
+  /** When it was added (epoch ms, the hub's clock). */
+  pairedAt: epochMs,
+  /** A short place and network description. */
+  where: z.string().max(HUB_DEVICE_WHERE_MAX).optional(),
+});
+export type HubNewDevice = z.infer<typeof hubNewDeviceSchema>;
+/** The relay's reading: only `id` is needed. A missing name or time still reaches the person, as "unnamed" or "recently". */
+const newDeviceAccept = z.object({
+  id: recordId,
+  machine: z.string().catch("").transform((s) => s.slice(0, HUB_MACHINE_NAME_MAX)),
+  pairedAt: epochMsAccept.catch(0),
+  where: soft(z.string().transform((s) => s.slice(0, HUB_DEVICE_WHERE_MAX))),
+});
+export type HubNewDeviceAccepted = z.infer<typeof newDeviceAccept>;
+
 export const hubSyncResponseSchema = z.object({
   /** Opaque; the relay sends it back on its next sync. */
   cursor,
@@ -426,6 +456,8 @@ export const hubSyncResponseSchema = z.object({
   notes: z.array(hubNoteSchema).max(HUB_SYNC_MAX_NOTES).optional(),
   /** Files sessions edited in the last 10 minutes (one row per session and path, newest). */
   edits: z.array(hubRecentEditSchema).max(2000).optional(),
+  /** Machines added to this person's account in the last 24 hours, other than this one (§46). Absent from an older hub. */
+  newDevices: z.array(hubNewDeviceSchema).max(HUB_SYNC_MAX_NEW_DEVICES).optional(),
 })
   .extend(hubSyncDelegateSchema.shape)
   .extend(hubSyncMemorySchema.shape);
@@ -496,6 +528,8 @@ export const hubSyncAcceptSchema = z.object({
     }),
     2000,
   ),
+  /** Absent stays absent (an older hub); a present list keeps the items it can read. */
+  newDevices: soft(keepValid(newDeviceAccept, HUB_SYNC_MAX_NEW_DEVICES)),
 })
   .extend(hubSyncDelegateAcceptSchema.shape)
   .extend(hubSyncMemoryAcceptSchema.shape);

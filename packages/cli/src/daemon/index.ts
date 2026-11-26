@@ -25,7 +25,9 @@ import { CoordClient } from "../hub/coord";
 import { CoordHooks } from "./coord-hooks";
 import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
+import { AcceptedHere } from "./accepted-here";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
+import { NewDeviceNotices } from "./new-devices";
 import { codexHomeOfRollout } from "../hub/agents";
 import { CodexEndGuard } from "./codex-liveness";
 import { codexWaker } from "./codex-wake";
@@ -33,7 +35,17 @@ import type { CoordSummary, HookMeta } from "./server";
 import { readGithubLogin } from "../lib/github";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
-import { checkoutsPath, handoffsDir, hubForwardStatePath, sessionVersionsPath, stateDir, updateCheckPath, updateLogPath } from "../lib/paths";
+import {
+  acceptedHandoffsPath,
+  checkoutsPath,
+  handoffsDir,
+  hubForwardStatePath,
+  newDevicesPath,
+  sessionVersionsPath,
+  stateDir,
+  updateCheckPath,
+  updateLogPath,
+} from "../lib/paths";
 import { detectInstall, managerBin } from "../lib/install-method";
 import type { InstallInfo } from "../lib/install-method";
 import { fetchMenubarRelease, fetchRegistryInfo, npmRegistry } from "../lib/registry";
@@ -145,11 +157,15 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     repoOf: (dir) => forwarder?.classify(dir)?.repo,
     settings,
     runner,
+    accepted: new AcceptedHere(acceptedHandoffsPath()),
     codexWake: config.adapters.codex.enabled ? codexWaker({ log, homeOf: (id) => codexHomes.get(`codex:${id}`) }) : undefined,
     log,
   });
   /** The cwd each session last reported (the checkout index learns a repo's checkout once per session and dir). */
   const lastCwd = new Map<string, string>();
+  // SPEC §47: machines that joined this person's account. Told to the person once (the log, GET /team), and kept
+  // away from agents: this store is the only place the sync's list goes.
+  const newDevices = new NewDeviceNotices({ file: newDevicesPath(), log });
 
   const startForwarder = (hub: HubConfig | undefined): void => {
     const previous = forwarder;
@@ -211,6 +227,9 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       active: () => fwd.hasLiveShared(),
       log,
       onSync: (next, previous) => delegate.onSync(next, previous),
+      onNewDevices: (list, hubNow) => {
+        newDevices.observe(list, { board: hub.url, self: hub.deviceId, hubNow });
+      },
     });
     coord.start();
     runner.start();
@@ -438,6 +457,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         team: view.team,
         coord: coordSummary(),
         delegate: delegate.summary((local) => store.get(local)?.name),
+        newDevices: newDevices.active(coord?.hubNow()),
       };
     },
     applyHookEvent,
@@ -451,10 +471,18 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         classify: (p) => forwarder?.classify(p),
         isShared: (key) => forwarder?.isShared(key) ?? false,
         claudeSessions: () => readLiveClaudeSessions(claudeDir),
-        onAccepted: (h) => delegate.accepted(h),
+        onAccepted: (h, by, seen) => delegate.accepted(h, by, seen),
+        runHereQuestion: (h) => delegate.runHereAsk(h),
+        onRunHere: (h, by) => delegate.runHere(h, by),
         runningHandoffs: () => runner.running(),
+        handoffStart: (h, lead) => delegate.onAccept(h, lead),
       }),
     wakeWait: (session, timeoutMs, signal) => delegate.wait(session, timeoutMs, signal),
+    dismissNewDevice: (id) => {
+      const removed = newDevices.dismiss(id);
+      if (removed) log("new machine notice dismissed via API");
+      return removed;
+    },
     reloadHub: () => {
       const hub = readHubConfig();
       if (hub === "unreadable") throw new Error("config file is unreadable — hub settings unchanged");

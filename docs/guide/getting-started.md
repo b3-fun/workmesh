@@ -1,8 +1,8 @@
 # Getting started
 
 One command sets up a machine: it installs the agent hooks and MCP tools, runs the daemon, and pairs the machine with
-B3's hub. This page covers what it changes, how to undo it, the macOS menu bar app, and reading your first
-`workmesh doctor`.
+B3's hub. This page covers what it changes, how to undo it, the macOS menu bar app, the notice when a machine joins
+your account, and reading your first `workmesh doctor`.
 
 ## Before you start
 
@@ -32,6 +32,19 @@ connected ans-laptop to B3 as An (an@example.com)
 
 Your machine is now on the board, with no sessions until an agent works in a `b3-fun` repo. Running `init` again is
 safe: it keeps the pairing and only fixes what is missing.
+
+Approve only a code you see in your own terminal. Whoever approves a code adds that machine to their own account, so
+a code or a link that someone sends you is not yours to approve.
+
+The approve page opens only when the hub's link is `https` on the hub address you typed. For any other link, `init`
+prints the reason and the hub's own pairing page, where you enter the code yourself:
+
+```text
+  pairing code: BFNH-0792
+  the hub's link was not opened: it leads to other.example, not to workmesh.b3os.org
+  open the hub's pairing page yourself and enter the code there: https://workmesh.b3os.org/pair
+  approve only a code you see in your own terminal
+```
 
 Useful flags: `--machine <name>` if two of your machines share a hostname, `--no-open` on a box without a browser (open
 the printed link on your laptop), `--no-codex` to leave Codex alone. The full list is in the
@@ -102,6 +115,30 @@ General → Login Items.
 Keep the app in `~/Applications` or `/Applications`, not in Downloads: it replaces itself when a new release is out,
 and it can't from a quarantined or read-only location.
 
+## When a machine joins your account
+
+Each of your machines tells you when another machine is added to your account. A pairing you didn't make then
+doesn't go unnoticed. There is nothing to set up.
+
+Your other machines usually hear of it within a minute. You see it in four places:
+
+- a macOS notification, and a row at the top of the menu bar app's menu;
+- the first line of `workmesh status`;
+- a `!` line named `new machine` in `workmesh doctor`;
+- the daemon's log.
+
+```text
+A new machine joined your Workmesh account: ans-desktop, 2 minutes ago, from Lisbon, Portugal (Example Telecom). If this wasn't you, remove it on the board: https://workmesh.b3os.org
+```
+
+If it was you, click **Dismiss** on the row in the menu bar. Without that, the notice goes away after 24 hours.
+
+If it wasn't you, open the board and revoke the machine (Your machines → Revoke). That ends its open sessions, and
+the hub stops accepting its token.
+
+The notice is for you only. Your agents never get it, in their context or in their inbox. It needs a hub that
+reports new machines: with an older hub you see nothing.
+
 ## Your first doctor
 
 ```bash
@@ -117,7 +154,7 @@ Every line should start with ✓. Trimmed, from a test machine paired as An:
   ✓ hub sharing        conversation — prompts, agent text, tool descriptions and turn times from shared repos, redacted on this machine
   ✓ hub forward        online: the hub heard from this machine 1s ago; no agents running in a shared repo right now (you show as online, no agents)
   ✓ coordination       on (leases, holds, messages)
-  ✓ delegation         on: handoffs auto-self; wake on
+  ✓ delegation         on: handoffs ask; wake on
   ✓ claude code hooks  /Users/an/.claude/settings.json
   ✓ claude code wake   asyncRewake Stop hook installed (idle shared sessions wake for messages)
   ✓ claude code mcp    workmesh in /Users/an/.claude.json (user scope)

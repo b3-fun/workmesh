@@ -86,3 +86,19 @@ export function messageBlock(from: { person: string; sessionName?: string | unde
   const who = `from="${label(from.person)}"${session ? ` session="${session}"` : ""}`;
   return `<workmesh-message ${who}>\n${quoted(text, max)}\n</workmesh-message>`;
 }
+
+/**
+ * A structured answer (a tool result's `data`, which `--json` prints) with every string in it cleaned as `cleanText`
+ * does. Keys, numbers and the shape stay as they are. JSON already keeps a string's line breaks inside the string, so
+ * only what a reader cannot see has to go.
+ */
+export function cleanData<T>(value: T): T {
+  if (typeof value === "string") return cleanText(value) as T;
+  if (Array.isArray(value)) return value.map((item: unknown) => cleanData(item)) as T;
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) out[key] = cleanData(item);
+    return out as T;
+  }
+  return value;
+}

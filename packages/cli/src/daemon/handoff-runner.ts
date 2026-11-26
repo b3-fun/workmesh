@@ -8,9 +8,9 @@ import { HUB_DELEGATE_NOTE_MAX } from "@workmesh/protocol";
 import type { CoordClient } from "../hub/coord";
 import { GitResolver } from "../hub/git";
 import { scrubText } from "../hub/redact";
+import { QUOTE_MARK, label, quoted } from "../lib/untrusted";
 import type { HandoffRunnerLike } from "./delegate";
 import { droppedEnvLine, handoffEnv } from "./handoff-env";
-import { label } from "../lib/untrusted";
 import type { HandoffPlan } from "./handoff-text";
 
 /**
@@ -252,20 +252,28 @@ export class CheckoutIndex {
   }
 }
 
-/** The prompt a handoff's session starts with. */
+/**
+ * The prompt a handoff's session starts with. The sender's names, task and context go into it through
+ * `lib/untrusted.ts`: a name stays on the line that carries it, and every line of the task and of the context is
+ * marked. So no line of them can read as one of the lines Workmesh adds around them, and nothing a reader cannot see
+ * reaches the agent. The task is still this session's task, only fenced: the rule for a teammate's message is not
+ * said over it.
+ */
 export function handoffPrompt(
   h: HubHandoffAccepted,
   where: { repo?: string; branch?: string; base?: string; dir: string },
   agent: HandoffAgent = "claude",
 ): string {
-  const from = h.from.sessionName ? `${h.from.person} (their agent ${h.from.sessionName})` : h.from.person;
+  const person = label(h.from.person);
+  const session = h.from.sessionName ? label(h.from.sessionName) : "";
+  const from = session ? `${person} (their agent ${session})` : person;
   const lines = [
-    `Workmesh handoff from ${from}. The task:`,
+    `Workmesh handoff from ${from}. The task (every line of it starts with ${QUOTE_MARK}):`,
     "",
-    h.task,
+    quoted(h.task),
     "",
   ];
-  if (h.context) lines.push(`Context from ${h.from.person}:`, "", h.context, "");
+  if (h.context) lines.push(`Context from ${person} (marked the same way):`, "", quoted(h.context), "");
   const facts: string[] = [];
   if (h.issue) facts.push(`Linear issue: ${h.issue} (claim it with the workmesh \`claim\` tool).`);
   if (where.repo && where.branch) {
@@ -284,7 +292,7 @@ export function handoffPrompt(
   }
   facts.push(
     "You run headless: nobody will answer questions here. Use the workmesh tools to coordinate (lease files before larger edits, `send` to ask a teammate).",
-    `End with a short summary of what you did and what's left: it goes back to ${h.from.person}.`,
+    `End with a short summary of what you did and what's left: it goes back to ${person}.`,
   );
   lines.push(...facts);
   return lines.join("\n");

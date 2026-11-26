@@ -308,7 +308,9 @@ describe("handoff runner (SPEC §31)", () => {
       await until(() => fs.existsSync(rec.exitFile) && fs.readFileSync(rec.exitFile, "utf8").trim() !== "");
       const wt = `${checkout}-handoff-abc12345`;
       const prompt = handoffPrompt(h, { repo: h.repo, branch: "workmesh/handoff-abc12345", base: "origin/main", dir: wt }, agent);
-      expect(prompt).toContain(task);
+      // The prompt keeps the task and context fenced: every line of the sender's text behind the quote mark.
+      expect(prompt).toContain("│ Port the KEK rotation to the new runner.\n│ Keep last week's records readable.");
+      expect(prompt).toContain("│ Start from PR 212.");
       // The agent read the whole prompt on standard input.
       expect(fs.readFileSync(stdinFile, "utf8"), agent).toBe(prompt);
       // It came from a file in the run's own directory that only this user can read.
@@ -409,8 +411,8 @@ describe("handoff runner (SPEC §31)", () => {
 
   it("the prompt carries the task, context, issue, branch and the headless rules", () => {
     const p = handoffPrompt(HANDOFF, { repo: HANDOFF.repo, branch: "workmesh/handoff-abc12345", base: "origin/main", dir: "/x" });
-    expect(p).toContain("Workmesh handoff from An (their agent b3iq-strategy). The task:\n\nPort the KEK rotation");
-    expect(p).toContain("Context from An:\n\nStart from PR 212.");
+    expect(p).toContain("Workmesh handoff from An (their agent b3iq-strategy). The task (every line of it starts with │):\n\n│ Port the KEK rotation");
+    expect(p).toContain("Context from An (marked the same way):\n\n│ Start from PR 212.");
     expect(p).toContain("Linear issue: B3-7168");
     expect(p).toContain("on branch workmesh/handoff-abc12345, made from origin/main");
     expect(p).toContain("You run headless");
@@ -472,14 +474,14 @@ describe("wake-wait, the asyncRewake Stop hook (SPEC §31)", () => {
       daemonUp: async () => true,
       wait: async (_port, key, ms) => {
         asked.push([key, ms]);
-        return asked.length < 2 ? {} : { wake: "Workmesh woke this idle session…\nMessage from An: ping" };
+        return asked.length < 2 ? {} : { wake: 'Workmesh woke this idle session…\n<workmesh-message from="An">\n│ ping\n</workmesh-message>' };
       },
       stderr: (t) => {
         err += t;
       },
     });
     expect(code).toBe(2);
-    expect(err).toBe("Workmesh woke this idle session…\nMessage from An: ping\n");
+    expect(err).toBe('Workmesh woke this idle session…\n<workmesh-message from="An">\n│ ping\n</workmesh-message>\n');
     expect(asked[0]?.[0]).toBe("claude-code:s1");
     expect(asked[0]![1]).toBeLessThanOrEqual(55_000);
   });

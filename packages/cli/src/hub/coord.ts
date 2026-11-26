@@ -46,6 +46,7 @@ import type {
   HubMemoryRequest,
   HubMemoryResponseAccepted,
   HubMessageRequest,
+  HubNewDeviceAccepted,
   HubNoteRequest,
   HubRecallRequest,
   HubRecallResponseAccepted,
@@ -107,6 +108,11 @@ export interface CoordClientOptions {
   onSync?: (next: HubSyncAccepted, previous: HubSyncAccepted | undefined) => void;
   /** v3 (SPEC §36): the brief is fetched at most this often (default 10 s). */
   briefMinMs?: number;
+  /**
+   * SPEC §47: the machines a sync names as new on this person's account, with the hub's clock. They go here and
+   * nowhere else: the cached state that hooks and agents' calls read never holds them.
+   */
+  onNewDevices?: (list: readonly HubNewDeviceAccepted[], hubNow: number) => void;
 }
 
 /** v3 Memory (SPEC §35): one accepted memory as the brief carries it. */
@@ -184,6 +190,7 @@ export class CoordClient {
   private readonly local = new Map<string, HubSyncInboxItem>();
   private localSeq = 0;
   private readonly onSync: CoordClientOptions["onSync"];
+  private readonly onNewDevices: CoordClientOptions["onNewDevices"];
   /** v2 endpoints this hub answered 404 to, and until when that is remembered. */
   private readonly v2Absent = new Map<string, number>();
   /** Teammates' messages handed to this device's sessions, newest last, for telling a reply from new chatter. */
@@ -227,6 +234,7 @@ export class CoordClient {
     this.holdGraceMs = opts.holdGraceMs ?? 30 * 60_000;
     this.staleMs = opts.staleMs ?? 90_000;
     this.onSync = opts.onSync;
+    this.onNewDevices = opts.onNewDevices;
     this.briefMinMs = opts.briefMinMs ?? 10_000;
   }
 
@@ -637,7 +645,11 @@ export class CoordClient {
   }
 
   /** Takes in a good sync answer (exposed for tests). */
-  apply(s: HubSyncAccepted, now = this.now(), sentAt = now): void {
+  apply(synced: HubSyncAccepted, now = this.now(), sentAt = now): void {
+    // New machines on the person's account (SPEC §47) are for the person, not for agents: the list is handed to
+    // `onNewDevices` below and left out of the state kept here, which hooks and agents' calls read.
+    const newDevices = synced.newDevices;
+    const s: HubSyncAccepted = { ...synced, newDevices: undefined };
     const previous = this.state;
     this.state = s;
     this.fetchedAt = now;
@@ -675,6 +687,13 @@ export class CoordClient {
         this.onSync(s, previous);
       } catch (err) {
         this.log(`hub: delegate check failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (newDevices !== undefined && newDevices.length > 0 && this.onNewDevices) {
+      try {
+        this.onNewDevices(newDevices, this.hubNow(now));
+      } catch (err) {
+        this.log(`hub: new machine notice failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }

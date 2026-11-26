@@ -1375,7 +1375,7 @@ older hub and an older relay work as before.
 
 ## 46. `newDevices` on sync
 
-`GET /relay/sync` (§21) gains one optional list:
+The sync answer (`GET /relay/sync`, §21) gains one optional list:
 
 ```jsonc
 {
@@ -1394,7 +1394,38 @@ older hub and an older relay work as before.
 - **Optional.** A hub that predates it sends no list, and a relay then has nothing to tell. An empty list means the
   same.
 - **Accept reading** (`hubSyncAcceptSchema`): an item is kept when its `id` can be read. A `machine` or `where` that
-  is too long is cut; a `machine` that can't be read reads as empty and a `pairedAt` that can't be read as 0, so the
-  person is still told. An item without an `id` is dropped on its own.
+  is too long is cut. A `machine` that can't be read reads as empty, and a `pairedAt` that can't be read as 0. Either
+  way the person is still told. An item without an `id` is dropped on its own.
 - `machine` and `where` are text from outside the machine. A relay shows them on one line, with control and invisible
   characters removed, and never gives them to an agent.
+
+## 47. The relay side (`packages/cli`)
+
+The daemon tells its person about each new machine once, and only the person. A notice stays up for 24 hours, or
+until the person dismisses it.
+
+- **Told once.** The daemon keeps the ids it has told the person about in `~/.local/state/workmesh/new-devices.json`
+  (`0600`). A machine on that list is not told again, also after a daemon restart. The list holds at most 200
+  machines: the oldest go first, and never one the hub still lists. A file with fewer fields loads as what it holds,
+  and a missing or unreadable one as an empty list.
+- **The words.** "A new machine joined your Workmesh account: sams-laptop, 5 minutes ago, from Lisbon, Portugal
+  (Example Telecom). If this wasn't you, remove it on the board: https://workmesh.b3os.org". The time is counted on
+  the hub's clock (`serverNow`, §21). A machine without a readable name is "an unnamed machine", one without a time
+  joined "recently", and one without a place has no "from". Name and place are put on one line, cut to 80 and 120
+  characters. The relay never raises a notice for its own device id.
+- **For the person only.** The sync client hands the list to the notice store and leaves it out of the state it
+  keeps. That state is what hooks, the MCP tools and the coordination commands read, so the list is in no hook
+  context, inbox or wake. The relay's tests run every hook event and every coordination call against it.
+- **Where the person sees it.**
+  - The daemon's log has one line when the machine is first heard of.
+  - `GET /team` gains `newDevices: [{ id, machine, where?, pairedAt, toldAt, text }]`, newest first: the notices heard
+    of in the last 24 hours and not dismissed. `text` is the sentence above.
+  - `workmesh status` prints each `text` first, and `workmesh status --json` carries the list as `newDevices`.
+  - `workmesh doctor` shows one `!` line per notice, named `new machine`.
+  - Workmesh.app posts one macOS notification per machine and shows a row until the person dismisses it.
+- **Dismiss.** `POST /new-devices/dismiss { id }` on the daemon's loopback API (bearer secret, as everywhere) answers
+  `{ ok: true, removed }`. The notice leaves `/team`, `status` and `doctor`; the machine stays on the list.
+- **Older sides.** An older hub sends no list, so nothing is told. An older daemon drops the list: its `/team` has no
+  `newDevices`, and `status`, `doctor` and the menu bar show nothing.
+
+In the code: `hub/coord.ts` (`onNewDevices`), `daemon/new-devices.ts` (`NewDeviceNotices`), `lib/one-line.ts`.

@@ -14,6 +14,7 @@ import type { HookAnswer } from "./coord-hooks";
 import { coordOpRequestSchema } from "./coord-ops";
 import type { CoordOpRequest, CoordOpResult } from "./coord-ops";
 import type { DelegateSummary, WaitAnswer } from "./delegate";
+import type { NewDeviceNotice } from "./new-devices";
 import type { UpdateStatus } from "./updates";
 
 /** GET /hub: the forwarder's status, or `enabled: false` when not paired. */
@@ -54,6 +55,11 @@ export type TeamState =
       coord?: CoordSummary;
       /** v2 (SPEC §31): handoffs offered to this person or running here, and pending approvals. */
       delegate?: DelegateSummary;
+      /**
+       * SPEC §47: machines that joined this person's account, for the person to see (the menu bar, `status`,
+       * `doctor`): heard of in the last 24 hours and not dismissed, newest first.
+       */
+      newDevices?: NewDeviceNotice[];
     };
 
 /** v1: what the menu bar shows about coordination (this machine's agents only). */
@@ -86,6 +92,7 @@ function headerValue(req: http.IncomingMessage, name: string, re: RegExp): strin
 const MAX_BODY_BYTES = 64 * 1024;
 
 const dismissRequestSchema = z.object({ key: z.string().min(1).max(200) }).strict();
+const dismissNewDeviceRequestSchema = z.object({ id: z.string().min(1).max(64) }).strict();
 const wakeWaitRequestSchema = z.object({ session: z.string().min(1).max(200), timeoutMs: z.number().int().min(0).max(120_000).default(55_000) });
 
 export interface DaemonServerDeps {
@@ -129,6 +136,8 @@ export interface DaemonServerDeps {
   coordOp?(req: CoordOpRequest): Promise<CoordOpResult>;
   /** v2 (SPEC §31): an idle session's waiter long-polls for its next waking message (POST /wake/wait). */
   wakeWait?(session: string, timeoutMs: number, signal?: AbortSignal): Promise<WaitAnswer>;
+  /** SPEC §47: the person has seen a new machine's notice (POST /new-devices/dismiss). False when there was none. */
+  dismissNewDevice?(id: string): boolean;
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
@@ -327,6 +336,19 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
           return;
         }
         json(res, 200, { ok: true, removed: deps.dismiss(parsed.data.key) });
+        return;
+      }
+      if (method === "POST" && url === "/new-devices/dismiss") {
+        if (!deps.dismissNewDevice) {
+          json(res, 404, { ok: false, error: "not found" });
+          return;
+        }
+        const parsed = await parseBody(req, dismissNewDeviceRequestSchema);
+        if (!parsed.ok) {
+          json(res, 400, { ok: false, error: parsed.error });
+          return;
+        }
+        json(res, 200, { ok: true, removed: deps.dismissNewDevice(parsed.data.id) });
         return;
       }
       if (method === "POST" && url === "/resume") {

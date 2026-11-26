@@ -25,10 +25,12 @@ export async function runStatus(opts: StatusOptions): Promise<void> {
     return;
   }
 
-  // 0.12 (SPEC §41): a newer Workmesh, as the daemon last heard (from the hub, else npm).
+  // 0.12 (SPEC §41): a newer Workmesh, as the daemon last heard (from the hub, else npm): offered, or still inside
+  // the waiting time; and a menu bar release that failed the signing check.
   const notice = await updateNotice(config.port);
   if (opts.json) {
-    console.log(JSON.stringify({ ok: true, ...state, ...(notice ? { update: { latest: notice.latest } } : {}) }, null, 2));
+    const { text: _text, ...update } = notice ?? { text: "" };
+    console.log(JSON.stringify({ ok: true, ...state, ...(notice ? { update } : {}) }, null, 2));
     return;
   }
 

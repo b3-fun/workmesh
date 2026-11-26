@@ -11,8 +11,9 @@ import {
 } from "../adapters/claude-code";
 import { hasAnyCodexHook, installCodexHooks, installCodexNotify, isCodexNotifyInstalled } from "../adapters/codex";
 import { claudeJsonPath, installClaudeMcp, installCodexMcp, isClaudeMcpInstalled, isCodexMcpInstalled } from "../adapters/mcp-install";
-import { autoUpdateSettings, loadConfig, loadConfigSafe, saveConfig } from "../lib/config";
+import { autoUpdateSettings, loadConfig, loadConfigSafe, saveConfig, updateWaitHours } from "../lib/config";
 import type { Config } from "../lib/config";
+import type { UpdateStatus } from "../daemon/updates";
 import { getHealth, getUpdateStatus, isDaemonUp, startDaemonInBackground } from "../lib/daemon-client";
 import { stopDaemon } from "../lib/daemon-control";
 import { PACKAGE_NAME, detectInstall, installCommand, managerBin, tildify } from "../lib/install-method";
@@ -23,9 +24,9 @@ import { fetchRegistryInfo, npmRegistry } from "../lib/registry";
 import type { RegistryInfo } from "../lib/registry";
 import { cliEntry, installService, serviceKind, serviceStatus } from "../lib/service";
 import { markSetup, readUpdateState, writeUpdateState } from "../lib/update-state";
-import type { LastUpdate } from "../lib/update-state";
+import type { LastUpdate, MenubarHeld } from "../lib/update-state";
 import { compareVersions, isNewer, parseVersion, withinScope } from "../lib/versions";
-import { bold, dim, errorMessage, green, red, sleep, yellow } from "../lib/ui";
+import { bold, dim, errorMessage, formatDuration, green, red, sleep, yellow } from "../lib/ui";
 
 /**
  * `workmesh update` (SPEC §41): one command keeps a machine current, so a release no longer needs a message to every
@@ -33,6 +34,9 @@ import { bold, dim, errorMessage, green, red, sleep, yellow } from "../lib/ui";
  * the setup steps that changed (hooks, MCP registration, service definition) and restart the daemon, and rolls back to
  * the previous version when the new one fails the core checks. It prints each step. Run again, it changes nothing that
  * is already current. A git checkout, a project dependency or npx is left alone: it says what to do instead.
+ *
+ * Run by hand it installs the newest release at once, and says so when that release is younger than the waiting time
+ * (`update.waitHours`). Started by the daemon (`--auto-run`), it leaves such a release for a later day.
  */
 
 export interface UpdateOptions {
@@ -344,7 +348,8 @@ function setAuto(value: string, minor: boolean | undefined, out: (line: string) 
   if (v !== "on" && v !== "off") throw new Error(`--auto takes on or off, not ${value}`);
   const config = loadConfig();
   const scope = minor ? "minor" : (config.update?.scope ?? "patch");
-  config.update = v === "on" ? { auto: true, scope: minor === undefined ? scope : minor ? "minor" : "patch" } : { ...config.update, auto: false };
+  // Only `auto` and `scope` change: the person's waiting time stays.
+  config.update = v === "on" ? { ...config.update, auto: true, scope: minor === undefined ? scope : minor ? "minor" : "patch" } : { ...config.update, auto: false };
   saveConfig(config);
   const s = autoUpdateSettings(config);
   out(
@@ -385,12 +390,26 @@ export async function runUpdate(opts: UpdateOptions = {}, deps: UpdateDeps = {})
     }
   }
   const target = opts.to ?? reg?.latest;
+  // The waiting time for new releases, against the registry's publish time (unknown when the registry gives none).
+  const now = deps.now ?? Date.now;
+  const waitHours = updateWaitHours(config);
+  /** How long a newer `version` has been out, when that is less than the waiting time. */
+  const youngFor = (version: string | undefined): number | undefined => {
+    const at = version ? reg?.published[version] : undefined;
+    if (at === undefined || !isNewer(version, current)) return undefined;
+    const outFor = Math.max(0, now() - at);
+    return outFor < waitHours * 3600_000 ? outFor : undefined;
+  };
 
   if (opts.check) {
+    const publishedAt = reg ? reg.published[reg.latest] : undefined;
+    const young = youngFor(reg?.latest);
     const report = {
       current,
       latest: reg?.latest,
       available: isNewer(reg?.latest, current),
+      ...(publishedAt !== undefined ? { publishedAt } : {}),
+      waitHours,
       install: { method: info.method, canUpdate: info.canUpdate, ...(info.hint ? { hint: info.hint } : {}) },
       daemon: daemonVersion,
       setupPending: pending,
@@ -405,6 +424,7 @@ export async function runUpdate(opts: UpdateOptions = {}, deps: UpdateDeps = {})
     if (regError) out(yellow(`  couldn't read the registry: ${regError}`));
     else if (report.available) out(`  ${bold(`${reg!.latest} available`)}: ${info.canUpdate ? "`workmesh update`" : (info.hint ?? "")}`);
     else out(`  ${green("up to date")}${reg ? dim(` (latest is ${reg.latest})`) : ""}`);
+    if (young !== undefined) out(dim(`  it came out ${formatDuration(young)} ago: the daemon offers it once it is ${waitHours} h old`));
     if (daemonVersion && daemonVersion !== current) out(yellow(`  the daemon still runs ${daemonVersion}: \`workmesh update\` restarts it on ${current}`));
     else if (pending && info.canUpdate && !report.available) out(yellow(`  setup for ${current} hasn't run on this machine: \`workmesh update\``));
     return;
@@ -424,17 +444,31 @@ export async function runUpdate(opts: UpdateOptions = {}, deps: UpdateDeps = {})
   }
   if (opts.to) {
     if (!parseVersion(opts.to)) throw new Error(`--to takes a version like 0.12.1, not ${opts.to}`);
-    if (!reg.versions.includes(opts.to)) throw new Error(`${PACKAGE_NAME}@${opts.to} isn't on the registry`);
+    if (!reg.versions.includes(opts.to)) {
+      // The daemon named a version it heard of from the hub; a registry mirror may not have it yet.
+      if (opts.autoRun) {
+        out(dim(`  the registry doesn't list ${opts.to} yet: nothing to do`));
+        return;
+      }
+      throw new Error(`${PACKAGE_NAME}@${opts.to} isn't on the registry`);
+    }
     if (compareVersions(opts.to, "0.12.0") < 0) throw new Error("versions before 0.12.0 can't finish an update; install one with npm directly");
   }
   out(`  latest:    ${reg.latest}${opts.to ? dim(`; installing ${opts.to} as asked`) : ""}`);
 
+  const young = youngFor(target);
   if (opts.autoRun) {
     const s = autoUpdateSettings(config);
     if (!s.enabled || !withinScope(current, target, s.scope)) {
       out(dim(`  auto-update ${s.enabled ? `takes ${s.scope} releases only` : "is off"}: nothing to do`));
       return;
     }
+    if (young !== undefined) {
+      out(dim(`  auto-update waits until a release is ${waitHours} h old (${target} came out ${formatDuration(young)} ago): nothing to do`));
+      return;
+    }
+  } else if (young !== undefined) {
+    out(yellow(`  ${target} came out ${formatDuration(young)} ago, inside the ${waitHours} h waiting time for new releases: installing it now because you ran the update yourself`));
   }
 
   if (!takeLock()) {
@@ -455,7 +489,6 @@ export async function runUpdate(opts: UpdateOptions = {}, deps: UpdateDeps = {})
       return;
     }
 
-    const now = deps.now ?? Date.now;
     const record = (last: Omit<LastUpdate, "at" | "from" | "to">) =>
       writeUpdateState({ last: { at: now(), from: current, to: target, ...last, ...(opts.autoRun ? { auto: true } : {}) } });
 
@@ -509,12 +542,38 @@ export async function runUpdate(opts: UpdateOptions = {}, deps: UpdateDeps = {})
   }
 }
 
-/** For `status` and `doctor`: "0.12.1 available: `workmesh update`", from the daemon's check, when there is one. */
-export async function updateNotice(port: number): Promise<{ text: string; latest: string } | undefined> {
+/** What `status` says about updates, from the daemon's check. */
+export interface UpdateNotice {
+  /** One line per thing to say. */
+  text: string;
+  /** A release that is offered now. */
+  latest?: string;
+  /** A newer release still inside the waiting time. */
+  waiting?: { version: string; until: number };
+  /** The menu bar app's release failed the signing check, so it is not offered. */
+  menubarHeld?: MenubarHeld;
+}
+
+/**
+ * The lines for `status`: "0.12.1 available: `workmesh update`"; or a release that is out but still inside the
+ * waiting time; and why the menu bar app's release is not offered when it failed the signing check. The fields beyond
+ * `available` and `latest` are absent from a daemon older than this CLI.
+ */
+export function updateLines(u: Partial<UpdateStatus>, now = Date.now()): UpdateNotice | undefined {
+  const lines: string[] = [];
+  const latest = u.available && u.latest ? u.latest : undefined;
+  const waiting = !latest && u.waiting ? { version: u.waiting.version, until: u.waiting.until } : undefined;
+  if (latest) lines.push(`${latest} available: \`workmesh update\``);
+  if (waiting) lines.push(`${waiting.version} is out: offered in ${formatDuration(waiting.until - now)}${u.waitHours !== undefined ? ` (new releases wait ${u.waitHours} h)` : ""}`);
+  const held = u.menubarHeld && u.menubarHeld.reason !== "waiting" ? u.menubarHeld : undefined;
+  if (held) lines.push(`the menu bar app${held.version ? ` in release ${held.version}` : ""} is not offered: ${held.detail}`);
+  if (lines.length === 0) return undefined;
+  return { text: lines.join("\n"), ...(latest ? { latest } : {}), ...(waiting ? { waiting } : {}), ...(held ? { menubarHeld: held } : {}) };
+}
+
+export async function updateNotice(port: number): Promise<UpdateNotice | undefined> {
   try {
-    const u = await getUpdateStatus(port);
-    if (!u.available || !u.latest) return undefined;
-    return { latest: u.latest, text: `${u.latest} available: \`workmesh update\`` };
+    return updateLines(await getUpdateStatus(port));
   } catch {
     return undefined;
   }

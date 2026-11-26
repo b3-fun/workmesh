@@ -67,6 +67,10 @@ export function hubStickyShare(hub: Pick<HubConfig, "stickyShare"> | undefined):
   return hub?.stickyShare ?? true;
 }
 
+/** The waiting time for new releases (SPEC §41): a day by default, 30 days at most. */
+export const DEFAULT_UPDATE_WAIT_HOURS = 24;
+export const MAX_UPDATE_WAIT_HOURS = 24 * 30;
+
 export const configSchema = z.object({
   mode: z.enum(["relay", "slack", "console"]).default("console"),
   relayUrl: z.url().default("https://agentblip.com"),
@@ -154,11 +158,14 @@ export const configSchema = z.object({
   /**
    * 0.12 (SPEC §41): updates the daemon installs on its own (`workmesh update --auto on|off`). Absent = off. `scope`
    * `patch` (default) takes 0.12.0 → 0.12.3 only; `minor` takes 0.12.x → 0.13.0 too. Never a new major or a prerelease.
+   * The `waitHours` key is how old a release must be before the daemon offers it or installs it on its own (default
+   * 24; 0 turns the wait off). Run by hand, `workmesh update` never waits.
    */
   update: z
     .object({
       auto: z.boolean().optional().catch(undefined),
       scope: z.enum(["patch", "minor"]).optional().catch(undefined),
+      waitHours: z.number().min(0).max(MAX_UPDATE_WAIT_HOURS).optional().catch(undefined),
     })
     .optional()
     .catch(undefined),
@@ -303,6 +310,15 @@ export function readHubConfig(file = configPath()): HubConfig | undefined | "unr
 /** Auto-update settings (SPEC §41): off unless the person turned it on; patch releases only by default. */
 export function autoUpdateSettings(config: Pick<Config, "update">): { enabled: boolean; scope: "patch" | "minor" } {
   return { enabled: config.update?.auto === true, scope: config.update?.scope ?? "patch" };
+}
+
+/**
+ * How many hours a release must be out before the daemon offers it or installs it on its own (SPEC §41): 24 unless
+ * the person set `update.waitHours`; 0 is no wait. A value the schema refuses reads as absent, so a typo keeps the
+ * default instead of turning the wait off.
+ */
+export function updateWaitHours(config: Pick<Config, "update">): number {
+  return config.update?.waitHours ?? DEFAULT_UPDATE_WAIT_HOURS;
 }
 
 export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {

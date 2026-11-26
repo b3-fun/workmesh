@@ -87,6 +87,11 @@ export interface CoordView {
  * and a sender's wishes are a request. Without a policy every message is taken as the hub sent it.
  */
 export interface InboxPolicy {
+  /**
+   * This machine takes a message from this sender at all. Asked for every hub message at each sync. One it does not
+   * take is dropped: never stored, held or delivered, and acked so the hub stops listing it.
+   */
+  accepts(item: HubSyncInboxItem): boolean;
   /** This message may start a turn in its idle session. Asked for a hub message and for the daemon's own notices. */
   wakes(item: HubSyncInboxItem, localKey: string): boolean;
   /**
@@ -717,10 +722,30 @@ export class CoordClient {
     return { ...s, inbox };
   }
 
+  /**
+   * A sync without the inbox items this machine's policy does not take (`messages.from`, SPEC §23). Each is dropped
+   * here: forgotten if an earlier sync stored it, and acked so the hub stops listing it.
+   */
+  private withoutRefused(s: HubSyncAccepted): HubSyncAccepted {
+    const policy = this.policy;
+    if (!policy) return s;
+    const inbox = s.inbox.filter((i) => policy.accepts(i));
+    if (inbox.length === s.inbox.length) return s;
+    const taken = new Set(inbox.map((i) => i.id));
+    for (const i of s.inbox) {
+      if (taken.has(i.id)) continue;
+      this.inbox.delete(i.id);
+      this.ackQueue.add(i.id);
+    }
+    return { ...s, inbox };
+  }
+
   /** Takes in a good sync answer (exposed for tests). */
   apply(sync: HubSyncAccepted, now = this.now(), sentAt = now): void {
-    const s = this.withoutLocalIds(sync);
     const previous = this.state;
+    // The person's name comes with the sync, and the policy reads it to tell their own messages from a teammate's.
+    this.state = this.withoutLocalIds(sync);
+    const s = this.withoutRefused(this.state);
     this.state = s;
     this.fetchedAt = now;
     this.error = undefined;

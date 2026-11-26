@@ -169,6 +169,14 @@ export const configSchema = z.object({
       hold: z.enum(["bypass", "unattended", "always", "never"]).optional().catch(undefined),
       /** How long a held message waits for the person before it is dropped, in minutes (default 60). */
       holdMinutes: z.number().int().min(1).max(7 * 24 * 60).optional().catch(undefined),
+      /**
+       * Whose messages this machine takes at all. `team` (default): anyone on the team. `self`: only your own. A
+       * list of people: those people, and your own. A message from anyone else is dropped here and never delivered.
+       */
+      from: z
+        .union([z.enum(["team", "self"]), z.array(z.string().min(1).max(200)).max(100)])
+        .optional()
+        .catch(undefined),
     })
     .optional()
     .catch(undefined),
@@ -336,6 +344,8 @@ export type MessageWakeRule = "replies" | "team" | "self" | string[];
 
 /** Which sessions get a teammate's message only after the person said so. */
 export type MessageHoldRule = "bypass" | "unattended" | "always" | "never";
+/** Whose messages this machine takes at all: the whole team, only the person's own, or a list of people. */
+export type MessageFromRule = "team" | "self" | string[];
 
 /** Who may reach this machine's sessions (SPEC §23), with the defaults. */
 export interface MessageSettings {
@@ -343,11 +353,12 @@ export interface MessageSettings {
   hold: MessageHoldRule;
   /** How long a held message waits for the person before it is dropped. */
   holdMinutes: number;
+  from: MessageFromRule;
 }
 
 export function messageSettings(config: Pick<Config, "messages">): MessageSettings {
   const m = config.messages;
-  return { wake: m?.wake ?? "replies", hold: m?.hold ?? "bypass", holdMinutes: m?.holdMinutes ?? 60 };
+  return { wake: m?.wake ?? "replies", hold: m?.hold ?? "bypass", holdMinutes: m?.holdMinutes ?? 60, from: m?.from ?? "team" };
 }
 
 export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {

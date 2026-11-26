@@ -108,6 +108,10 @@ you, at your own terminal or in the menu bar.
 The `messages.hold` key in the config file changes which sessions this covers. `unattended` adds `auto` mode, `always`
 holds for every session, and `never` turns it off ([reference](../reference/config.md#messages)).
 
+You can also choose whose messages your machine takes at all, with `messages.from`. `team` is the default. `self`
+takes only your own messages, and a list takes those people's. A message from anyone else is dropped on your machine
+and never reaches a session.
+
 ## Claims
 
 A claim says one agent is on a Linear issue. Only one agent can hold it:

@@ -12,6 +12,7 @@ import { cleanText, label } from "../lib/untrusted";
  * to any session, and the sender chooses whether it asks to wake an idle one. The receiving machine has the last word.
  * This file decides, from this machine's own config and from what its sessions did:
  *
+ * - whose messages this machine takes at all (`accepts`);
  * - which messages may start a turn in an idle session (`wakes`);
  * - which messages wait for the person instead of going into a session's context (`holds`), because that session
  *   runs with no permission prompts.
@@ -63,6 +64,8 @@ export const SENT_KEEP_MS = 7 * 24 * 60 * 60_000;
 export const SENT_MAX = 500;
 /** Held messages tracked at once (a hub lists at most 500 for a device). */
 const HELD_MAX = 1000;
+/** A sender this machine takes no messages from is named in the daemon log at most this often. */
+const REFUSED_LOG_EVERY_MS = 60 * 60_000;
 /** A dropped message is remembered this long, in case its ack never reached the hub; at most this many are. */
 const DROPPED_KEEP_MS = 7 * 24 * 60 * 60_000;
 const DROPPED_MAX = 2000;
@@ -159,6 +162,8 @@ export class MessageGate implements InboxPolicy {
   private readonly dropped = new Map<string, number>();
   /** Each session's permission mode as its last hook reported it. */
   private readonly modes = new Map<string, string>();
+  /** Senders whose messages were refused: name → when the daemon log last said so. */
+  private readonly refusedAt = new Map<string, number>();
   private dirty = false;
   private saveTimer: NodeJS.Timeout | undefined;
 
@@ -236,6 +241,29 @@ export class MessageGate implements InboxPolicy {
   }
 
   // --- the policy the sync client asks (hub/coord.ts) ---------------------------------
+
+  /**
+   * Whether this machine takes a message from this sender at all (`messages.from`). The person's own messages are
+   * always taken. One that is not taken is dropped by the sync client, and the daemon log names its sender once an
+   * hour.
+   */
+  accepts(item: HubSyncInboxItem): boolean {
+    const coord = this.deps.coord();
+    if (coord?.isOwn(item)) return true;
+    const rule = this.deps.settings().from;
+    if (rule === "team") return true;
+    if (rule !== "self" && namesPerson(rule, item.from.person, coord)) return true;
+    const who = item.from.person.toLowerCase();
+    const now = this.now();
+    const last = this.refusedAt.get(who);
+    if (last === undefined || now - last >= REFUSED_LOG_EVERY_MS) {
+      if (this.refusedAt.size > 500) this.refusedAt.clear();
+      this.refusedAt.set(who, now);
+      const takes = rule === "self" ? "only its person's own" : "only its person's own and those of the people listed";
+      this.log(`dropped a message from ${label(item.from.person) || "someone"}: this machine takes ${takes} (messages.from)`);
+    }
+    return false;
+  }
 
   /**
    * Whether a message may start a turn in its idle session. The daemon's own notices wake as they always did, and so

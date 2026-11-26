@@ -652,6 +652,10 @@ read and drops the rest one by one):
 - **Who may reach a session** (`daemon/messages.ts`, B3-7232). Any teammate, or any teammate's agent, can send a
   message to any session, and the sender chooses whether it asks to wake an idle one. The receiving machine has the
   last word. It decides from its own config (`messages`). The hub's flags are a request.
+  - **Who may message at all** (`messages.from`). `team` (the default) takes a message from anyone on the team.
+    `self` takes only the person's own. A list takes those people's messages and the person's own. A message from
+    anyone else is dropped on this machine at each sync that lists it. It is never stored, held or delivered, and it
+    is acked so the hub stops listing it. The daemon log names its sender at most once an hour.
   - **Who may wake** (`messages.wake`, while `wake` is on). A message must first ask to wake: its `wake` flag says
     so, or it has none and a person wrote it (§30). Then the receiving machine's rule must allow its sender. The rule
     is `replies` (the default), `team`, `self`, or a list of people.

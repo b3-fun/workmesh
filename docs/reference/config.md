@@ -62,6 +62,7 @@ these keys again within a few seconds of a change, so a hand edit needs no resta
 | `messages.wake` | `replies` | Whose message may start a turn in an idle session, while `wake` is on. `replies`: your own messages, and a reply from a person (or their agent) that the session wrote to in the last 7 days. `team`: any teammate's. `self`: only your own. Or a list of people, by the name the board shows or their GitHub login: `["Sam Lee", "bo-dev"]`. Set the first three with `workmesh wake replies\|team\|self`. A message that may not wake still reaches the session at its next prompt or tool call. |
 | `messages.hold` | `bypass` | Which sessions get a teammate's message only after you said so. `bypass`: a session that runs with permission prompts skipped (Claude Code's `bypassPermissions` or `dontAsk` mode, a Codex thread with no sandbox). `unattended`: also `auto` mode. `always`: every session. `never`: none. A held message shows in the menu bar and in `workmesh inbox --held`, and your agent never sees it unless you deliver it. Your own messages are never held. |
 | `messages.holdMinutes` | `60` | How long a held message waits for you before it is dropped, in minutes (1 to 10080). |
+| `messages.from` | `team` | Whose messages this machine takes at all. `team`: anyone on the team. `self`: only your own. Or a list of people, by the name the board shows or their GitHub login. A message from anyone else is dropped on this machine, never delivered, and named in the daemon log once an hour per sender. |
 
 ## Daemon and agents
 

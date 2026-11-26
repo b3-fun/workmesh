@@ -64,7 +64,7 @@ const message = (over: Partial<Message> = {}): Message => ({
 
 function harness(opts: { settings?: Partial<MessageSettings>; file?: string } = {}) {
   let now = T;
-  const settings: MessageSettings = { wake: "replies", hold: "bypass", holdMinutes: 60, ...opts.settings };
+  const settings: MessageSettings = { wake: "replies", hold: "bypass", holdMinutes: 60, from: "team", ...opts.settings };
   const logs: string[] = [];
   /** What a session's transcript last said its mode was (the forwarder's mirror). */
   const mirror = new Map<string, string>();
@@ -363,7 +363,16 @@ describe("the record of who each session wrote to", () => {
 
 describe("the `messages` config section", () => {
   it("defaults to replies; a rule or a list of people is read; anything else reads as absent", () => {
-    expect(messageSettings(configSchema.parse({}))).toEqual({ wake: "replies", hold: "bypass", holdMinutes: 60 });
+    expect(messageSettings(configSchema.parse({}))).toEqual({ wake: "replies", hold: "bypass", holdMinutes: 60, from: "team" });
+    const set = messageSettings(configSchema.parse({ messages: { hold: "unattended", holdMinutes: 15, from: ["Sam Lee"] } }));
+    expect(set).toEqual({ wake: "replies", hold: "unattended", holdMinutes: 15, from: ["Sam Lee"] });
+    // One bad key does not cost the others.
+    expect(messageSettings(configSchema.parse({ messages: { hold: "sometimes", holdMinutes: 0, from: 7, wake: "team" } }))).toEqual({
+      wake: "team",
+      hold: "bypass",
+      holdMinutes: 60,
+      from: "team",
+    });
     expect(messageSettings(configSchema.parse({ messages: { wake: "team" } })).wake).toBe("team");
     expect(messageSettings(configSchema.parse({ messages: { wake: ["Sam Lee", "bo"] } })).wake).toEqual(["Sam Lee", "bo"]);
     expect(messageSettings(configSchema.parse({ messages: { wake: "everyone" } })).wake).toBe("replies");
@@ -615,5 +624,68 @@ describe("held messages across a daemon restart", () => {
     y.sync({ inbox: [message({ id: "wm_held" })] });
     expect(y.gate.heldMessages().map((m) => m.id)).toEqual(["wm_held"]);
     expect(y.coord.pendingFor(LOCAL)).toEqual([]);
+  });
+});
+
+describe("who may message this machine's sessions at all", () => {
+  it("by default takes a message from anyone on the team", () => {
+    const x = harness();
+    x.sync({ inbox: [message(), message({ id: "wm_bo", from: { person: "Bo" } })] });
+    expect(x.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual(["wm_01", "wm_bo"]);
+    expect(x.logs).toEqual([]);
+  });
+
+  it("`self` drops a teammate's message here: never stored, never delivered, acked, and logged once an hour per sender", async () => {
+    const x = harness({ settings: { from: "self" } });
+    const inbox = [message(), message({ id: "wm_02" }), message({ id: "wm_bo", from: { person: "Bo" } }), message({ id: "wm_me", from: { person: "An" } })];
+    x.sync({ inbox });
+    expect(x.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual(["wm_me"]);
+    expect(x.coord.inboxItems().map((i) => i.id)).toEqual(["wm_me"]);
+    expect(x.coord.view().state?.inbox.map((i) => i.id)).toEqual(["wm_me"]);
+    expect(x.gate.heldMessages()).toEqual([]);
+    const ctx = x.boundary("s1", "default")!;
+    expect(ctx).toContain('<workmesh-message from="An">');
+    expect(ctx).not.toContain('from="Sam"');
+    await flush();
+    expect(x.acked().sort()).toEqual(["wm_01", "wm_02", "wm_bo", "wm_me"]);
+    expect(x.logs).toEqual([
+      "dropped a message from Sam: this machine takes only its person's own (messages.from)",
+      "dropped a message from Bo: this machine takes only its person's own (messages.from)",
+    ]);
+    // The same senders again within the hour: dropped, and the log stays as it is.
+    x.tick(59 * 60_000);
+    x.sync({ inbox: [message({ id: "wm_03" })] });
+    expect(x.logs).toHaveLength(2);
+    x.tick(60_000);
+    x.sync({ inbox: [message({ id: "wm_04" })] });
+    expect(x.logs).toHaveLength(3);
+    expect(x.coord.pendingFor(LOCAL)).toEqual([]);
+  });
+
+  it("a list takes those people's messages, by name or GitHub login, and my own", () => {
+    const x = harness({ settings: { from: ["sam-dev"] } });
+    x.sync({ inbox: [message(), message({ id: "wm_bo", from: { person: "Bo" } }), message({ id: "wm_mine", from: { person: "Someone", sessionKey: `${DEV}:codex:t1` } })] });
+    expect(x.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual(["wm_01", "wm_mine"]);
+    expect(x.logs).toEqual(["dropped a message from Bo: this machine takes only its person's own and those of the people listed (messages.from)"]);
+  });
+
+  it("drops a message it took earlier once the rule no longer allows its sender, held or not", async () => {
+    const x = started();
+    x.sync({ inbox: [message()] });
+    expect(x.gate.heldMessages().map((m) => m.id)).toEqual(["wm_01"]);
+    x.settings.from = "self";
+    x.sync({ inbox: [message()] });
+    expect(x.gate.heldMessages()).toEqual([]);
+    expect(x.coord.inboxItems()).toEqual([]);
+    await flush();
+    expect(x.acked()).toEqual(["wm_01"]);
+  });
+
+  it("Workmesh's own notices are unaffected", () => {
+    const x = harness({ settings: { from: "self", hold: "always", wake: "self" } });
+    x.sync();
+    const id = x.coord.notify(LOCAL, "Workmesh: your handoff to Sam is done.");
+    expect(x.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual([id]);
+    expect(wakes(x)).toEqual([id]);
   });
 });

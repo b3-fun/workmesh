@@ -152,6 +152,7 @@ Set by Workmesh itself, useful when you debug:
 | `~/.local/state/workmesh/daemon.log` | The daemon's log when it runs without a service. Under launchd it logs to `~/Library/Logs/workmesh-daemon.log`; under systemd, to the journal (`journalctl --user -u workmesh`). |
 | `~/.local/state/workmesh/hub-forward.json` | Shared sessions and unsent events, so a restart loses nothing (`0600`). |
 | `~/.local/state/workmesh/messages.json` | Who each session wrote to in the last 7 days, so their answer counts as a reply, and the messages held for you (`0600`). |
+| `~/.local/state/workmesh/new-devices.json` | The machines that joined your account and that this machine already told you about, so each is told once (`0600`). |
 | `~/.local/state/workmesh/update.log`, `update/previous/` | The last `workmesh update` run and the copy it rolls back to. |
 | `~/.local/state/workmesh/handoffs/` | Handoff runs on this machine. |
 | `~/Library/LaunchAgents/org.npclabs.workmesh.daemon.plist` | The daemon service on macOS. |

@@ -6,6 +6,9 @@ import SwiftUI
 /// without clicking the menu bar.
 ///
 /// - `WORKMESH_SNAPSHOT_EXPAND=<name>[,<name>]` expands those teammates.
+/// - `WORKMESH_SNAPSHOT_HANDOFF=<id>[,<id>]` opens those handoffs' whole text.
+/// - `WORKMESH_SNAPSHOT_ACCEPT=<id>[,<id>]` clicks Accept on those handoffs, in
+///   order (an id twice is two clicks), so the mock shows what each click did.
 /// - `WORKMESH_SNAPSHOT_APPEARANCE=dark|light` (default light).
 /// - `WORKMESH_SNAPSHOT_SHEET=update-running|update-finished|update-failed|
 ///   update-cant|update-app-failed` draws the "Updating Workmesh" window in that
@@ -45,6 +48,15 @@ enum SnapshotMode {
             }
             for name in (env["WORKMESH_SNAPSHOT_EXPAND"] ?? "").split(separator: ",") {
                 model.expandedPeople.insert(name.trimmingCharacters(in: .whitespaces))
+            }
+            for id in (env["WORKMESH_SNAPSHOT_HANDOFF"] ?? "").split(separator: ",") {
+                model.openHandoffs.insert(id.trimmingCharacters(in: .whitespaces))
+            }
+            for id in (env["WORKMESH_SNAPSHOT_ACCEPT"] ?? "").split(separator: ",") {
+                let wanted = id.trimmingCharacters(in: .whitespaces)
+                if let h = model.team?.delegate?.handoffs.first(where: { $0.id == wanted }) { model.acceptHandoff(h) }
+                // Let the call (if this click made one) reach the daemon before the next click.
+                try? await Task.sleep(nanoseconds: 400_000_000)
             }
             let dark = env["WORKMESH_SNAPSHOT_APPEARANCE"]?.lowercased() == "dark"
             let host = show(model: model, dark: dark)

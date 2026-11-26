@@ -356,11 +356,11 @@ program
   .option("--json", "machine-readable output")
   .action(wrap(runAsk));
 
-// v3 Memory (SPEC §36): the team's shared knowledge base. From a terminal these are your own words (accepted at once);
-// from an agent's shell, its proposal.
+// v3 Memory (SPEC §36): the team's shared knowledge base. A `remember` or a `forget` is a proposal, from a terminal and
+// from an agent's shell alike; a person accepts it on the board (§35).
 program
   .command("remember")
-  .description("Write down a decision, convention, gotcha, rule or fact for your team's agents")
+  .description("Write down a decision, convention, gotcha, rule or fact for your team's agents (a person accepts it on the board)")
   .argument("<title...>", "the memory in one line")
   .option("--kind <kind>", "decision | convention | gotcha | rule | fact")
   .option("--body <text>", "why, how, where it bit (up to 2,000 characters)")
@@ -386,7 +386,7 @@ program
 
 program
   .command("forget")
-  .description("Retire a team memory that no longer holds (yours at once; an agent's is a proposal)")
+  .description("Propose retiring a team memory that no longer holds (a person retires it on the board)")
   .argument("<id>", "e.g. m12")
   .option("--reason <text>", "why it no longer holds")
   .option("--json", "machine-readable output")
@@ -420,12 +420,12 @@ program
   .action(wrap(runHandoff));
 const handoffs = program
   .command("handoffs")
-  .description("Handoffs offered to you and sent by you; accept or decline one")
-  .argument("[action]", "list | accept | decline")
-  .argument("[id]", "the handoff, for accept and decline")
+  .description("Handoffs offered to you and sent by you; read one in full, accept or decline it")
+  .argument("[action]", "list | show | accept | decline")
+  .argument("[id]", "the handoff, for show, accept and decline")
   .option("--note <text>", "why (decline)")
   .option("--json", "machine-readable output")
-  .action(wrap(runHandoffs));
+  .action(wrap((action: string | undefined, id: string | undefined, opts: { note?: string; json?: boolean }) => runHandoffs(action, id, opts)));
 handoffs
   .command("policy")
   .description("Which handoffs this machine takes without a click: auto-self (default), ask, never")

@@ -152,6 +152,7 @@ struct MenuContent: View {
             return rows.isEmpty ? nil : (g, rows)
         }
 
+        let newMachines = model.newDevices
         let holds = model.team?.coord?.holds ?? []
         let allHeld = model.team?.coord?.held ?? []
         let held = Array(allHeld.prefix(Self.maxMessages))
@@ -160,8 +161,13 @@ struct MenuContent: View {
         let allApprovals = model.team?.delegate?.shownApprovals ?? []
         let handoffs = Array(allHandoffs.prefix(Self.maxMessages))
         let approvals = Array(allApprovals.prefix(Self.maxMessages))
-        // Handoff and approval rows carry a line of buttons: about two rows tall. A held message shows more of its text.
-        var rowCount = needs.count + holds.count + unread.count + 2 * (handoffs.count + approvals.count) + 3 * held.count
+        // Handoff and approval rows carry a line of buttons: about two rows tall.
+        // A handoff whose whole text is open is several rows taller. A new machine's row has a line of buttons
+        // under two lines of text: about three rows tall. A held message shows three lines of its text: the same.
+        var rowCount = needs.count + holds.count + unread.count + 2 * (handoffs.count + approvals.count)
+            + 6 * handoffs.filter { model.openHandoffs.contains($0.id) }.count
+            + 3 * newMachines.count
+            + 3 * held.count
             + groups.reduce(0) { n, g in n + (g.0 == .idle && !idleExpanded ? 0 : g.1.count) }
         switch area {
         case .none: break
@@ -172,6 +178,10 @@ struct MenuContent: View {
         }
 
         let content = VStack(alignment: .leading, spacing: 0) {
+            if !newMachines.isEmpty {
+                sectionHeader("New on your account", count: newMachines.count > 1 ? "\(newMachines.count)" : nil, urgent: true)
+                ForEach(newMachines) { newDeviceRow($0, hubNow: hubNow) }
+            }
             if needs.isEmpty && groups.isEmpty {
                 Text("No agents running")
                     .font(.system(size: 12))
@@ -277,6 +287,46 @@ struct MenuContent: View {
     /// Messages, handoffs or approvals shown at most; each header counts them all.
     private static let maxMessages = 4
 
+    /// A machine that joined my account in the last day. The row stays until
+    /// it is dismissed here (the daemon drops the notice after 24 hours).
+    private func newDeviceRow(_ n: NewDeviceNotice, hubNow: Date) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.shield.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(n.machine).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(n.joined)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("If this wasn't you, remove it on the board.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if model.team?.boardLink != nil {
+                        Button("Open board") { model.openBoard() }
+                    }
+                    Button("Dismiss") { model.dismissNewDevice(n.id) }
+                }
+                .controlSize(.small)
+                .padding(.top, 3)
+            }
+            Spacer(minLength: 4)
+            if let at = n.pairedAt {
+                Text(AgentRow.elapsed(since: at, now: hubNow))
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .help(n.text ?? "\(n.machine): \(n.joined). If this wasn't you, remove it on the board.")
+        .accessibilityElement(children: .contain)
+    }
+
     /// v1: a teammate held one of this Mac's agents (every tool call is refused until they lift it).
     private func holdRow(_ h: CoordHold, hubNow: Date) -> some View {
         let who = h.name ?? "An agent"
@@ -362,25 +412,50 @@ struct MenuContent: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// v2: a task a teammate handed me (Accept starts an agent for it on this
-    /// Mac), or one already running here.
+    /// v2: a task a teammate handed me, or one already running here. Accept
+    /// starts an agent on this Mac with the sender's text as its instructions,
+    /// so the click that accepts is made with all of that text in view and
+    /// the daemon's line about what starts under it. A short task is shown
+    /// whole. A longer one, or one with a context, shows two lines and "Show
+    /// all"; its Accept first opens the whole text and then reads "Accept and
+    /// run".
     private func handoffRow(_ h: DelegateHandoff, hubNow: Date) -> some View {
         let from = h.fromSession.map { "\(h.from) (\($0))" } ?? h.from
+        let open = model.openHandoffs.contains(h.id)
+        let allInView = open || !h.hidesText
+        let more = h.hidesText ? RowLink(title: open ? "Show less" : "Show all") { model.toggleHandoffText(h.id) } : nil
         return HStack(alignment: .top, spacing: 8) {
             Image(systemName: h.runningHere ? "play.circle" : "tray.and.arrow.down")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
-                Text(Self.oneLine(h.task))
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                if open {
+                    HandoffText(handoff: h)
+                        .padding(.bottom, 3)
+                } else {
+                    Text(Self.oneLine(h.task))
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(h.hidesText ? 2 : nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text(h.origin).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 if h.runningHere {
-                    delegateNote("Running here")
+                    HStack(spacing: 8) {
+                        delegateNote("Running here")
+                        if let more { rowLink(more).padding(.top, 1) }
+                    }
                 } else {
-                    delegateActions(h.id, yes: "Accept", no: "Decline") { model.answerHandoff(h.id, accept: $0) }
+                    if allInView, let start = h.onAccept {
+                        Text(Self.withCode(start.text))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                    }
+                    delegateActions(h.id, yes: allInView && h.onAccept?.agent != nil ? "Accept and run" : "Accept", no: "Decline", link: more) { yes in
+                        if yes { model.acceptHandoff(h) } else { model.declineHandoff(h.id) }
+                    }
                 }
             }
             Spacer(minLength: 4)
@@ -391,11 +466,24 @@ struct MenuContent: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .help([from + " handed you: " + h.task,
+        .help([from + " handed you: " + String(Self.oneLine(h.task).prefix(300)),
                [h.repo, h.issue].compactMap { $0 }.joined(separator: " · "),
-               h.runningHere ? "Running on this Mac." : "Accept starts an agent for it on this Mac."]
+               h.runningHere ? "Running on this Mac." : (h.onAccept?.text ?? "Accept starts an agent for it on this Mac.")]
               .filter { !$0.isEmpty }.joined(separator: "\n"))
         .accessibilityElement(children: .contain)
+    }
+
+    /// A quiet text button beside a row's buttons ("Show all").
+    private struct RowLink {
+        let title: String
+        let action: () -> Void
+    }
+
+    private func rowLink(_ link: RowLink) -> some View {
+        Button(link.title, action: link.action)
+            .buttonStyle(.plain)
+            .font(.system(size: 11))
+            .foregroundStyle(Color.workmeshAccent)
     }
 
     /// v2: an action an agent must not take without a person's yes: one of
@@ -432,16 +520,19 @@ struct MenuContent: View {
 
     /// The two answers, or what was answered, plus the daemon's text for a call that failed.
     @ViewBuilder
-    private func delegateActions(_ id: String, yes: String, no: String, answer: @escaping (Bool) -> Void) -> some View {
+    private func delegateActions(_ id: String, yes: String, no: String, link: RowLink? = nil, answer: @escaping (Bool) -> Void) -> some View {
         if let done = model.delegateAnswered[id] {
             delegateNote(done)
         } else {
             HStack(spacing: 6) {
-                Button(yes) { answer(true) }
-                Button(no) { answer(false) }
+                Group {
+                    Button(yes) { answer(true) }
+                    Button(no) { answer(false) }
+                }
+                .controlSize(.small)
+                .disabled(model.delegateBusy.contains(id))
+                if let link { rowLink(link).padding(.leading, 2) }
             }
-            .controlSize(.small)
-            .disabled(model.delegateBusy.contains(id))
             .padding(.top, 3)
         }
         if let failure = model.delegateFailed[id] {
@@ -840,6 +931,53 @@ struct MenuContent: View {
 }
 
 private struct ListHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// A handoff's whole task and context, as the daemon sent them: selectable,
+/// and scrolling inside its own box once it is taller than `maxHeight`.
+private struct HandoffText: View {
+    let handoff: DelegateHandoff
+    @State private var height: CGFloat = 0
+
+    private let maxHeight: CGFloat = 220
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(handoff.task)
+                    if let context = handoff.context {
+                        Text("Context")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(context)
+                    }
+                }
+                .font(.system(size: 11))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: HandoffTextHeightKey.self, value: g.size.height)
+                })
+            }
+            .frame(height: min(height > 0 ? height : maxHeight, maxHeight))
+            .onPreferenceChange(HandoffTextHeightKey.self) { height = $0 }
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
+            // The box holds more than it shows: say so, since scroll bars stay hidden until used.
+            if height > maxHeight + 1 {
+                Text("Scroll to read all of it.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct HandoffTextHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

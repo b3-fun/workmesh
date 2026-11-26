@@ -47,11 +47,11 @@ What a hub may learn from a machine, and what it does with it. Each rule points 
   b3-fun/b3os-beta`), redacted first. A relay starts an agent for a handoff only once its person accepted it, or by
   their own policy for one they sent themselves (§31).
 - **Memory (v3, §35)** sends what an agent or person writes down on purpose for the team (a memory's title, body,
-  scope, links; a reason to retire one; a search query), at either sharing level, redacted first. An agent's memory
-  reaches other agents only after a person accepts it (or its own person chose to accept their agents' memories). A
-  hub may propose memories from a finished session's shared turn summaries, only for devices at `conversation`; a
-  person accepts each one, and going back to `metadata` deletes the proposals drawn from that device's sessions. To
-  search by meaning, B3's hub embeds memories and recall questions with Cloudflare Workers AI (its own account).
+  scope, links; a reason to retire one; a search query), at either sharing level, redacted first. A memory sent from a
+  machine reaches other agents only after a person accepts it on the board. A hub may propose memories from a finished
+  session's shared turn summaries, only for devices at `conversation`; a person accepts each one, and going back to
+  `metadata` deletes the proposals drawn from that device's sessions. To search by meaning, B3's hub embeds memories
+  and recall questions with Cloudflare Workers AI (its own account).
 - **Redaction on the machine**, before anything is queued (§9): keys, tokens, JWTs, private keys, credentials in URLs
   and secret-valued settings become `[redacted]`, home paths `~/…`. The hub blanks obvious secrets again before it
   stores text (§10).
@@ -98,6 +98,18 @@ All relay endpoints live under `/relay/*`, JSON bodies, max 256 KB per request.
 
 The person opens `verifyUrl` (Access login), sees "Connect *seans-mac-studio* to B3 as *Sean*?", and approves:
 `POST /api/pair/approve { "code": "ABCD-1234" }` (Access-authenticated).
+
+**The relay opens only the hub's own link** (B3-7237). The link is text from the hub's answer, and opening it hands
+it to the system's `open` command. So the relay checks it first (`workmesh hub connect`, `checkPairLink`):
+
+- It must be `https` on the host and port of the hub URL the person gave. Plain `http` passes only for a hub on
+  `localhost`, `127.0.0.1` or `[::1]`.
+- It must carry no user name or password.
+- A link that passes is printed and opened in its parsed form, never as the text the hub sent.
+- Any other link is neither printed nor opened. The relay prints the code, the hub's own pairing page
+  (`<hub url>/pair`) and the reason.
+
+Under every code the relay prints one line: approve only a code you see in your own terminal.
 
 `POST /relay/pair/poll` `{ "deviceId", "pollSecret" }`
 → `{ "status": "pending" | "complete" | "expired", "deviceToken"?: "bp_…", "person"?: { "email", "name" }, "project"?: { "id": "b3", "name": "B3", "include": {…}, "issueKeys": [...] } }`
@@ -934,8 +946,9 @@ the device token names the person, requests carry ingest keys, answers carry hub
 
 - **Handoff** = `{ id, from: { person, sessionKey?, sessionName? }, to: { person }, task, repo?, issue?, context?,
   status, createdAt, updatedAt?, device?, sessionKey?, note? }`. `status`: `offered` → `accepted` → `started` →
-  `done` | `failed`, or `offered` → `declined`. Only the recipient accepts or declines (on the board, in their menu
-  bar, from one of their agents, or by their relay's policy for a handoff they sent themselves, §31). An `accept`
+  `done` | `failed`, or `offered` → `declined`. Only the recipient accepts or declines. That is the person: on the
+  board, in their menu bar or in their own terminal. Their relay's policy may accept a handoff they sent themselves
+  (§31). Their agents don't: a relay refuses an `accept` or `decline` that an agent asks for (§31, B3-7234). An `accept`
   from a relay makes that device the runner (`device`); one accepted on the board has no `device` until a relay
   starts it, and then the first `start` wins (the hub answers the others `409`). `start`, `done` and `fail` come from
   the runner; `start` may carry the session it started (`sessionKey`), and a second `start` from the same device only
@@ -1010,10 +1023,36 @@ command run; a waiter that can't reach the daemon ends.
   value or env value, and is redacted (§9). Agents can't set gates or decide approvals: `gates` and
   `approvals approve|deny` refuse a caller the daemon identifies as an agent session, and the MCP server has no tools
   for them. (A cooperative guard rail, not a sandbox: anything running as the person can call the hub.)
-- **Handoffs** (`daemon/delegate.ts`, `daemon/handoff-runner.ts`). MCP `handoff { to, task, repo?, issue?, context? }`
-  (repo: the calling session's, by default; `to: "me"` is the person themselves) and `handoffs { action: list |
-  accept | decline, id?, note? }`; CLI `workmesh handoff`, `handoffs`, `handoffs policy`, `roots`. Task and context
-  are redacted (§9). The policy `handoffs.accept` in config: `auto-self` (absent = this): a handoff the person sent
+- **Handoffs** (`daemon/delegate.ts`, `daemon/handoff-runner.ts`, `daemon/handoff-text.ts`). MCP `handoff { to, task,
+  repo?, issue?, context? }` (repo: the calling session's, by default; `to: "me"` is the person themselves) and
+  `handoffs` (the list only); CLI `workmesh handoff`, `handoffs [list | show <id> | accept <id> | decline <id>]`,
+  `handoffs policy`, `roots`. Task and context are redacted (§9).
+  - **Only a person accepts or declines** (B3-7234). Accepting starts an agent on their machine, so the answer is
+    not an agent's to give. The daemon takes an accept or a decline only from a person's own surfaces: the CLI and
+    the menu bar app (`caller.client` is `cli` or `menubar`). It must also read no agent session behind the call
+    (§23). Any other caller gets this refusal, and nothing goes to the hub: "Handoffs are accepted or declined by a
+    person, on the board, in the menu bar or in their own terminal, not by an agent."
+  - So every call through the MCP server is refused, also one whose session the daemon can't name. The MCP
+    `handoffs` tool takes no arguments and only lists. An MCP client that calls itself `cli` or `menubar` is sent on
+    as `mcp:<name>`. The relay's own accept by policy (`auto-self`, below) is unchanged.
+  - Like the gates, this is a cooperative guard rail, not a sandbox: anything running as the person can call the hub.
+  - **The person reads all of it before they accept** (B3-7234). The sender's task and context become the new
+    agent's instructions.
+  - The full view (`handoffs show <id>`) prints who it is from, repo, issue and status, then the whole task and the
+    whole context. Escape sequences, control characters and invisible characters are removed first
+    (`lib/untrusted.ts`). Every line of the sender's text stands behind `│`, so none of it can pass for a line of
+    Workmesh's own.
+  - For a handoff the person can accept, the last line says what starts. It names the agent CLI, the permission mode
+    for Claude Code (`handoffs.permissionMode`) and where the run happens: a new worktree, the checkout, or a scratch
+    folder. Example: "Accepting starts a Claude Code agent on this Mac in auto mode, in a new worktree of
+    b3-fun/b3os-beta." When this machine can't run the handoff, the line says why instead.
+  - Accepting from a terminal (`workmesh handoffs accept <id>`) always prints that view and asks "Accept and start an
+    agent? [y/N]". No option skips the question. With no terminal to ask in (or with `--json`), nothing is accepted,
+    and the command points to the menu bar and the board.
+  - The list keeps one line per handoff, with 160 characters of the task. A line ends with `[more: workmesh handoffs
+    show <id>]` when the handoff has a longer task or a context.
+
+  The policy `handoffs.accept` in config: `auto-self` (absent = this): a handoff the person sent
   themselves is accepted by a machine of theirs at once (the sending machine waits 20 s so another of their machines
   may take it first), anyone else's waits for the person; `ask`: every handoff waits; `never`: this machine runs
   none. Accepted for this device (`device`), or accepted on the board with no device, the runner `start`s it (the
@@ -1076,6 +1115,16 @@ command run; a waiter that can't reach the daemon ends.
   running here; pending approvals this machine's agents asked for or the person may decide); Workmesh.app shows
   "Handoffs for you" (Accept / Decline) and "Approvals" (Approve / Deny), answered through `POST /coord/op` as the
   person.
+  - Each handoff in `delegate.handoffs` carries its whole `task`, and its `context` when it has one (B3-7234). Both
+    are cleaned as for `handoffs show`. Before, it carried the first 500 characters of the task and no context.
+  - A handoff offered to the person also says what Accept starts: `onAccept: { agent?: "claude" | "codex",
+    permissionMode?, text }`. The line to show is `text`. Example: "Starts a Claude Code agent on this Mac in auto
+    mode, in a new worktree of b3-fun/b3os-beta." The `agent` is absent when this machine can't run the handoff.
+  - These fields are additive: an older app shows two lines of `task` as before.
+  - Workmesh.app shows a task of up to 80 characters whole, with the `onAccept` line under it. A longer task, or a
+    handoff with a context, shows two lines and "Show all". That opens the whole task and context in a box that
+    scrolls and whose text can be selected. On such a row the first click on Accept opens the box and accepts
+    nothing. The button then reads "Accept and run", and the next click accepts.
 - **`workmesh init <hub-url>`.** Hooks and MCP (as `setup --hooks-only`), the daemon (the service when it can,
   restarted on this build; else in the background), and `hub connect` unless this machine is paired with that hub and
   the hub still accepts its token (`--repair` pairs again; `--share` sets the level either way).
@@ -1116,17 +1165,23 @@ device token names the person, requests carry ingest keys, answers carry hub key
   - `origin`: `agent` (an agent's `remember`), `person` (the board, a terminal, Ask on a person's confirm), `session`
     (the hub proposed it from a finished session, below), `note` (a v1 note).
   - `status`: `proposed` → `accepted` | `rejected`; an accepted memory becomes `superseded` when a memory naming it in
-    `supersedes` is accepted (`supersededBy` points at the newer one), or `retired` when a `forget` takes effect.
-    `retire` = `{ by, reason?, ts }` is a pending `forget` on an accepted memory, which stays accepted meanwhile. People
-    decide on the board (accept, edit, reject, retire, restore); relays only propose.
+    `supersedes` is accepted (`supersededBy` points at the newer one), or `retired` when a person retires it on the
+    board (a `forget` proposes that). `retire` = `{ by, reason?, ts }` is a pending retire: a `forget` on an accepted
+    memory, which stays accepted meanwhile. People decide on the board (accept, edit, reject, retire, restore); relays
+    only propose.
   - `usedAt` and `uses`: when an agent last had it (at a session's start, or in a recall's answer), and how often.
-- **Who decides.** The hub takes the person from the device token. A memory written with no `sessionKey` is the
-  person's own (a terminal) and is `accepted`; one written by an agent session is `proposed`, unless its person turned
-  on "accept my agents' memories" (on the hub; off by default) and it doesn't supersede someone else's memory. A
-  `forget` follows the same rule (an agent's on a memory its own person wrote, with that setting on, retires it at
-  once; anyone else's is a proposal), and an agent's `forget` of its own person's proposal withdraws it (`rejected`).
-  Only accepted memories reach agents: the brief, recall answers and the notes list below never carry a proposed,
-  rejected, superseded or retired one.
+- **Who decides.** Only a person signed in to the board writes an accepted memory, or accepts, rejects, retires,
+  restores or edits one. The hub takes the person from the device token. That token proves a machine, not a person at
+  its keyboard.
+  - Every memory written through a relay is `proposed`, with or without a `sessionKey`, and no hub setting accepts it.
+  - A memory named in `supersedes` stays accepted until a person accepts the newer one on the board.
+  - A `forget` on an accepted memory sets a pending retire. The memory stays accepted, and agents keep getting it,
+    until a person retires it on the board.
+  - A relay's `forget` of its own person's proposal withdraws it (`rejected`). A `forget` on someone else's proposal
+    is refused.
+  - Only accepted memories reach agents: the brief, recall answers and the notes list below never carry a proposed,
+    rejected, superseded or retired one.
+  - An older hub could answer a relay's write `accepted` or `retired`; a relay still reads both (§36).
 - **Recall** searches titles, bodies, tags and links of accepted memories, by words and by meaning (B3's hub: SQLite
   full-text search with bm25, fused with Workers AI embeddings; full text alone when the model doesn't answer).
   Memories scoped to the asker's `repo` weigh more (those whose paths cover one of the asker's `paths` more still),
@@ -1204,8 +1259,9 @@ device token names the person, requests carry ingest keys, answers carry hub key
   - `recall { query, kinds?, limit?, repo? }`: the session's repo and directory go along as `repo` and `paths`. The
     answer lists each hit as `[m12] gotcha · b3-fun/workmesh · Sean, 3 days ago`. Its title and its body (cut at 600)
     follow as marked lines (§23), then its links.
-  - `forget { id, reason? }` (`m12`, `M12`, `12`; the reason is for the reviewer): the answer says retired,
-    withdrawn (an agent's own proposal) or proposed.
+  - `forget { id, reason? }` (`m12`, `M12`, `12`; the reason is for the reviewer): the answer says proposed or
+    withdrawn (its own person's proposal). Proposed is a pending retire (§35): agents keep getting the memory until a
+    person retires it on the board. A `retired` answer, from an older hub, is read too.
   - `memories { kind?, tag?, repo? }`: the brief, newest first.
   - `note` becomes `remember`: project-wide, as a note always was; kind `fact`, or `rule`/`convention` from a tag
     (or its plural); first line the title, the rest the body; the other tags stay tags. A `404` from the hub sends it
@@ -1219,8 +1275,9 @@ device token names the person, requests carry ingest keys, answers carry hub key
   …] [--pr …] [--tag …] [--supersedes]` (paths relative to the current directory, unless `--repo owner/name` names
   the repo they are relative to), `workmesh recall <words…> [--kind …] [--limit] [--repo]`, `workmesh forget <id>
   [--reason]`, `workmesh memories [--kind] [--tag] [--repo]` (the brief). From a terminal outside an agent session
-  these are the person's own words (§35: accepted at once). The caller is found as in §23, so a terminal in a live
-  agent session's directory reads as that session and its memory is a proposal: the safe side of the two mistakes.
+  `remember` and `forget` are proposals too (§35): the person accepts them on the board. The caller is found as in
+  §23, so a terminal in a live agent session's directory reads as that session, and its write carries that session's
+  key.
 - Text (title, body, reason, query) is redacted on the machine (§9) before it is sent.
 
 # Keeping current (relay 0.12.0, Sean 2026-11-25)
@@ -1449,3 +1506,69 @@ shapes and numbers only):
   totals are saved with the forwarder's state (§24: `usageReaders`), so a daemon restart carries on where it stopped
   and never reads a file twice. A state file from an older relay has no readers: those transcripts are read once from
   their start. A replaced or truncated file is read again from its start.
+
+---
+
+# New machines on an account (2026-11-26)
+
+A machine joins a person's account when that person approves its pairing code (§3.1). Their other machines said
+nothing when that happened, so a person who approved a code by mistake had no way to notice. The hub now names newly
+added machines on sync, and each relay tells its person. Linear B3-7237. Still `v: 1`; the list is optional, so an
+older hub and an older relay work as before.
+
+## 46. `newDevices` on sync
+
+The sync answer (`GET /relay/sync`, §21) gains one optional list:
+
+```jsonc
+{
+  // … §21, §30, §35 …
+  "newDevices": [                                      // ≤ 50
+    { "id": "dev_<ulid>",                              // the new machine's device id
+      "machine": "sams-laptop",                        // its name, as it paired (§3.1), 1..120
+      "pairedAt": 1795545600000,                       // when it was added (epoch ms, the hub's clock)
+      "where": "Lisbon, Portugal (Example Telecom)" }  // opt: a short place and network description, ≤ 200
+  ]
+}
+```
+
+- **What it lists:** the machines added to this device's person's account in the last 24 hours, other than the
+  machine asking. The hub lists each one on every sync in that time; a relay tells its person once per `id` (§47).
+- **Optional.** A hub that predates it sends no list, and a relay then has nothing to tell. An empty list means the
+  same.
+- **Accept reading** (`hubSyncAcceptSchema`): an item is kept when its `id` can be read. A `machine` or `where` that
+  is too long is cut. A `machine` that can't be read reads as empty, and a `pairedAt` that can't be read as 0. Either
+  way the person is still told. An item without an `id` is dropped on its own.
+- `machine` and `where` are text from outside the machine. A relay shows them on one line, with control and invisible
+  characters removed, and never gives them to an agent.
+
+## 47. The relay side (`packages/cli`)
+
+The daemon tells its person about each new machine once, and only the person. A notice stays up for 24 hours, or
+until the person dismisses it.
+
+- **Told once.** The daemon keeps the ids it has told the person about in `~/.local/state/workmesh/new-devices.json`
+  (`0600`). A machine on that list is not told again, also after a daemon restart. The list holds at most 200
+  machines: the oldest go first, and never one the hub still lists. A file with fewer fields loads as what it holds,
+  and a missing or unreadable one as an empty list.
+- **The words.** "A new machine joined your Workmesh account: sams-laptop, 5 minutes ago, from Lisbon, Portugal
+  (Example Telecom). If this wasn't you, remove it on the board: https://workmesh.b3os.org". The time is counted on
+  the hub's clock (`serverNow`, §21). A machine without a readable name is "an unnamed machine", one without a time
+  joined "recently", and one without a place has no "from". Name and place are put on one line, cut to 80 and 120
+  characters. The relay never raises a notice for its own device id.
+- **For the person only.** The sync client hands the list to the notice store and leaves it out of the state it
+  keeps. That state is what hooks, the MCP tools and the coordination commands read, so the list is in no hook
+  context, inbox or wake. The relay's tests run every hook event and every coordination call against it.
+- **Where the person sees it.**
+  - The daemon's log has one line when the machine is first heard of.
+  - `GET /team` gains `newDevices: [{ id, machine, where?, pairedAt, toldAt, text }]`, newest first: the notices heard
+    of in the last 24 hours and not dismissed. `text` is the sentence above.
+  - `workmesh status` prints each `text` first, and `workmesh status --json` carries the list as `newDevices`.
+  - `workmesh doctor` shows one `!` line per notice, named `new machine`.
+  - Workmesh.app posts one macOS notification per machine and shows a row until the person dismisses it.
+- **Dismiss.** `POST /new-devices/dismiss { id }` on the daemon's loopback API (bearer secret, as everywhere) answers
+  `{ ok: true, removed }`. The notice leaves `/team`, `status` and `doctor`; the machine stays on the list.
+- **Older sides.** An older hub sends no list, so nothing is told. An older daemon drops the list: its `/team` has no
+  `newDevices`, and `status`, `doctor` and the menu bar show nothing.
+
+In the code: `hub/coord.ts` (`onNewDevices`), `daemon/new-devices.ts` (`NewDeviceNotices`), `lib/untrusted.ts` (`oneLine`).

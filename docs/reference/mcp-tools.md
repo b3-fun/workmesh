@@ -35,7 +35,7 @@ What an agent reads when it connects (the server's `instructions`):
 | [`forget`](#forget) | writes to the hub | Retire a team memory that is wrong or out of date, by id (m12). Say why: a person confirms it on the board. |
 | [`memories`](#memories) | reads | The team's accepted memories, newest first. |
 | [`handoff`](#handoff) | writes to the hub | Hand a task to a teammate, or to `me` (one of your person's other machines). Once accepted, their machine starts a new agent for it in a fresh worktree of the repo; you get a message when it is taken and when it is done. |
-| [`handoffs`](#handoffs) | writes to the hub | Handoffs offered to your person and sent by them; accept or decline one for your person when they asked you to. |
+| [`handoffs`](#handoffs) | reads | Handoffs offered to your person and sent by them, one line each. Only your person accepts or declines one: on the board, in the menu bar or in their own terminal. |
 | [`ask`](#ask) | reads | Ask the team board about teammates' agents and work, in plain words ("what is An's agent doing on B3-7167?", "who touched apps/hub today?"). Answered from what the board shows (states, summaries, files, claims, leases, notes), never other sessions' prompts or messages. Read-only; a few questions a minute. |
 
 ## whoami
@@ -223,15 +223,11 @@ Changes team state on the hub; destructive: no.
 
 ## handoffs
 
-Handoffs offered to your person and sent by them; accept or decline one for your person when they asked you to.
+Handoffs offered to your person and sent by them, one line each. Only your person accepts or declines one: on the board, in the menu bar or in their own terminal.
 
-Changes team state on the hub; destructive: no.
+Read-only.
 
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `action` | `list` \| `accept` \| `decline` | no | Default list. |
-| `id` | string | no | The handoff id (accept, decline). |
-| `note` | string | no | Why (decline; optional). |
+No parameters.
 
 ## ask
 

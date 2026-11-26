@@ -27,6 +27,7 @@ import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
 import { MessageGate } from "./messages";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
+import { NewDeviceNotices } from "./new-devices";
 import { codexHomeOfRollout } from "../hub/agents";
 import { CodexEndGuard } from "./codex-liveness";
 import { codexWaker } from "./codex-wake";
@@ -34,7 +35,17 @@ import type { CoordSummary, HookMeta } from "./server";
 import { readGithubLogin } from "../lib/github";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
-import { checkoutsPath, handoffsDir, hubForwardStatePath, messagesStatePath, sessionVersionsPath, stateDir, updateCheckPath, updateLogPath } from "../lib/paths";
+import {
+  checkoutsPath,
+  handoffsDir,
+  hubForwardStatePath,
+  messagesStatePath,
+  newDevicesPath,
+  sessionVersionsPath,
+  stateDir,
+  updateCheckPath,
+  updateLogPath,
+} from "../lib/paths";
 import { detectInstall, managerBin } from "../lib/install-method";
 import type { InstallInfo } from "../lib/install-method";
 import { fetchMenubarRelease, fetchRegistryInfo, npmRegistry } from "../lib/registry";
@@ -164,6 +175,9 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   });
   /** The cwd each session last reported (the checkout index learns a repo's checkout once per session and dir). */
   const lastCwd = new Map<string, string>();
+  // SPEC §47: machines that joined this person's account. Told to the person once (the log, GET /team), and kept
+  // away from agents: this store is the only place the sync's list goes.
+  const newDevices = new NewDeviceNotices({ file: newDevicesPath(), log });
 
   const startForwarder = (hub: HubConfig | undefined): void => {
     const previous = forwarder;
@@ -234,6 +248,9 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         delegate.onSync(next, previous);
       },
       policy: messages,
+      onNewDevices: (list, hubNow) => {
+        newDevices.observe(list, { board: hub.url, self: hub.deviceId, hubNow });
+      },
     });
     coord.start();
     runner.start();
@@ -466,6 +483,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         team: view.team,
         coord: coordSummary(),
         delegate: delegate.summary((local) => store.get(local)?.name),
+        newDevices: newDevices.active(coord?.hubNow()),
       };
     },
     applyHookEvent,
@@ -481,6 +499,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         claudeSessions: () => readLiveClaudeSessions(claudeDir),
         onAccepted: (h) => delegate.accepted(h),
         runningHandoffs: () => runner.running(),
+        handoffStart: (h, lead) => delegate.onAccept(h, lead),
         sent: (key, to, info) => messages.sent(key, to, info),
         held: {
           list: () => messages.heldMessages((local) => store.get(local)?.name),
@@ -494,6 +513,11 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         },
       }),
     wakeWait: (session, timeoutMs, signal) => delegate.wait(session, timeoutMs, signal),
+    dismissNewDevice: (id) => {
+      const removed = newDevices.dismiss(id);
+      if (removed) log("new machine notice dismissed via API");
+      return removed;
+    },
     reloadHub: () => {
       const hub = readHubConfig();
       if (hub === "unreadable") throw new Error("config file is unreadable — hub settings unchanged");

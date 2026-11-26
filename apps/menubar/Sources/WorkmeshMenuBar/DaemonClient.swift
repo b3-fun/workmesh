@@ -103,6 +103,13 @@ struct DaemonClient {
     @discardableResult
     func resume() async throws -> Data { try await request("POST", "/resume") }
 
+    /// Takes a new machine's notice down: the daemon stops listing it, here and in `workmesh status`.
+    @discardableResult
+    func dismissNewDevice(id: String) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: ["id": id])
+        return try await request("POST", "/new-devices/dismiss", body: body)
+    }
+
     /// v2: a coordination call as the person, not an agent (POST /coord/op):
     /// accept or decline a handoff, approve or deny an approval. The daemon
     /// makes the hub call (up to 8 s), so this waits longer than the reads.

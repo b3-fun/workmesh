@@ -193,9 +193,11 @@ struct TeamState: Decodable {
     let coord: CoordState?
     /// v2: handoffs offered to me or running here, and pending approvals (absent from older daemons).
     let delegate: DelegateState?
+    /// Machines that joined my account in the last day and weren't dismissed (none from older daemons).
+    let newDevices: [NewDeviceNotice]
 
     private enum K: String, CodingKey {
-        case enabled, hubUrl, boardUrl, hubName, deviceId, share, connected, halted, available, fetchedAt, error, pollMs, team, coord, delegate
+        case enabled, hubUrl, boardUrl, hubName, deviceId, share, connected, halted, available, fetchedAt, error, pollMs, team, coord, delegate, newDevices
     }
 
     init(from decoder: Decoder) throws {
@@ -215,6 +217,7 @@ struct TeamState: Decodable {
         team = c.lenient(TeamView.self, .team)
         coord = c.lenient(CoordState.self, .coord)
         delegate = c.lenient(DelegateState.self, .delegate)
+        newDevices = c.lossy(NewDeviceNotice.self, .newDevices)
     }
 
     /// What the footer names: the daemon's hub name, else the host without a
@@ -361,6 +364,46 @@ struct CoordHeld: Decodable, Identifiable {
     }
 }
 
+// MARK: - New machines on my account (inside GET /team)
+//
+// The hub names machines added to a person's account, and the daemon lists
+// each one for a day or until it is dismissed (POST /new-devices/dismiss). The
+// app posts one notification per machine and shows a row. Read leniently like
+// the rest of /team: an item without an id is dropped.
+
+struct NewDeviceNotice: Decodable, Identifiable {
+    let id: String
+    /// The machine's name, already on one line.
+    let machine: String
+    /// Where it joined from, when the hub said (`where` on the wire).
+    let place: String?
+    /// When it was added (epoch ms, hub clock); nil when the hub didn't say.
+    let pairedAt: Double?
+    /// The whole notice, as `workmesh status` prints it.
+    let text: String?
+
+    /// "Joined your account from Lisbon, Portugal (Example Telecom)".
+    var joined: String { "Joined your account" + (place.map { " from \($0)" } ?? "") }
+
+    private enum K: String, CodingKey {
+        case id, machine, pairedAt, text
+        case place = "where"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        guard let id = c.text(.id) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "new machine without an id"))
+        }
+        self.id = id
+        machine = c.text(.machine) ?? "An unnamed machine"
+        place = c.text(.place)
+        let at = c.lenient(Double.self, .pairedAt) ?? 0
+        pairedAt = at > 0 ? at : nil
+        text = c.text(.text)
+    }
+}
+
 // MARK: - Delegate (v2, inside GET /team)
 //
 // Handoffs offered to this person (Accept / Decline) or running on this Mac,
@@ -399,7 +442,15 @@ struct DelegateHandoff: Decodable, Identifiable {
     let id: String
     let from: String
     let fromSession: String?
+    /// The whole task, as the daemon cleaned it for reading (an older daemon
+    /// sends its first 500 characters).
     let task: String
+    /// More from the sender: links, decisions, where to start (absent: none,
+    /// or an older daemon).
+    let context: String?
+    /// What Accept starts on this Mac, in the daemon's words (offered
+    /// handoffs; absent from an older daemon).
+    let onAccept: HandoffStart?
     let repo: String?
     let issue: String?
     /// offered | accepted | started | done | failed | declined (kept as sent).
@@ -413,7 +464,17 @@ struct DelegateHandoff: Decodable, Identifiable {
     /// "from An · b3-fun/b3os-beta · B3-7168".
     var origin: String { ["from \(from)", repo, issue].compactMap { $0 }.joined(separator: " · ") }
 
-    private enum K: String, CodingKey { case id, from, fromSession, task, repo, issue, status, createdAt, runningHere }
+    /// A task this short, on one line, is shown whole in its row.
+    static let rowTaskMax = 80
+
+    /// The row can't show all of the handoff: it has a context, or a task
+    /// that is long or has more than one line. Such a row shows two lines and
+    /// offers "Show all", and Accept opens the whole text before it accepts.
+    var hidesText: Bool {
+        context != nil || task.count > Self.rowTaskMax || task.contains(where: \.isNewline)
+    }
+
+    private enum K: String, CodingKey { case id, from, fromSession, task, context, onAccept, repo, issue, status, createdAt, runningHere }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -422,6 +483,8 @@ struct DelegateHandoff: Decodable, Identifiable {
         }
         self.id = id
         self.task = task
+        context = c.text(.context)
+        onAccept = c.lenient(HandoffStart.self, .onAccept)
         from = c.text(.from) ?? "A teammate"
         fromSession = c.text(.fromSession)
         repo = c.text(.repo)
@@ -429,6 +492,26 @@ struct DelegateHandoff: Decodable, Identifiable {
         status = c.text(.status)
         createdAt = c.lenient(Double.self, .createdAt)
         runningHere = c.lenient(Bool.self, .runningHere) ?? false
+    }
+}
+
+/// What accepting a handoff starts on this Mac. The daemon writes the line;
+/// the app only shows it.
+struct HandoffStart: Decodable {
+    /// claude | codex (kept as sent); nil when this Mac can't run the handoff.
+    let agent: String?
+    /// "Starts a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta."
+    let text: String
+
+    private enum K: String, CodingKey { case agent, text }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        guard let text = c.text(.text) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "start line without text"))
+        }
+        self.text = text
+        agent = c.text(.agent)
     }
 }
 

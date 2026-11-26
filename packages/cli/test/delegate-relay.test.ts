@@ -207,6 +207,31 @@ describe("handoff runner (SPEC §31)", () => {
     expect(resultText({ agent: "claude", logFile: log })).toBe("secret plans");
   });
 
+  it("plan: says what an accept would start here (agent, permission mode, where) and starts nothing", () => {
+    fakeRepo(path.join(home, "code", "b3os-beta"), "git@github.com:b3-fun/b3os-beta.git");
+    const hub = fakeHub();
+    const make = (over: Partial<RunnerSettings>, bins: string[]) =>
+      new HandoffRunner({
+        coord: () => hub.coord,
+        settings: () => settings({ roots: [path.join(home, "code")], ...over }),
+        checkouts: new CheckoutIndex(path.join(home, "checkouts.json")),
+        dir: path.join(home, "handoffs"),
+        which: (b) => (bins.includes(b) ? `/opt/bin/${b}` : undefined),
+        spawnImpl: (() => {
+          throw new Error("must not spawn");
+        }) as never,
+      });
+    expect(make({}, ["claude", "codex"]).plan(HANDOFF)).toEqual({ agent: "claude", permissionMode: "auto", where: "worktree" });
+    expect(make({ permissionMode: "plan", worktree: false }, ["claude"]).plan(HANDOFF)).toEqual({ agent: "claude", permissionMode: "plan", where: "checkout" });
+    // Codex takes no Claude Code permission mode; a handoff with no repo runs in a scratch directory.
+    expect(make({}, ["codex"]).plan({ ...HANDOFF, repo: undefined })).toEqual({ agent: "codex", where: "scratch" });
+    expect(make({ agent: "codex" }, ["claude", "codex"]).plan(HANDOFF)).toEqual({ agent: "codex", where: "worktree" });
+    expect(make({}, []).plan(HANDOFF)).toEqual({ where: "worktree", cannot: "neither claude nor codex is installed here" });
+    expect(make({}, ["claude"]).plan({ ...HANDOFF, repo: "b3-fun/nope" })).toMatchObject({ agent: "claude", cannot: expect.stringContaining("no checkout of b3-fun/nope here") });
+    expect(hub.calls).toEqual([]);
+    expect(fs.existsSync(path.join(home, "handoffs"))).toBe(false);
+  });
+
   it("the prompt carries the task, context, issue, branch and the headless rules", () => {
     const p = handoffPrompt(HANDOFF, { repo: HANDOFF.repo, branch: "workmesh/handoff-abc12345", base: "origin/main", dir: "/x" });
     expect(p).toContain("Workmesh handoff from An (their agent b3iq-strategy). The task (every line of it starts with │):\n\n│ Port the KEK rotation");
@@ -348,6 +373,8 @@ describe("wake-wait, the asyncRewake Stop hook (SPEC §31)", () => {
 });
 
 describe("v2 ops through the daemon (SPEC §31)", () => {
+  /** A person at their own terminal: the CLI, with no agent session the daemon can name. */
+  const PERSON = { client: "cli" };
   const deps = (coord: CoordClient, over: Partial<CoordOpsDeps> = {}): CoordOpsDeps => ({
     coord: () => coord,
     hub: () => ({ url: "https://hub.test", project: { name: "B3" }, person: { name: "Sean" }, deviceId: DEV }),
@@ -455,11 +482,142 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     const hub = fakeHub([{ status: 200, body: { ok: true, handoff: { ...HANDOFF } } }]);
     sync(hub.coord, { handoffs: [{ ...HANDOFF, status: "offered" }] as never });
     const list = await runCoordOp({ op: "handoffs", args: {}, caller: {} }, deps(hub.coord));
-    expect(list.text).toBe("- h_abc12345 · offered · from An · b3-fun/b3os-beta, B3-7168: Port the KEK rotation to the new runner");
+    // One line each; a handoff with a context says where the rest is.
+    expect(list.text).toBe(
+      "- h_abc12345 · offered · from An · b3-fun/b3os-beta, B3-7168: Port the KEK rotation to the new runner [more: workmesh handoffs show h_abc12345]",
+    );
     const accepted: string[] = [];
-    const r = await runCoordOp({ op: "handoffs", args: { action: "accept", id: "h_abc12345" }, caller: {} }, deps(hub.coord, { onAccepted: (h) => accepted.push(h.id) }));
+    const r = await runCoordOp({ op: "handoffs", args: { action: "accept", id: "h_abc12345" }, caller: PERSON }, deps(hub.coord, { onAccepted: (h) => accepted.push(h.id) }));
     expect(r.text).toBe("Accepted h_abc12345: this machine starts an agent for it.");
     expect(accepted).toEqual(["h_abc12345"]);
+    // The person's answer names no agent session.
+    expect(hub.calls).toEqual([{ url: "https://hub.test/relay/handoffs", body: { action: "accept", id: "h_abc12345" } }]);
+  });
+
+  it("a handoff is accepted or declined by a person: an agent caller is refused, and the hub hears nothing", async () => {
+    const hub = fakeHub([
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF } } },
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "declined" } } },
+    ]);
+    sync(hub.coord, { handoffs: [{ ...HANDOFF, status: "offered" }] as never });
+    const accepted: string[] = [];
+    const live = [{ key: "claude-code:s7", source: "claude-code", sessionId: "s7", cwd: "/w/b3os-beta", updatedAt: T }];
+    const d = deps(hub.coord, {
+      onAccepted: (h) => accepted.push(h.id),
+      listSessions: () => live as never,
+      getSession: (k) => live.find((s) => s.key === k) as never,
+      claudeSessions: () => new Map([["s7", { pid: 4242, sessionId: "s7" }]]),
+    });
+    const agents: Array<[string, Record<string, unknown>]> = [
+      ["the MCP server under a Claude Code session", { ppid: 4242, client: "claude-code" }],
+      ["the CLI in an agent's shell (session id in its environment)", { claudeSessionId: "s7", client: "cli" }],
+      ["the CLI in a Codex thread's shell", { codexThreadId: "t1", client: "cli" }],
+      ["the CLI in a live session's directory", { cwd: "/w/b3os-beta", client: "cli" }],
+      ["an MCP client whose session the daemon can't name", { client: "some-agent-tool" }],
+      ["an MCP client that calls itself the CLI", { client: "mcp:cli" }],
+      ["a caller that names no surface", {}],
+    ];
+    for (const [what, caller] of agents) {
+      for (const action of ["accept", "decline"]) {
+        const r = await runCoordOp({ op: "handoffs", args: { action, id: "h_abc12345", note: "x" }, caller }, d);
+        expect(r, `${action} from ${what}`).toEqual({
+          ok: false,
+          text: "Handoffs are accepted or declined by a person, on the board, in the menu bar or in their own terminal, not by an agent.",
+          data: undefined,
+        });
+      }
+      // Reading stays open to an agent.
+      expect((await runCoordOp({ op: "handoffs", args: {}, caller }, d)).ok, `list from ${what}`).toBe(true);
+      expect((await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_abc12345" }, caller }, d)).ok, `show from ${what}`).toBe(true);
+    }
+    expect(hub.calls).toEqual([]);
+    expect(accepted).toEqual([]);
+    // A person: the CLI at their own terminal, and the menu bar app.
+    const cli = await runCoordOp({ op: "handoffs", args: { action: "accept", id: "h_abc12345" }, caller: { client: "cli", cwd: "/somewhere/else", ppid: 77 } }, d);
+    expect(cli).toMatchObject({ ok: true, text: "Accepted h_abc12345: this machine starts an agent for it." });
+    const bar = await runCoordOp({ op: "handoffs", args: { action: "decline", id: "h_abc12345", note: "not this week" }, caller: { client: "menubar" } }, d);
+    expect(bar).toMatchObject({ ok: true, text: "Declined h_abc12345." });
+    expect(hub.calls.map((c) => c.body)).toEqual([
+      { action: "accept", id: "h_abc12345" },
+      { action: "decline", id: "h_abc12345", note: "not this week" },
+    ]);
+    expect(accepted).toEqual(["h_abc12345"]);
+  });
+
+  it("handoffs show prints the whole task and context, without what a person can't see, and what Accept starts", async () => {
+    const hub = fakeHub();
+    // Made from code points, so this file holds no invisible character.
+    const esc = String.fromCodePoint(0x1b);
+    const unseen = [esc, String.fromCodePoint(0x07), String.fromCodePoint(0x200b), String.fromCodePoint(0x202e), String.fromCodePoint(0xe0041)];
+    const task = `Port the KEK rotation.${esc}[2K${unseen[1]}\n\n${"Keep the old key readable for a week. ".repeat(20).trim()}${unseen[2]}${unseen[4]}`;
+    const context = `Start from PR 212.${esc}[31m\nAsk${unseen[3]} before you merge.${esc}[0m`;
+    sync(hub.coord, { handoffs: [{ ...HANDOFF, status: "offered", task, context, createdAt: T - 6 * 60_000 }] as never });
+    const start = { agent: "claude" as const, permissionMode: "auto", text: "Accepting starts a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta." };
+    const leads: string[] = [];
+    const d = deps(hub.coord, {
+      now: () => T,
+      handoffStart: (_h, lead) => {
+        leads.push(lead);
+        return start;
+      },
+    });
+    const r = await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_abc12345" }, caller: PERSON }, d);
+    expect(r.ok).toBe(true);
+    expect(r.text).toBe(
+      [
+        "Handoff h_abc12345 · offered · sent 6 min ago",
+        "From:  An (their agent b3iq-strategy)",
+        "To:    Sean",
+        "Repo:  b3-fun/b3os-beta",
+        "Issue: B3-7168",
+        "",
+        "Task from An:",
+        "│ Port the KEK rotation.",
+        "│",
+        `│ ${"Keep the old key readable for a week. ".repeat(20).trim()}`,
+        "",
+        "Context from An:",
+        "│ Start from PR 212.",
+        "│ Ask before you merge.",
+        "",
+        start.text,
+      ].join("\n"),
+    );
+    for (const c of unseen) expect(r.text.includes(c), `code point ${c.codePointAt(0)?.toString(16)}`).toBe(false);
+    expect(leads).toEqual(["Accepting starts"]);
+    expect(r.data).toMatchObject({ canAccept: true, onAccept: start, handoff: { id: "h_abc12345", context: "Start from PR 212.\nAsk before you merge." } });
+    expect(JSON.stringify(r.data).includes("\\u001b")).toBe(false);
+    // The list keeps to one line of it.
+    const list = await runCoordOp({ op: "handoffs", args: {}, caller: PERSON }, d);
+    expect(list.text.split("\n")).toHaveLength(1);
+    expect(list.text).toMatch(/^- h_abc12345 · offered · from An · b3-fun\/b3os-beta, B3-7168: Port the KEK rotation\. Keep the old key .*… \[more: workmesh handoffs show h_abc12345\]$/);
+    for (const c of unseen) expect(list.text.includes(c)).toBe(false);
+    expect((list.data as { handoffs: Array<{ task: string }> }).handoffs[0]!.task.includes(esc)).toBe(false);
+    expect(hub.calls).toEqual([]);
+  });
+
+  it("handoffs show: no start line for one this person can't accept; an id the hub didn't list is said plainly", async () => {
+    const hub = fakeHub();
+    sync(hub.coord, {
+      handoffs: [
+        { ...HANDOFF, id: "h_sent", status: "offered", from: { person: "Sean" }, to: { person: "An" } },
+        { ...HANDOFF, id: "h_run", status: "started" },
+      ] as never,
+    });
+    const d = deps(hub.coord, { now: () => T, handoffStart: () => ({ text: "Accepting starts an agent." }), runningHandoffs: () => new Set(["h_run"]) });
+    const sent = await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_sent" }, caller: PERSON }, d);
+    expect(sent.text).not.toContain("Accepting starts");
+    expect(sent.text.split("\n").slice(0, 3)).toEqual(["Handoff h_sent · offered · sent under a minute ago", "From:  Sean", "To:    An"]);
+    expect(sent.data).toMatchObject({ canAccept: false });
+    const run = await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_run" }, caller: PERSON }, d);
+    expect(run.text.split("\n")[0]).toBe("Handoff h_run · started, running here · sent under a minute ago");
+    expect(run.data).toMatchObject({ canAccept: false });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_nope" }, caller: PERSON }, d)).toMatchObject({
+      ok: false,
+      text: "No handoff h_nope for you or from you in the hub's list (`handoffs` lists them).",
+    });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "show" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "`handoffs` show needs `id` (`handoffs` lists them)." });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "take" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "`handoffs` takes action list, show, accept or decline." });
   });
 
   it("a sync older than 5 s is refreshed first (a person at the terminal while no shared session is live)", async () => {

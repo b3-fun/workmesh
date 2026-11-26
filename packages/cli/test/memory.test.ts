@@ -550,7 +550,7 @@ describe("memory ops (SPEC §36)", () => {
     });
   });
 
-  it("remember from a person at a terminal: no session, the project when outside a repo; accepted", async () => {
+  it("remember from a terminal: no session, the project when outside a repo; an older hub's accepted answer is read", async () => {
     const h = await opsHarness({
       routes: { "POST /relay/memories": [{ status: 200, body: { ok: true, memory: accepted({ kind: "rule", title: "Deploys freeze at 5pm ET." }) } }] },
     });

@@ -5,7 +5,10 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  announcePairing,
+  checkPairLink,
   machineName,
+  PAIR_CODE_WARNING,
   pairWithHub,
   resolveDir,
   resolveHubUrl,
@@ -128,6 +131,97 @@ describe("pairWithHub (SPEC §3.1)", () => {
   });
 });
 
+describe("the approve link is checked before it is opened (SPEC §3.1)", () => {
+  const HUB = "https://workmesh.b3os.org";
+  const LOCAL = "http://127.0.0.1:8797";
+
+  it("opens an https link on the hub's own host, as parsed", () => {
+    expect(checkPairLink(HUB, "https://workmesh.b3os.org/pair?code=ABCD-1234")).toEqual({
+      open: true,
+      url: "https://workmesh.b3os.org/pair?code=ABCD-1234",
+    });
+    // The parsed form is what gets opened: no stray whitespace, the host in lower case.
+    expect(checkPairLink(HUB, "  HTTPS://WORKMESH.B3OS.ORG/pair?code=ABCD-1234\n")).toEqual({
+      open: true,
+      url: "https://workmesh.b3os.org/pair?code=ABCD-1234",
+    });
+  });
+
+  it("opens plain http only for a hub on this machine, on the same host and port", () => {
+    expect(checkPairLink(LOCAL, "http://127.0.0.1:8797/pair?code=ABCD-1234")).toMatchObject({ open: true });
+    expect(checkPairLink("http://localhost:8797", "http://localhost:8797/pair?code=A")).toMatchObject({ open: true });
+    expect(checkPairLink("http://[::1]:8797", "http://[::1]:8797/pair?code=A")).toMatchObject({ open: true });
+    expect(checkPairLink(LOCAL, "http://127.0.0.1:9999/pair?code=A")).toMatchObject({ open: false });
+    expect(checkPairLink(LOCAL, "http://localhost:8797/pair?code=A")).toMatchObject({ open: false });
+  });
+
+  it.each([
+    ["another host", "https://other.example/pair?code=ABCD-1234", /leads to other\.example, not to workmesh\.b3os\.org/],
+    ["a host that only starts with the hub's name", "https://workmesh.b3os.org.other.example/pair", /leads to workmesh\.b3os\.org\.other\.example/],
+    ["the hub's name used as a user name", "https://workmesh.b3os.org@other.example/pair", /leads to other\.example/],
+    ["the hub's name in the path only", "https://other.example/workmesh.b3os.org/pair", /leads to other\.example/],
+    ["another port", "https://workmesh.b3os.org:8443/pair", /leads to workmesh\.b3os\.org:8443/],
+    ["plain http on a host that isn't this machine", "http://workmesh.b3os.org/pair?code=ABCD-1234", /plain http to workmesh\.b3os\.org, not https/],
+    ["a javascript: link", "javascript:alert(1)", /a javascript: link, not https/],
+    ["a file: link", "file:///Applications/Calculator.app", /a file: link, not https/],
+    ["a data: link", "data:text/html,<p>hello</p>", /a data: link, not https/],
+    ["another app's link", "x-apple.systempreferences:com.apple.preference.security", /not https/],
+    ["a user name or password", "https://sam:secret@workmesh.b3os.org/pair", /user name or password/],
+    ["a path with no host", "/pair?code=ABCD-1234", /not a web address/],
+    ["something that reads like an option", "-a Calculator", /not a web address/],
+    ["nothing", "", /not a web address/],
+  ])("does not open %s", (_name, link, why) => {
+    const r = checkPairLink(HUB, link);
+    expect(r.open).toBe(false);
+    if (!r.open) expect(r.why).toMatch(why);
+  });
+
+  const announce = (hubUrl: string, verifyUrl: string, open?: boolean, code = "ABCD-1234") => {
+    const lines: string[] = [];
+    const opened: string[] = [];
+    announcePairing(hubUrl, { code, verifyUrl }, { open, openLink: (u) => opened.push(u), print: (l) => lines.push(l) });
+    return { text: lines.join("\n"), opened };
+  };
+
+  it("a good link: the code, the link, the one-line warning, and the browser opens once", () => {
+    const { text, opened } = announce(HUB, "https://workmesh.b3os.org/pair?code=ABCD-1234");
+    expect(opened).toEqual(["https://workmesh.b3os.org/pair?code=ABCD-1234"]);
+    expect(text).toContain("pairing code: ABCD-1234");
+    expect(text).toContain("approve it in your browser: https://workmesh.b3os.org/pair?code=ABCD-1234");
+    expect(text).toContain(PAIR_CODE_WARNING);
+    expect(PAIR_CODE_WARNING).toBe("approve only a code you see in your own terminal");
+  });
+
+  it("--no-open prints the good link and opens nothing", () => {
+    const { text, opened } = announce(HUB, "https://workmesh.b3os.org/pair?code=ABCD-1234", false);
+    expect(opened).toEqual([]);
+    expect(text).toContain("https://workmesh.b3os.org/pair?code=ABCD-1234");
+    expect(text).toContain(PAIR_CODE_WARNING);
+  });
+
+  it.each([
+    ["another host", "https://other.example/pair?code=ABCD-1234"],
+    ["a javascript: link", "javascript:alert(1)"],
+    ["a file: link", "file:///Applications/Calculator.app"],
+    ["plain http on a host that isn't this machine", "http://workmesh.b3os.org/pair?code=ABCD-1234"],
+  ])("%s: nothing opens; the code, the hub's own pairing page and the reason are printed, the link is not", (_name, link) => {
+    const { text, opened } = announce(HUB, link);
+    expect(opened).toEqual([]);
+    expect(text).toContain("pairing code: ABCD-1234");
+    expect(text).toContain("the hub's link was not opened: it ");
+    expect(text).toContain("https://workmesh.b3os.org/pair");
+    expect(text).toContain(PAIR_CODE_WARNING);
+    expect(text).not.toContain(link);
+  });
+
+  it("prints the code on one line, without the escape sequences a hub may have put in it", () => {
+    const esc = String.fromCharCode(27);
+    const { text } = announce(HUB, "https://workmesh.b3os.org/pair", false, `AB${esc}[2JCD\n-1234`);
+    expect(text).toContain("pairing code: ABCD -1234");
+    expect(text).not.toContain(esc);
+  });
+});
+
 describe("hub config", () => {
   let dir: string;
   beforeEach(() => {
@@ -162,6 +256,8 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
   let tmp: string;
   let server: http.Server;
   let base: string;
+  /** The approve link the mock hub sends; unset, its own pairing page. */
+  let link: string | undefined;
   const saved: Record<string, string | undefined> = {};
 
   beforeAll(async () => {
@@ -179,7 +275,7 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
     server = http.createServer((req, res) => {
       res.setHeader("content-type", "application/json");
       if (req.url === "/relay/pair/start") {
-        res.end(JSON.stringify({ code: "WXYZ-0001", deviceId: "dev_01J0000000000000000000000A", pollSecret: "a".repeat(32), verifyUrl: `${base}/pair?code=WXYZ-0001`, expiresInSec: 60 }));
+        res.end(JSON.stringify({ code: "WXYZ-0001", deviceId: "dev_01J0000000000000000000000A", pollSecret: "a".repeat(32), verifyUrl: link ?? `${base}/pair?code=WXYZ-0001`, expiresInSec: 60 }));
         return;
       }
       polls += 1;
@@ -252,6 +348,33 @@ describe("hub connect / include / exclude / disconnect (temp HOME, mock hub)", (
       await expect(runHubConnect(base, { open: false, share: "loud", readGithub: async () => undefined })).rejects.toThrow(/unknown sharing level/);
       await runHubDisconnect();
     } finally {
+      out.mockRestore();
+    }
+  });
+
+  it("opens the hub's own approve link, and leaves a link to another host unopened", async () => {
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const opened: string[] = [];
+    const connect = () => runHubConnect(base, { share: "metadata", readGithub: async () => undefined, openLink: (u) => opened.push(u) });
+    try {
+      await connect();
+      expect(opened).toEqual([`${base}/pair?code=WXYZ-0001`]);
+      expect(out.mock.calls.flat().join("\n")).toContain(PAIR_CODE_WARNING);
+
+      out.mockClear();
+      opened.length = 0;
+      link = "https://other.example/pair?code=WXYZ-0001";
+      await connect();
+      expect(opened).toEqual([]);
+      const printed = out.mock.calls.flat().join("\n");
+      expect(printed).toContain("pairing code: WXYZ-0001");
+      expect(printed).toContain("the hub's link was not opened: it leads to other.example");
+      expect(printed).toContain(`${base}/pair`);
+      expect(printed).toContain(PAIR_CODE_WARNING);
+      expect(printed).not.toContain("other.example/pair");
+      await runHubDisconnect();
+    } finally {
+      link = undefined;
       out.mockRestore();
     }
   });

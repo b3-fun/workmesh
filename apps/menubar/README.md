@@ -8,6 +8,7 @@ API and renders the blip.
 ```
 menu bar app ──GET /state, /config, /team──▶ workmesh daemon (127.0.0.1:4519) ──▶ Slack
             ◀──POST /pause /resume /config /sessions/dismiss /coord/op── └──▶ team hub (/relay/team)
+               POST /new-devices/dismiss
 ```
 
 All the real work — session aggregation, status formatting, the ownership guard,
@@ -25,6 +26,12 @@ app is presentation + control only, so there's zero logic to keep in sync.
 - **Header**: the exact text your Slack status shows (or why it shows nothing:
   snoozed until 9:00 AM, paused, your own status is up), with a snooze menu:
   30 minutes, 1 hour, until tomorrow (9 AM), or pause until you resume.
+- **New on your account** (orange, first in the list): a machine that joined
+  your account in the last day, with where it joined from and how long ago.
+  **Open board** takes you to where you can remove it; **Dismiss** takes the
+  row down (`POST /new-devices/dismiss`, so `workmesh status` stops showing it
+  too). The daemon lists it in `GET /team`'s `newDevices` for 24 hours unless
+  dismissed; an older daemon sends none.
 - **Needs you** (orange, longest wait first): your agents waiting on you, on
   this Mac and, when you're paired with a hub, on your other machines (marked
   with a small computer). A wait the hub also lists shows once, with the hub's
@@ -35,8 +42,22 @@ app is presentation + control only, so there's zero logic to keep in sync.
   if you do nothing. It comes from `GET /team`'s `coord.held` and answers
   through `POST /coord/op` (`inbox`); an older daemon sends none.
 - **Handoffs for you** (v2): tasks a teammate handed you, with who, repo and
-  issue, and **Accept** / **Decline** (Accept starts an agent for it on this
-  Mac); ones already running here say so. Up to four, the header counts all.
+  issue, and **Accept** / **Decline**; ones already running here say so. Up to
+  four, the header counts all. Accept starts an agent on this Mac, and the
+  sender's text becomes its instructions, so you read all of it first:
+  - A short task (up to 80 characters, one line, no context) is shown whole.
+    Under it is the daemon's line about what starts, such as "Starts a Claude
+    Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta."
+    Its button reads **Accept and run**, or plain **Accept** when this Mac
+    can't run the handoff (the line then says why).
+  - A longer task, or a handoff with a context, shows two lines and **Show
+    all**. That opens the whole task and context in a box you can scroll and
+    select text in. The first click on **Accept** opens the box too and accepts
+    nothing. The button then reads **Accept and run**, and the next click
+    accepts.
+  - The task, the context and the line come from the daemon (`task`, `context`
+    and `onAccept` in `GET /team`'s `delegate`). An older daemon sends the first
+    500 characters of the task and no line.
 - **Approvals** (v2): merges, deploys, publishes, force-pushes and spends an
   agent may not do without a yes. Ones you may decide get **Approve** /
   **Deny** (orange header); your own agents' asks that someone else decides say
@@ -73,7 +94,9 @@ app is presentation + control only, so there's zero logic to keep in sync.
   Rows from the hub: copy the name, open the board.
 - **Notifications**: one native notification per new wait, from this Mac or
   the hub, with the hub's reason when it has one. Waits already there when the
-  app starts don't fire. On by default; Settings turns them off.
+  app starts don't fire. On by default; Settings turns them off. A machine
+  that joins your account gets one notification too, whatever that setting
+  says, and never a second one after the app restarts.
 - **Settings** (gear): Slack detail level, what to do when your own status is
   set, lead with the repo name, notifications, and the config file.
 
@@ -209,7 +232,10 @@ real SHA-256; without it, a placeholder that won't unpack) and
 
 Snapshot mode renders the menu to a PNG and exits: set `WORKMESH_SNAPSHOT` to
 the output path, optionally `WORKMESH_SNAPSHOT_EXPAND=An` (comma-separated
-names) and `WORKMESH_SNAPSHOT_APPEARANCE=dark`. `WORKMESH_SNAPSHOT_SHEET=update-running`
+names) and `WORKMESH_SNAPSHOT_APPEARANCE=dark`. With `--scenario delegate`,
+`WORKMESH_SNAPSHOT_HANDOFF=h_1` opens that handoff's whole text, and
+`WORKMESH_SNAPSHOT_ACCEPT=h_1,h_1` clicks Accept on it twice before the picture
+(once opens the text, twice accepts; `MOCK_DAEMON_VERBOSE=1` logs the calls). `WORKMESH_SNAPSHOT_SHEET=update-running`
 (or `update-finished`, `update-failed`, `update-cant`, `update-app-failed`)
 draws the update window in that state with fixture output instead (no daemon
 read; build the app at 0.12.0 so `update-finished` shows the relaunch offer). It hosts the menu in an
@@ -218,7 +244,7 @@ ImageRenderer placeholders); it adds no menu bar item and posts nothing.
 
 ```bash
 export XDG_CONFIG_HOME=/tmp/wm/config XDG_STATE_HOME=/tmp/wm/state
-node scripts/mock-daemon.mjs --port 45190 --scenario team &   # or coord, delegate, empty, unpaired, halted, noteam, legacy, update, update-fail, update-git, update-menubar
+node scripts/mock-daemon.mjs --port 45190 --scenario team &   # or coord, delegate, newmachine, empty, unpaired, halted, noteam, legacy, update, update-fail, update-git, update-menubar
 OUT=/tmp/wm/dist BUNDLE_ID=org.npclabs.workmesh.menubar.dev ./scripts/make-app.sh 0.5.0
 WORKMESH_SNAPSHOT=/tmp/wm/team.png WORKMESH_SNAPSHOT_EXPAND=An \
   /tmp/wm/dist/Workmesh.app/Contents/MacOS/Workmesh
@@ -261,7 +287,7 @@ Sources/WorkmeshMenuBar/
   SessionRow.swift   # the shared agent row, the local session row, the action menu
   TeamViews.swift    # avatar, presence dot, person row, teammate session row
   AgentMark.swift    # Anthropic/OpenAI marks as SwiftUI shapes (tiny SVG path parser)
-  Notifier.swift     # "needs you" notifications, one per wait across both sources
+  Notifier.swift     # "needs you" notifications, one per wait across both sources; one per new machine on the account
   Updater.swift      # runs `workmesh update`; downloads, checks, swaps and relaunches the app
   UpdateWindow.swift # the "Updating Workmesh" panel: output, result, relaunch offer
   SnapshotMode.swift # WORKMESH_SNAPSHOT: render the menu (or the update window) to a PNG and exit
@@ -276,10 +302,11 @@ state per session, `background`, `stateSince`, the session `name` and `cwd`,
 `subagents`/`foldedInto` for fan-out, `pausedUntil`, and the team view
 (`people`, `needsMe`, `sessions`, connection and sharing level). Its actions are
 daemon calls (`POST /pause {for}`, `/resume`, `/sessions/dismiss`, `/config`,
-`/coord/op` for handoffs and approvals) or
+`/coord/op` for handoffs and approvals, `/new-devices/dismiss`) or
 local ones (copy, reveal in Finder, open the board, run the `run` argv the
 daemon gave for an update). The one thing it decides itself is whether the
-release's menu bar app is newer than the app it is, which only it knows. Grouping is a direct read
+release's menu bar app is newer than the app it is, which only it knows. It also keeps one short list of
+its own: the new machines it already posted a notification for. Grouping is a direct read
 of `state` and `background`; showing a wait once when both `/state` and
 `needsMe` list it (the hub key ends with `:` + the local key), ordering and time
 formatting are presentation. Team ages use the hub's `serverNow`.

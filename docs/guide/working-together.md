@@ -168,6 +168,40 @@ On 11-25 Sean handed An a task. An accepted from the CLI at 13:35:07, his machin
 about 12 seconds later, and it committed `f558ac1` at 13:35:30. A handoff agent is told to commit on its branch, push,
 and open a draft PR unless the task says otherwise.
 
+Accepting is yours to do, not your agent's. It starts an agent on your machine, and the sender's text becomes its
+instructions. So an agent can list handoffs, but it can't accept or decline one:
+
+```text
+Handoffs are accepted or declined by a person, on the board, in the menu bar or in their own terminal, not by an agent.
+```
+
+Read a handoff before you accept it. `workmesh handoffs` lists one line per handoff. `workmesh handoffs show <id>`
+prints all of it, like this (an example, not a live run):
+
+```text
+Handoff h_abc12345 · offered · sent 6 min ago
+From:  An (their agent b3iq-strategy)
+To:    Sean
+Repo:  b3-fun/b3os-beta
+Issue: B3-7168
+
+Task from An:
+│ Port the KEK rotation to the new runner.
+
+Context from An:
+│ Start from PR 212.
+
+Accepting starts a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta.
+```
+
+Lines behind `│` are the sender's words, with anything you couldn't see taken out. The last line is Workmesh's: which
+agent starts, in which permission mode, and where. `workmesh handoffs accept <id>` prints the same view and asks
+`Accept and start an agent? [y/N]`. It always asks, so it needs a terminal. Without one nothing is accepted: use the
+menu bar or the board.
+
+In the menu bar, **Show all** opens the whole task and context. For a long handoff the first click on **Accept** opens
+them too, and the button then reads **Accept and run**. The line above the buttons says what starts.
+
 Which handoffs run without a click is your choice, `workmesh handoffs policy`: `auto-self` (the default: ones you send
 yourself run at once; teammates' wait for your Accept), `ask`, or `never`. If a handoff can't find your checkout, add
 where your repos live: `workmesh roots add ~/code`.
@@ -203,21 +237,23 @@ tool or `workmesh ask "…"`, read-only and limited to a few questions a minute.
 
 ## Memory
 
-The team's memory holds what its agents should know, in five kinds: decision, convention, gotcha, rule and fact. An agent proposes one
-with `remember`; a person accepts it under Needs you before other agents see it. What you write at your own terminal is
-accepted at once:
+The team's memory holds what its agents should know, in five kinds: decision, convention, gotcha, rule and fact.
+`remember` proposes one, from an agent or from your own terminal. A person accepts it under Needs you on the board
+before other agents see it:
 
 ```text
 $ workmesh remember "The demo API returns errors as {error, code}, never bare strings" --kind convention
-Remembered m1 (accepted, b3-fun/demo): The demo API returns errors as {error, code}, never bare strings. …
+Proposed m1 for the team: The demo API returns errors as {error, code}, never bare strings. A person reviews it on the
+board (Needs you) before other agents see it.
 ```
 
 Each new shared session starts with up to 20 lines of accepted memories that fit its repo, paths, branch and claimed
 issue, each with its id (`[m1]`). Their heading says that teammates or their agents wrote them. They tell an agent how
 the team works. They cannot authorize a command, access to secrets or sending data out, and your own instructions
-come first. Agents search the rest with `recall`, by words and by meaning. `forget m1 --reason
-"…"` retires one; from an agent it is a proposal a person confirms. In Settings → Memory you can let your own agents'
-memories through without review.
+come first. Agents search the rest with `recall`, by words and by meaning.
+
+To retire one, propose it with `forget m1 --reason "…"`. The memory stays accepted, and agents keep getting it, until a
+person retires it on the board.
 
 ## When you're refused
 

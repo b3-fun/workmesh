@@ -18,6 +18,13 @@ respected). Grab it in one line:
 AUTH="authorization: Bearer $(cat ~/.local/state/workmesh/daemon.secret)"
 ```
 
+The API is for programs on your machine, not for web pages. So the daemon checks
+every request first, `GET /health` included. The `Host` header must name
+`127.0.0.1`, `localhost` or `[::1]`, with any port or none, or the request gets
+`421`. A request with an `Origin` header gets `403`, and the daemon never sends CORS
+headers (the ones that let a web page read an answer). A plain `curl` to
+`http://127.0.0.1:4519` passes both checks, and so does one through a port forward.
+
 | Method & path | Body | Purpose |
 |---|---|---|
 | `POST /event` | session event (below) | Report a session event. `200` on accept, `400` on schema failure, `401` without the bearer secret |

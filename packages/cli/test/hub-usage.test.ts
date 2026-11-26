@@ -394,7 +394,7 @@ describe("the forwarder sends usage for every session (SPEC §45)", () => {
     await b.fwd.stop();
   });
 
-  it("a state file from before 0.12.2 (no readers saved) reads each transcript once from its start", async () => {
+  it("a state file from before 0.12.3 (no readers saved) reads each transcript once from its start", async () => {
     fs.rmSync(statePath, { force: true });
     const clock = { now: NOW };
     const main = path.join(projects, "u3.jsonl");

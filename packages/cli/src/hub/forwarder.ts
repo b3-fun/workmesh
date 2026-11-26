@@ -2290,7 +2290,7 @@ export class HubForwarder {
         if (p.bg) t.bg = p.bg;
         if (p.usage) t.usage = p.usage;
         if (typeof p.transcript === "string" && path.isAbsolute(p.transcript)) t.transcript = p.transcript;
-        // SPEC §45: each reader carries on from its saved offset and totals (a state from before 0.12.2 has none:
+        // SPEC §45: each reader carries on from its saved offset and totals (a state from before 0.12.3 has none:
         // those transcripts are read once from the start).
         if (Array.isArray(p.usageReaders)) {
           for (const u of p.usageReaders.slice(0, MAX_WORKFLOW_TRANSCRIPTS)) {

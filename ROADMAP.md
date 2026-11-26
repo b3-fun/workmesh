@@ -32,7 +32,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | v3 Memory | The team's shared knowledge base: decisions, conventions, gotchas, rules and facts that agents propose and people accept; search by words and meaning; the relevant ones at every session's start; a Memory tab; proposals from finished sessions | **done** (11-25): wire #32 (SPEC §35–36), relay #35 in 0.12.0 (npm), hub and board workmesh-cloud #28 (live) |
 | Keeping current | `workmesh update` (install the newest release the way it was installed, refresh hooks, MCP and the daemon, roll back on failed checks), update notices from the hub, opt-in auto-update, a once-per-session note to sessions on older tools, "Update available" in the menu bar, versions on the board | **done** (11-25): wire #33 (SPEC §40), relay #37 (SPEC §41) and menu bar #36 in 0.12.0 (npm, GitHub release v0.12.0), hub and board workmesh-cloud #25–#27 (live) |
 | Codex parity | Everything a Claude Code session gets on the team hub, for Codex, proven live: board session and mirror, MCP tools, lease and hold refusals, wake, gates, handoffs run with `codex exec`, a truthful `doctor` | **done** (11-25): relay #38 (SPEC §42) in 0.12.0 (npm) |
-| Usage and cost | Tokens and cost per person, day, model and harness; the sessions that cost most with their agents rolled in; the hub's own AI spend (summaries, Ask) beside the agents'; Ask answers "what did An's agents spend this week?" | **done** on the board (11-25): workmesh-cloud #43. Full token usage (B3-7227): every session's own tokens by model and kind (SPEC §45, #51), counted by relay 0.12.2 for Claude Code main threads, subagents, workflows and Codex threads; the hub prices them as an API-equivalent cost |
+| Usage and cost | Tokens and cost per person, day, model and harness; the sessions that cost most with their agents rolled in; the hub's own AI spend (summaries, Ask) beside the agents'; Ask answers "what did An's agents spend this week?" | **done** on the board (11-25): workmesh-cloud #43. Full token usage (B3-7227): every session's own tokens by model and kind (SPEC §45, #51), counted by relay 0.12.3 for Claude Code main threads, subagents, workflows and Codex threads; the hub prices them as an API-equivalent cost |
 | Private testing | The B3 team (Sean, An, Mitch, David, Gio) on B3's hub; teammate guide in `docs/guide/`, generated CLI and MCP references, maintainer runbook in workmesh-cloud `docs/OPERATIONS.md`; menu bar app unsigned, handed to the team from GitHub releases | **in progress** (11-25) |
 | Launch | Public docs, self-host guide, B3OS-hosted hub for other teams | later: not before Sean says (11-25) |
 
@@ -386,7 +386,7 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
   none for a Claude Code main thread, and no cost. So an agent's cost is either what the agent reported or the hub's
   estimate from output tokens at list price, always shown as a floor (≥) because the input an agent reads isn't sent.
   The hub's own AI spend is what OpenRouter billed.
-- **Full token usage (B3-7227, relay 0.12.2):** every session sends its own running totals by model and kind (input,
+- **Full token usage (B3-7227, relay 0.12.3):** every session sends its own running totals by model and kind (input,
   cache reads, cache writes with the one-hour part, output, reasoning) and when its latest call was made (SPEC §45):
   Claude Code main threads, subagents and workflow agents from their transcripts (each API message once), Codex
   threads from their rollouts' cumulative counters split by model. Read incrementally, the readers' offsets and totals
@@ -396,6 +396,11 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
   sent).
 
 ## Decision log
+
+- 11-25 0.12.3: every session's own token usage by model and kind (input, cache reads and writes, output), Claude Code
+  main threads included, read incrementally from its transcript or rollout and saved with the forwarder's state, so
+  the hub can price an API-equivalent cost instead of an output-only floor (SPEC §45, #51, #52; B3-7227). Released
+  apart from 0.12.2, which went out from its release commit first.
 
 - 11-25 Usage and cost: never present an estimate as a bill. An agent's cost is either what it reported or output
   tokens at list price marked as a floor; the hub's own AI is shown as what OpenRouter billed; the board says which is

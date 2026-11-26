@@ -425,8 +425,8 @@ const handoffs = program
   .action(wrap((action: string | undefined, id: string | undefined, opts: { note?: string; json?: boolean }) => runHandoffs(action, id, opts)));
 handoffs
   .command("policy")
-  .description("Which handoffs this machine takes without a click: auto-self (default), ask, never")
-  .argument("[policy]", "auto-self | ask | never")
+  .description("Which handoffs this machine takes without a click: ask (the default: none), auto-self (your own), never")
+  .argument("[policy]", "ask | auto-self | never")
   .action(wrap(runHandoffPolicy));
 program
   .command("roots")

@@ -125,8 +125,10 @@ export const configSchema = z.object({
   handoffs: z
     .object({
       /**
-       * `auto-self` (default): a handoff you sent yourself runs on one of your machines at once; others' wait for
-       * your Accept. `ask`: every handoff waits for your Accept. `never`: this machine runs no handoffs.
+       * `ask` (default): every handoff waits for your Accept, your own too. `auto-self`: a handoff you sent yourself
+       * starts on one of your machines at once, with no click; others' wait for your Accept. It trusts every machine
+       * and token of yours: each of them, and any agent running there, can start an agent here. `never`: this machine
+       * runs no handoffs.
        */
       accept: z.enum(["ask", "auto-self", "never"]).optional().catch(undefined),
       /** The agent CLI that runs handoffs (default: claude when found, else codex). */
@@ -320,7 +322,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
   const h = config.handoffs;
   return {
     wake: config.wake ?? true,
-    accept: h?.accept ?? "auto-self",
+    accept: h?.accept ?? "ask",
     agent: h?.agent,
     roots: h?.roots ?? [],
     worktree: h?.worktree ?? true,

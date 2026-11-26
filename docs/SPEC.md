@@ -954,10 +954,12 @@ command run; a waiter that can't reach the daemon ends.
   - The list keeps one line per handoff, with 160 characters of the task. A line ends with `[more: workmesh handoffs
     show <id>]` when the handoff has a longer task or a context.
 
-  The policy `handoffs.accept` in config: `auto-self` (absent = this): a handoff the person sent
-  themselves is accepted by a machine of theirs at once (the sending machine waits 20 s so another of their machines
-  may take it first), anyone else's waits for the person; `ask`: every handoff waits; `never`: this machine runs
-  none. Accepted for this device (`device`), or accepted on the board with no device, the runner `start`s it (the
+  The policy `handoffs.accept` in config: `ask` (absent = this, since B3-7235): every handoff waits for the person,
+  their own too. `auto-self`: a handoff the person sent themselves is accepted by a machine of theirs at once (the
+  sending machine waits 20 s so another of their machines may take it first), anyone else's waits for the person.
+  It trusts every machine and token of the person: each of them, and any agent running there, can start an agent on
+  this machine with no click. `never`: this machine runs none.
+  Accepted for this device (`device`), or accepted on the board with no device, the runner `start`s it (the
   hub's first-start-wins decides between the person's machines) and runs it: it finds a main checkout of `repo` (the
   shared repos this machine's sessions worked in, remembered in `checkouts.json`, and repos up to two levels under
   `handoffs.roots`), makes `git worktree add -b workmesh/handoff-<id> <checkout>-handoff-<id> <origin's default

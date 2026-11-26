@@ -143,9 +143,10 @@ menu bar or the board.
 In the menu bar, **Show all** opens the whole task and context. For a long handoff the first click on **Accept** opens
 them too, and the button then reads **Accept and run**. The line above the buttons says what starts.
 
-Which handoffs run without a click is your choice, `workmesh handoffs policy`: `auto-self` (the default: ones you send
-yourself run at once; teammates' wait for your Accept), `ask`, or `never`. If a handoff can't find your checkout, add
-where your repos live: `workmesh roots add ~/code`.
+By default every handoff waits for your Accept, your own too. That is the `ask` policy. `workmesh handoffs policy
+auto-self` lets handoffs you send yourself start with no click. It trusts every machine and token of yours: each of
+them, and any agent running there, can then start an agent on this machine. `never` runs none here. If a handoff can't
+find your checkout, add where your repos live: `workmesh roots add ~/code`.
 
 ## Approval gates
 

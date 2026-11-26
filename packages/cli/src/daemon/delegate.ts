@@ -46,7 +46,7 @@ export type HandoffAcceptPolicy = "ask" | "auto-self" | "never";
 export interface DelegateSettings {
   /** Wake idle sessions for messages (default true). */
   wake: boolean;
-  /** Who may hand this machine work without a click (default `auto-self`). */
+  /** Who may hand this machine work without a click (default `ask`: nobody). */
   accept: HandoffAcceptPolicy;
   /** The person's own `custom` gate patterns. */
   customGates: readonly string[];
@@ -129,6 +129,14 @@ export interface DelegateSummary {
 }
 
 const lower = (s: string | undefined): string | undefined => s?.toLowerCase();
+
+/**
+ * Whether a handoff is from this device's own person. Today that is a compare of the names the hub gives. It is the
+ * one place that decides it, so the compare can change without touching the policy that uses it.
+ */
+export function fromMe(h: Pick<HubHandoffAccepted, "from">, me: string | undefined): boolean {
+  return me !== undefined && h.from.person.toLowerCase() === me.toLowerCase();
+}
 
 export class Delegate {
   private readonly deps: DelegateDeps;
@@ -453,8 +461,7 @@ export class Delegate {
 
   private maybeAutoAccept(coord: CoordClient, h: HubHandoffAccepted, policy: HandoffAcceptPolicy, sentHere: boolean): void {
     if (policy !== "auto-self" || !this.deps.runner) return;
-    const me = lower(this.me(coord));
-    if (!me || h.from.person.toLowerCase() !== me) return;
+    if (!fromMe(h, this.me(coord))) return;
     if (this.handoffCalls.has(h.id) || this.deps.runner.cannotRun(h)) return;
     if (!this.deps.runner.hasRoom()) return;
     if (sentHere) {

@@ -117,7 +117,7 @@ Every line should start with ✓. Trimmed, from a test machine paired as An:
   ✓ hub sharing        conversation — prompts, agent text, tool descriptions and turn times from shared repos, redacted on this machine
   ✓ hub forward        online: the hub heard from this machine 1s ago; no agents running in a shared repo right now (you show as online, no agents)
   ✓ coordination       on (leases, holds, messages)
-  ✓ delegation         on: handoffs auto-self; wake on
+  ✓ delegation         on: handoffs ask; wake on
   ✓ claude code hooks  /Users/an/.claude/settings.json
   ✓ claude code wake   asyncRewake Stop hook installed (idle shared sessions wake for messages)
   ✓ claude code mcp    workmesh in /Users/an/.claude.json (user scope)

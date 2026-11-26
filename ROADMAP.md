@@ -397,6 +397,10 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
 
 ## Decision log
 
+- 11-26 Handoffs: the default policy is `ask`, so every handoff waits for its person, their own too. Under the old
+  default, `auto-self`, a self handoff let one agent start another with no person looking. `auto-self` stays as a
+  choice a person makes (B3-7235).
+
 - 11-25 0.12.3: every session's own token usage by model and kind (input, cache reads and writes, output), Claude Code
   main threads included, read incrementally from its transcript or rollout and saved with the forwarder's state, so
   the hub can price an API-equivalent cost instead of an output-only floor (SPEC §45, #51, #52; B3-7227). Released

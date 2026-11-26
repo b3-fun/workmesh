@@ -197,7 +197,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   v2 calls (a `404` there turns off only v2, for 10 min); the daemon writes its own notices into the inbox (`wm_` ids,
   never acked). `daemon/delegate.ts`: approval gates in `PreToolUse` (matcher `daemon/gates.ts`, table-tested; asks in
   the background; approved runs its command once, denied refuses, a failed ask lets it run), handoff policy
-  (`handoffs.accept`, default `auto-self`), sender notices, and wake waiters (`POST /wake/wait`, long-poll ≤ 55 s).
+  (`handoffs.accept`, default `ask` since B3-7235), sender notices, and wake waiters (`POST /wake/wait`, long-poll ≤ 55 s).
   `daemon/handoff-runner.ts`: checkout index (`checkouts.json` + `handoffs.roots`), worktree, detached `claude -p
   --session-id` / `codex exec` wrapped in `sh` (exit code file), done/fail, `handoffs/running.json`. Claude Code wake is
   the `wake-wait claude-code` asyncRewake Stop hook (exit 2 + stderr), Codex is `codex queue` (`daemon/codex-wake.ts`).

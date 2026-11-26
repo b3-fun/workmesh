@@ -36,7 +36,7 @@ Written by `workmesh hub connect` (or `init`). Don't copy this section between m
 | Key | Default | What it is |
 |---|---|---|
 | `handoffs` | absent | Handoff settings for this machine. Absent means the defaults below. |
-| `handoffs.accept` | `auto-self` | `auto-self` runs handoffs you sent yourself at once and waits for your Accept on teammates'; `ask` waits on all; `never` runs none here (`workmesh handoffs policy`). |
+| `handoffs.accept` | `ask` | `ask` waits for your Accept on every handoff, your own too. `auto-self` starts handoffs you sent yourself with no click and waits on teammates'. It trusts every machine and token of yours: each of them, and any agent running there, can start an agent on this machine. `never` runs none here (`workmesh handoffs policy`). |
 | `handoffs.agent` | `claude` when found, else `codex` | The agent CLI that runs a handoff. |
 | `handoffs.roots` | `[]` | Folders whose git repos count as checkouts for handoffs (`workmesh roots add <dir>`). |
 | `handoffs.worktree` | `true` | Run each handoff in a new git worktree on its own branch. |

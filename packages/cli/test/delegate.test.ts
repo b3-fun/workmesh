@@ -7,6 +7,7 @@ import { Delegate, SELF_HANDOFF_SENDER_DELAY_MS, decisionText, wakeText } from "
 import type { DelegateSettings, HandoffRunnerLike } from "../src/daemon/delegate";
 import type { HandoffPlan } from "../src/daemon/handoff-text";
 import { CoordHooks, gateNote, guidance, knowledge } from "../src/daemon/coord-hooks";
+import { delegateSettings } from "../src/lib/config";
 
 /** v2 Delegate, relay side (docs/SPEC.md §31): gates, approvals, handoff policy and wake, by fixture. */
 
@@ -67,7 +68,7 @@ function harness(opts: { replies?: Reply[]; settings?: Partial<DelegateSettings>
     getSession: (k) => sessions.get(k),
     isShared: () => opts.shared ?? true,
     repoOf: (dir) => (dir.startsWith(ROOT) ? "b3-fun/b3os-beta" : undefined),
-    settings: () => ({ wake: true, accept: "auto-self", customGates: [], ...opts.settings }),
+    settings: () => ({ ...delegateSettings({}), ...opts.settings }),
     runner: opts.runner,
     now: () => now,
     log: (m) => logs.push(m),
@@ -389,18 +390,33 @@ const handoff = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("handoffs (SPEC §31)", () => {
+  it("the default is ask: a handoff the person sent themselves waits for them, like anyone else's", async () => {
+    expect(delegateSettings({}).accept).toBe("ask");
+    const runner = new FakeRunner();
+    const x = harness({ runner });
+    // From the person's own other machine, and from an agent session on this one.
+    x.sync({ handoffs: [handoff(), handoff({ id: "h_2", from: { person: "Sean", sessionKey: ME } })] as unknown as Handoffs });
+    x.tick(SELF_HANDOFF_SENDER_DELAY_MS + 1);
+    x.sync({ handoffs: [handoff(), handoff({ id: "h_2", from: { person: "Sean", sessionKey: ME } })] as unknown as Handoffs });
+    await flush();
+    expect(x.calls).toEqual([]);
+    expect(runner.ran).toEqual([]);
+    // The person sees both as waiting for their Accept.
+    expect(x.d.summary(() => undefined)!.handoffs.map((h) => [h.id, h.status])).toEqual([["h_1", "offered"], ["h_2", "offered"]]);
+  });
+
   it("auto-self: a handoff the person sent from another machine is accepted here and started", async () => {
     const runner = new FakeRunner();
-    const x = harness({ runner, replies: [{ status: 200, body: { ok: true, handoff: handoff({ status: "accepted", device: DEV }) } }] });
+    const x = harness({ runner, settings: { accept: "auto-self" }, replies: [{ status: 200, body: { ok: true, handoff: handoff({ status: "accepted", device: DEV }) } }] });
     x.sync({ handoffs: [handoff()] as unknown as Handoffs });
     await flush();
     expect(x.calls[0]).toEqual({ url: "https://hub.test/relay/handoffs", body: { action: "accept", id: "h_1" } });
     expect(runner.ran).toEqual(["h_1"]);
   });
 
-  it("the sending machine gives the person's other machines 20 s first", async () => {
+  it("auto-self: the sending machine gives the person's other machines 20 s first", async () => {
     const runner = new FakeRunner();
-    const x = harness({ runner, replies: [{ status: 200, body: { ok: true, handoff: handoff({ status: "accepted", device: DEV }) } }] });
+    const x = harness({ runner, settings: { accept: "auto-self" }, replies: [{ status: 200, body: { ok: true, handoff: handoff({ status: "accepted", device: DEV }) } }] });
     const fromHere = handoff({ from: { person: "Sean", sessionKey: ME } }) as unknown as Handoffs[number];
     x.sync({ handoffs: [fromHere] });
     await flush();

@@ -379,6 +379,10 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
 
 ## Decision log
 
+- 11-25 0.12.2: the relay holds back subagents nothing confirms ran (ghost agents from Workflow cache replays; the
+  board drops old ones too) (#48); the menu bar's self-update keeps one rollback copy so a second update can't fail,
+  and the app is sealed ad hoc so a browser-downloaded copy isn't "damaged" on macOS 27 (#46).
+
 - 11-25 0.12.1 (fixes from the docs pass): hooks, MCP, Codex notify and the service run Node by a stable path
   (`/opt/homebrew/bin/node`, not the Cellar's versioned one), so `brew upgrade node` no longer breaks them, and
   `doctor` flags a versioned or missing Node (#44); the `agentblip` bin alias is gone, so the install works over an old

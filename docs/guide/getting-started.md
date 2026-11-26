@@ -1,8 +1,8 @@
 # Getting started
 
 One command sets up a machine: it installs the agent hooks and MCP tools, runs the daemon, and pairs the machine with
-B3's hub. This page covers what it changes, how to undo it, the macOS menu bar app, and reading your first
-`workmesh doctor`.
+B3's hub. This page covers what it changes, how to undo it, the macOS menu bar app, the notice when a machine joins
+your account, and reading your first `workmesh doctor`.
 
 ## Before you start
 
@@ -114,6 +114,30 @@ General → Login Items.
 
 Keep the app in `~/Applications` or `/Applications`, not in Downloads: it replaces itself when a new release is out,
 and it can't from a quarantined or read-only location.
+
+## When a machine joins your account
+
+Each of your machines tells you when another machine is added to your account. A pairing you didn't make then
+doesn't go unnoticed. There is nothing to set up.
+
+Your other machines usually hear of it within a minute. You see it in four places:
+
+- a macOS notification, and a row at the top of the menu bar app's menu;
+- the first line of `workmesh status`;
+- a `!` line named `new machine` in `workmesh doctor`;
+- the daemon's log.
+
+```text
+A new machine joined your Workmesh account: ans-desktop, 2 minutes ago, from Lisbon, Portugal (Example Telecom). If this wasn't you, remove it on the board: https://workmesh.b3os.org
+```
+
+If it was you, click **Dismiss** on the row in the menu bar. Without that, the notice goes away after 24 hours.
+
+If it wasn't you, open the board and revoke the machine (Your machines → Revoke). That ends its open sessions, and
+the hub stops accepting its token.
+
+The notice is for you only. Your agents never get it, in their context or in their inbox. It needs a hub that
+reports new machines: with an older hub you see nothing.
 
 ## Your first doctor
 

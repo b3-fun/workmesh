@@ -59,6 +59,41 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         if teamReady { primedTeam = true }
     }
 
+    /// Called with every /team read: one notification per new machine on the
+    /// person's account. It is about the account, not an agent, so the "needs
+    /// me" switch doesn't turn it off. The ids already posted are kept across
+    /// launches, so a restart of the app doesn't post them again.
+    func newDevices(_ notices: [NewDeviceNotice]) {
+        guard !notices.isEmpty else { return }
+        let defaults = UserDefaults.standard
+        var posted = defaults.stringArray(forKey: Self.postedDevicesKey) ?? []
+        let fresh = notices.filter { !posted.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        for n in fresh {
+            post(n)
+            posted.append(n.id)
+        }
+        defaults.set(Array(posted.suffix(Self.postedDevicesMax)), forKey: Self.postedDevicesKey)
+    }
+
+    private static let postedDevicesKey = "newDevicesNotified"
+    private static let postedDevicesMax = 200
+
+    private func post(_ n: NewDeviceNotice) {
+        guard let center else { return }
+        let id = "new-device-\(n.id)"
+        let body = "\(n.machine)\(n.place.map { ", from \($0)" } ?? ""). If this wasn't you, remove it on the board."
+        // Ask first: with "needs me" notifications off, the app may never have asked.
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "A new machine joined your Workmesh account"
+            content.body = body
+            content.sound = .default
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+        }
+    }
+
     private func post(_ n: NeedItem) {
         let content = UNMutableNotificationContent()
         content.title = n.title

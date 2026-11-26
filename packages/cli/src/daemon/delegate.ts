@@ -8,6 +8,7 @@ import type {
 } from "@workmesh/protocol";
 import { CoordClient, isLocalNotice } from "../hub/coord";
 import type { HubSyncInboxItem } from "../hub/coord";
+import { gateApprovers, gateOwner, samePerson } from "../lib/person";
 import { label, oneLine } from "../lib/untrusted";
 import { gateVerb, matchGates } from "./gates";
 import type { GateMatch } from "./gates";
@@ -139,14 +140,14 @@ export interface DelegateSummary {
   }>;
 }
 
-const lower = (s: string | undefined): string | undefined => s?.toLowerCase();
-
 /**
- * Whether a handoff is from this device's own person. Today that is a compare of the names the hub gives. It is the
- * one place that decides it, so the compare can change without touching the policy that uses it.
+ * Whether a handoff is from this device's own person. It is the one place that decides it, so the compare can change
+ * without touching the policy that uses it. The `auto-self` policy accepts on it with no click, so it takes the strict
+ * check (`CoordClient.surelyMe`, SPEC §49): once the hub sends this person's email, a sender without one is someone
+ * else. With an older hub, the name the hub gives decides.
  */
-export function fromMe(h: Pick<HubHandoffAccepted, "from">, me: string | undefined): boolean {
-  return me !== undefined && h.from.person.toLowerCase() === me.toLowerCase();
+export function fromMe(h: Pick<HubHandoffAccepted, "from">, coord: CoordClient): boolean {
+  return coord.surelyMe(h.from);
 }
 
 export class Delegate {
@@ -207,9 +208,8 @@ export class Delegate {
   myGates(coord: CoordClient): { actions: Set<HubGateAction>; approvers: string[] } | undefined {
     const st = coord.view().state;
     if (!st?.gates || coord.view().available !== true || !coord.fresh()) return undefined;
-    const me = lower(this.me(coord));
-    if (!me) return undefined;
-    const policy = st.gates.find((g) => g.owner.toLowerCase() === me);
+    if (!this.me(coord)) return undefined;
+    const policy = st.gates.find((g) => coord.isMe(gateOwner(g)));
     if (!policy || policy.actions.length === 0) return undefined;
     return { actions: new Set(policy.actions), approvers: policy.approvers?.length ? policy.approvers : [policy.owner] };
   }
@@ -402,7 +402,7 @@ export class Delegate {
     this.toldApprovals.add(a.id);
     if (this.toldApprovals.size > 2000) this.toldApprovals.clear();
     const command = this.held.get(`${local}|${gate}|${a.detail}`)?.command ?? this.commandFor(a.id);
-    coord.notify(local, decisionText(a, gate, command, coord.me()), { wake: true, from: a.by ? label(a.by) : "Workmesh" });
+    coord.notify(local, decisionText(a, gate, command, coord.me(), coord.self().email), { wake: true, from: a.by ? label(a.by) : "Workmesh" });
     this.check();
   }
 
@@ -428,7 +428,6 @@ export class Delegate {
   }
 
   private onHandoffs(coord: CoordClient, list: readonly HubHandoffAccepted[]): void {
-    const me = lower(this.me(coord));
     const settings = this.deps.settings();
     const seed = !this.seededHandoffs;
     this.seededHandoffs = true;
@@ -438,7 +437,7 @@ export class Delegate {
       const fromLocal = h.from.sessionKey ? coord.localKey(h.from.sessionKey) : undefined;
       // A handoff a session here sent: tell it how it went (not for what was already so when the daemon started).
       if (fromLocal && !seed && prev !== undefined && prev !== h.status) this.tellSender(coord, h, CoordClient.family(fromLocal));
-      if (!me || h.to.person.toLowerCase() !== me) continue;
+      if (!coord.isMe(h.to)) continue;
       if (h.status === "offered") this.maybeAutoAccept(coord, h, settings.accept, fromLocal !== undefined);
       else if (h.status === "accepted") this.maybeStart(coord, h, settings.accept);
     }
@@ -483,7 +482,7 @@ export class Delegate {
 
   private maybeAutoAccept(coord: CoordClient, h: HubHandoffAccepted, policy: HandoffAcceptPolicy, sentHere: boolean): void {
     if (policy !== "auto-self" || !this.deps.runner) return;
-    if (!fromMe(h, this.me(coord))) return;
+    if (!fromMe(h, coord)) return;
     if (this.handoffCalls.has(h.id) || this.deps.runner.cannotRun(h)) return;
     if (!this.deps.runner.hasRoom()) return;
     if (sentHere) {
@@ -567,8 +566,7 @@ export class Delegate {
     if (!coord || !runner || h.status !== "accepted") return undefined;
     const settings = this.deps.settings();
     if (settings.accept === "never" || settings.runAccepted === "auto") return undefined;
-    const me = lower(this.me(coord));
-    if (!me || h.to.person.toLowerCase() !== me) return undefined;
+    if (!coord.isMe(h.to)) return undefined;
     if (h.device && h.device !== coord.deviceId) return undefined;
     if (runner.running().has(h.id)) return undefined;
     const entry = this.acceptedHere.get(h.id);
@@ -738,11 +736,10 @@ export class Delegate {
     const coord = this.deps.coord();
     if (!coord) return undefined;
     const st = coord.view().state;
-    const me = lower(this.me(coord));
     const running = this.deps.runner?.running() ?? new Set<string>();
     const handoffs: DelegateSummary["handoffs"] = [];
     for (const h of st?.handoffs ?? []) {
-      const offeredToMe = me !== undefined && h.to.person.toLowerCase() === me && h.status === "offered";
+      const offeredToMe = coord.isMe(h.to) && h.status === "offered";
       const here = running.has(h.id);
       const why = here ? undefined : this.runHereWhy(h);
       const waits = why !== undefined;
@@ -767,14 +764,13 @@ export class Delegate {
       });
     }
     const approvals: DelegateSummary["approvals"] = [];
-    const myGates = st?.gates?.find((g) => me !== undefined && g.owner.toLowerCase() === me);
+    const myGates = st?.gates?.find((g) => coord.isMe(gateOwner(g)));
     for (const a of st?.approvals ?? []) {
       if (a.status !== "pending") continue;
       const local = coord.localKey(a.sessionKey);
-      const owner = lower(a.owner);
-      const policy = a.owner ? st?.gates?.find((g) => g.owner.toLowerCase() === owner) : myGates;
-      const approvers = (policy?.approvers?.length ? policy.approvers : policy ? [policy.owner] : []).map((p) => p.toLowerCase());
-      const canDecide = me !== undefined && approvers.includes(me);
+      const owner = { person: a.owner, email: a.ownerEmail };
+      const policy = a.owner ? st?.gates?.find((g) => samePerson(gateOwner(g), owner)) : myGates;
+      const canDecide = policy !== undefined && gateApprovers(policy).some((p) => coord.isMe(p));
       if (local === undefined && !canDecide) continue;
       approvals.push({
         id: a.id,
@@ -827,10 +823,16 @@ function quoteCommand(command: string): string {
  * The notice a decision wakes its session with (SPEC §31): who decided, as whom, and the exact command it covers. An
  * approval from the person (or an approver they named) is their go-ahead for that command, once.
  */
-export function decisionText(a: HubApprovalAccepted, gate: HubGateAction, command: string | undefined, me: string | undefined): string {
+export function decisionText(
+  a: HubApprovalAccepted,
+  gate: HubGateAction,
+  command: string | undefined,
+  me: string | undefined,
+  myEmail?: string,
+): string {
   // Names, the detail and the note come from the hub: one line each, so the notice stays Workmesh's own sentence.
   const by = (a.by ? label(a.by) : "") || "Your teammate";
-  const mine = me !== undefined && a.by !== undefined && me.toLowerCase() === a.by.toLowerCase();
+  const mine = a.by !== undefined && samePerson({ person: me, email: myEmail }, { person: a.by, email: a.byEmail });
   const person = me === undefined ? undefined : label(me);
   const who = mine ? `Your person, ${by},` : person ? `${by}, whom your person ${person} named to answer their approvals,` : by;
   const detail = oneLine(a.detail, 500);

@@ -6,6 +6,7 @@ import type { SessionEvent } from "@workmesh/core";
 import { CoordClient, isLocalNotice } from "../hub/coord";
 import type { HubSyncEdit, HubSyncInboxItem } from "../hub/coord";
 import { shellCommands, shellWriteTargets } from "../hub/shell-writes";
+import { gateOwner, samePerson } from "../lib/person";
 import { QUOTE_MARK, label, messageBlock, oneLine } from "../lib/untrusted";
 import { TEAM_KNOWLEDGE_RULE, selectMemories } from "./memory";
 
@@ -185,23 +186,22 @@ export class CoordHooks {
         const isMine = (hk: string): boolean => CoordClient.family(hk) === coord.hubKey(base);
         const brief = memoryOn ? coord.brief(now) : undefined;
         if (brief) {
-          const me = coord.me()?.toLowerCase();
-          const claimed = me === undefined ? [] : st.claims.filter((c) => c.holder.person.toLowerCase() === me).map((c) => c.issue);
+          const claimed = st.claims.filter((c) => coord.isMe(c.holder)).map((c) => c.issue);
           const sel = selectMemories(brief, { ...this.where(event.cwd), issues: claimed });
           if (sel) {
             parts.push(sel.text);
             this.reportUsed(base, sel.ids);
           }
-          const c = claimsLine(st.claims, coord.me(), isMine);
+          const c = claimsLine(st.claims, coord.me(), isMine, coord.self().email);
           if (c) parts.push(c);
         } else {
           // A hub without memory, or its brief not fetched yet (a memory hub lists accepted memories as notes).
-          const k = knowledge(st.notes, st.claims, coord.me(), isMine);
+          const k = knowledge(st.notes, st.claims, coord.me(), isMine, coord.self().email);
           if (k) parts.push(k);
         }
         const me = coord.me();
-        const mine = me === undefined ? undefined : st.gates?.find((g) => g.owner.toLowerCase() === me.toLowerCase());
-        const g = mine && me ? gateNote(me, mine.actions, mine.approvers) : undefined;
+        const mine = st.gates?.find((g) => coord.isMe(gateOwner(g)));
+        const g = mine && me ? gateNote(me, mine.actions, mine.approvers, (p, i) => coord.isMe({ person: p, email: mine.approverEmails?.[i] })) : undefined;
         if (g) parts.push(g);
       }
     }
@@ -346,10 +346,9 @@ function until(expiresAt: number, hubNow: number): string {
 }
 
 function holderPhrase(lease: HubLeaseAccepted, coord: CoordClient): string {
-  const me = coord.me()?.toLowerCase();
   const session = lease.holder.sessionName ? label(lease.holder.sessionName) : "";
   const name = session ? ` ${session}` : "";
-  if (me !== undefined && lease.holder.person.toLowerCase() === me) return `your own other session${name}`;
+  if (coord.isMe(lease.holder)) return `your own other session${name}`;
   return `${label(lease.holder.person)}'s agent${name}`;
 }
 
@@ -369,7 +368,7 @@ function leaseRefusal(
   const why = reason ? `: ${reason}` : "";
   const covers = entries[0] === t.rel ? "" : ` The lease covers ${entries.slice(0, 3).map((e) => oneLine(e, LEASE_PATH_MAX)).join(", ")}.`;
   const more = others > 0 ? ` ${others} more lease${others === 1 ? "" : "s"} cover it too.` : "";
-  const ask = coord.me()?.toLowerCase() === lease.holder.person.toLowerCase()
+  const ask = coord.isMe(lease.holder)
     ? `Finish there first, or have that session \`unlease\` it.`
     : codex
       ? `Work on something else meanwhile, or ask ${person} to hand it over with the workmesh \`send\` tool (to: ${session || person}).`
@@ -413,7 +412,13 @@ export function guidance(project: string | undefined, delegate = false, memory =
  * The session-start note for a person who gated some actions (SPEC §31): what is held, who answers, and that an
  * approval, which reaches the session as a Workmesh wake, is the person's consent for that exact command, once.
  */
-export function gateNote(person: string, actions: readonly string[], approvers?: readonly string[]): string | undefined {
+export function gateNote(
+  person: string,
+  actions: readonly string[],
+  approvers?: readonly string[],
+  /** Whether an approver is the person themselves (by email when the hub sends emails, SPEC §49). Default: the same name. */
+  isMe: (approver: string, index: number) => boolean = (p) => p.toLowerCase() === person.toLowerCase(),
+): string | undefined {
   // Names are the hub's: one line each.
   const me = label(person);
   const phrase: Record<string, string> = {
@@ -427,7 +432,7 @@ export function gateNote(person: string, actions: readonly string[], approvers?:
   const verbs = actions.map((a) => phrase[a] ?? oneLine(a, 40));
   if (verbs.length === 0) return undefined;
   const list = verbs.length === 1 ? verbs[0]! : `${verbs.slice(0, -1).join(", ")} or ${verbs.at(-1)}`;
-  const others = (approvers ?? []).filter((p) => p.toLowerCase() !== person.toLowerCase()).map((p) => label(p));
+  const others = (approvers ?? []).filter((p, i) => !isMe(p, i)).map((p) => label(p));
   const who = others.length > 0 ? `${me} (or ${others.join(" or ")}, whom ${me} named)` : me;
   return (
     `Approval gates, set by your person ${me}: when this session tries to ${list}, Workmesh holds the command and ` +
@@ -447,16 +452,16 @@ export const KNOWLEDGE_HEADING = `Team rules and conventions (Workmesh notes, ne
 
 export function knowledge(
   notes: ReadonlyArray<{ by: { person: string }; text: string; tags?: string[]; ts: number }>,
-  claims: ReadonlyArray<{ issue: string; holder: { person: string; sessionKey: string; sessionName?: string }; note?: string }>,
+  claims: ReadonlyArray<{ issue: string; holder: { person: string; email?: string; sessionKey: string; sessionName?: string }; note?: string }>,
   me: string | undefined,
   isMine: (hubKey: string) => boolean,
+  myEmail?: string,
 ): string | undefined {
   const lines: string[] = [];
   const rules = notes
     .filter((n) => n.tags?.some((t) => KNOWLEDGE_TAGS.has(t.toLowerCase())))
     .sort((a, b) => b.ts - a.ts);
-  const owner = me?.toLowerCase();
-  const mine = owner === undefined ? [] : claims.filter((c) => c.holder.person.toLowerCase() === owner);
+  const mine = claims.filter((c) => samePerson({ person: me, email: myEmail }, c.holder));
   if (rules.length > 0) {
     lines.push(KNOWLEDGE_HEADING);
     const room = KNOWLEDGE_MAX_LINES - 1 - (mine.length > 0 ? Math.min(mine.length, 4) + 1 : 0);
@@ -466,19 +471,19 @@ export function knowledge(
     }
     if (rules.length > room) lines.push(`- …and ${rules.length - room} more: \`notes\` (tag rule or convention).`);
   }
-  const c = claimsLine(claims, me, isMine);
+  const c = claimsLine(claims, me, isMine, myEmail);
   if (c) lines.push(c);
   return lines.length > 0 ? lines.slice(0, KNOWLEDGE_MAX_LINES + 1).join("\n") : undefined;
 }
 
 /** "Your open claims: B3-7168 (this session) — relay side; B3-7000 (other)." for the person's claims, if any. */
 export function claimsLine(
-  claims: ReadonlyArray<{ issue: string; holder: { person: string; sessionKey: string; sessionName?: string }; note?: string }>,
+  claims: ReadonlyArray<{ issue: string; holder: { person: string; email?: string; sessionKey: string; sessionName?: string }; note?: string }>,
   me: string | undefined,
   isMine: (hubKey: string) => boolean,
+  myEmail?: string,
 ): string | undefined {
-  const owner = me?.toLowerCase();
-  const mine = owner === undefined ? [] : claims.filter((c) => c.holder.person.toLowerCase() === owner);
+  const mine = claims.filter((c) => samePerson({ person: me, email: myEmail }, c.holder));
   if (mine.length === 0) return undefined;
   // The session name and the note came back from the hub: one line each.
   const one = (c: (typeof mine)[number]): string => {

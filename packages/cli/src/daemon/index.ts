@@ -223,6 +223,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       token: hub.deviceToken,
       deviceId: hub.deviceId,
       person: hub.person?.name,
+      personEmail: hub.person?.email,
       active: () => fwd.hasLiveShared(),
       log,
       onSync: (next, previous) => delegate.onSync(next, previous),

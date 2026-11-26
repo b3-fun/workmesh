@@ -1,7 +1,14 @@
 import { z } from "zod";
-import { HUB_ISSUE_RE, HUB_REPO_RE } from "./fields.js";
+import {
+  HUB_ISSUE_RE,
+  HUB_PERSON_EMAIL_MAX,
+  HUB_PERSON_EMAIL_RE,
+  HUB_REPO_RE,
+  hubPersonEmailAcceptSchema,
+  hubPersonEmailSchema,
+} from "./fields.js";
 
-export { HUB_ISSUE_RE, HUB_REPO_RE };
+export { HUB_ISSUE_RE, HUB_PERSON_EMAIL_MAX, HUB_PERSON_EMAIL_RE, HUB_REPO_RE, hubPersonEmailAcceptSchema, hubPersonEmailSchema };
 
 /**
  * Workmesh relay ↔ hub wire protocol, v1 (docs/SPEC.md §3 and §8–10).
@@ -761,6 +768,8 @@ export const hubTeamNeedsMeSchema = z.object({
   repo: repoName.optional(),
   /** Whose agent it is (always the viewer today; asks addressed to the viewer later). */
   owner: teamName.optional(),
+  /** The owner's email (§48), as in `people[].email`. */
+  ownerEmail: hubPersonEmailSchema.optional(),
 });
 export type HubTeamNeedsMe = z.infer<typeof hubTeamNeedsMeSchema>;
 
@@ -768,6 +777,8 @@ export const hubTeamSessionSchema = z.object({
   key: hubKey.optional(),
   /** The owner's display name, as in `people[].name`. */
   owner: teamName,
+  /** The owner's email (§48), as in `people[].email`: two people can share a display name. */
+  ownerEmail: hubPersonEmailSchema.optional(),
   name: z.string().max(120),
   source: z.string().min(1).max(64),
   state: hubTeamSessionStateSchema,
@@ -849,6 +860,7 @@ export const hubTeamAcceptSchema = z.object({
       source: teamTextAccept(64),
       repo: teamTextAccept(200),
       owner: teamTextAccept(120),
+      ownerEmail: hubPersonEmailAcceptSchema,
     }),
     1000,
   ),
@@ -856,6 +868,7 @@ export const hubTeamAcceptSchema = z.object({
     z.object({
       key: teamTextAccept(300),
       owner: teamName,
+      ownerEmail: hubPersonEmailAcceptSchema,
       name: z.string().catch("").transform((t) => t.slice(0, 120)),
       source: z.string().min(1).max(64),
       state: hubTeamSessionStateSchema.catch("idle"),

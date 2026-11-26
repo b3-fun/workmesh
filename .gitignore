@@ -15,3 +15,7 @@ coverage/
 .build/
 .swiftpm/
 *.xcodeproj
+
+# Release signing keys stay out of git. scripts/sign-release.mjs refuses a key file inside the repo;
+# this covers one made with another tool.
+*.pem

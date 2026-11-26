@@ -16,6 +16,7 @@ import {
   readHubConfig,
   safeConfig,
   saveConfig,
+  updateWaitHours,
 } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
@@ -385,10 +386,12 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       return latest ? { version: latest, at: v?.fetchedAt } : undefined;
     },
     settings: () => autoUpdateSettings(loadConfigSafe()),
+    waitHours: () => updateWaitHours(loadConfigSafe()),
     // The registry npm is set up with here (a mirror in ~/.npmrc counts), read when the check runs (≤ every 6 h).
-    fetchNpm: async () => (await fetchRegistryInfo(await npmRegistry(managerBin("npm")))).latest,
+    fetchNpm: async () => fetchRegistryInfo(await npmRegistry(managerBin("npm"))),
     ...(process.platform === "darwin" ? { fetchMenubar: () => fetchMenubarRelease() } : {}),
-    startAuto: () => spawnDetachedUpdate([...runArgv, "--auto-run"], updateLogPath()),
+    // The version the check found old enough, by name: `latest` may have moved on to a newer one by the time it runs.
+    startAuto: (to) => spawnDetachedUpdate([...runArgv, "--auto-run", "--to", to], updateLogPath()),
     lastRun: () => readUpdateState().last,
     runArgv,
     file: updateCheckPath(),

@@ -33,6 +33,27 @@ workmesh update --auto off
 `workmesh doctor`, `workmesh status` and the menu bar say when a release is out. A git checkout or a project
 dependency isn't updated; `update` says what to run instead.
 
+### New releases wait a day
+
+A release that just came out is not offered right away. `doctor`, `status` and the menu bar offer it once it is 24
+hours old, and auto-update waits the same time. If a bad release ever goes out, that day is the time to pull it before
+machines take it on their own. Until then `status` says when it will be offered:
+
+```text
+0.12.4 is out: offered in 21h 0m (new releases wait 24 h)
+```
+
+Run by hand, `workmesh update` does not wait. It installs the newest release at once, and tells you when that release
+is younger than the waiting time.
+
+To change the wait, set `update.waitHours` in `~/.config/workmesh/config.json`. Setting it to `0` turns the wait off:
+
+```json
+{ "update": { "waitHours": 0 } }
+```
+
+A release that comes out during the wait starts a wait of its own.
+
 After an update, agent sessions that were already running keep the older MCP server. Each one is told once; run
 `/mcp reconnect workmesh` in Claude Code, or start a new thread in Codex.
 
@@ -54,6 +75,25 @@ open ~/Applications/Workmesh.app
 
 The app updates itself only where it can write: not from Downloads (macOS runs a quarantined app from a read-only
 copy there) or a disk image. It says so and changes nothing; move it to `~/Applications` and try again.
+
+### Signed releases
+
+The menu bar app has no Apple Developer ID, so macOS can't tell you who built it. Workmesh can check that itself,
+with releases that a maintainer signs. That check is not switched on yet: the maintainers have not made a key. Until
+they do, the app's download is checked against the hash GitHub lists for the release, as before.
+
+Once it is on, each release carries a list of its files with their SHA-256 hashes. A maintainer signs that list with
+a key that is kept off GitHub, and Workmesh ships with the matching public keys. The daemon then offers the app only
+from a release whose list a maintainer key signed. The app checks its download against the hash in that list.
+
+A release that fails the check offers no app, and your installed app keeps running. `workmesh doctor` and
+`workmesh status` say why:
+
+```text
+the menu bar app in release 0.12.4 is not offered: the release has no workmesh-release.json.sig, so no maintainer key vouches for its files
+```
+
+On a Mac, the `release signing` line of `workmesh doctor` says whether signing is on.
 
 ## Uninstall
 

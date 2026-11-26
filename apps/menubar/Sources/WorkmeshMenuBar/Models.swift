@@ -851,16 +851,21 @@ struct UpdateInfo: Decodable {
         }
     }
 
-    /// The release's menu bar zip, as the daemon read it from GitHub.
+    /// The release's menu bar zip, as the daemon read and checked it. The
+    /// daemon sends it only once it may be offered: old enough, and, when
+    /// release signing is on, named in a list a maintainer key signed.
     struct MenubarRelease: Decodable, Equatable {
         let version: String
         let url: URL
-        /// 64 lowercase hex: the release asset's digest.
+        /// 64 lowercase hex: the zip's SHA-256. From the release's signed
+        /// list when `signed`, else the digest GitHub lists for the asset.
         let sha256: String
         let size: Int?
         let releaseUrl: String?
+        /// A pinned maintainer key signed the list this hash came from.
+        let signed: Bool
 
-        private enum K: String, CodingKey { case version, url, sha256, size, releaseUrl }
+        private enum K: String, CodingKey { case version, url, sha256, size, releaseUrl, signed }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: K.self)
@@ -872,14 +877,16 @@ struct UpdateInfo: Decodable {
             sha256 = sha.lowercased()
             size = c.lenient(Int.self, .size)
             releaseUrl = c.text(.releaseUrl)
+            signed = c.lenient(Bool.self, .signed) ?? false
         }
 
-        init(version: String, url: URL, sha256: String, size: Int?, releaseUrl: String?) {
+        init(version: String, url: URL, sha256: String, size: Int?, releaseUrl: String?, signed: Bool = false) {
             self.version = version
             self.url = url
             self.sha256 = sha256
             self.size = size
             self.releaseUrl = releaseUrl
+            self.signed = signed
         }
     }
 

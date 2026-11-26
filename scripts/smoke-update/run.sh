@@ -73,7 +73,8 @@ ln -s "$node_bin" "$H/bin/node"
 ln -s "$npm_bin" "$H/bin/npm"
 printf 'registry=http://127.0.0.1:%s/\nprefix=%s/npm-global\ncache=%s/npm-cache\nupdate-notifier=false\nfund=false\naudit=false\n' "$REG_PORT" "$H" "$H" > "$H/.npmrc"
 # The daemon reads its port from config.json (launchd carries only the dirs): never the real daemon's 4519.
-printf '{"port": %s}\n' "$PORT" > "$H/.config/workmesh/config.json"
+# The waiting time for new releases is off: every release in this run is minutes old, and the run can't wait a day.
+printf '{"port": %s, "update": {"waitHours": 0}}\n' "$PORT" > "$H/.config/workmesh/config.json"
 
 run() {
   env -i HOME="$H" USER="$USER" PATH="$H/npm-global/bin:$H/bin:/usr/bin:/bin:/usr/sbin:/sbin" TMPDIR="${TMPDIR:-/tmp}" \

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -174,6 +175,7 @@ describe("handoff runner (SPEC §31)", () => {
     expect(args[args.indexOf("--session-id") + 1]).toBe(start.sessionKey.slice("claude-code:".length));
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("auto");
     expect(args[args.indexOf("--model") + 1]).toBe("haiku");
+    expect(args[args.indexOf("--name") + 1]).toBe("handoff B3-7168 from An");
     expect(args).toContain(fs.realpathSync(wt));
     expect(args).toContain(`WORKMESH_HANDOFF=${HANDOFF.id}`);
     runner.poll();
@@ -257,6 +259,79 @@ describe("handoff runner (SPEC §31)", () => {
     runner.poll();
     await until(() => hub.calls.length === 2);
     expect(hub.calls[1]!.body).toMatchObject({ action: "done", id: HANDOFF.id, note: "ok" });
+  });
+
+  it("the prompt goes in on standard input, from a 0600 file: the command line holds none of the task", async () => {
+    const checkout = fakeRepo(path.join(home, "code", "b3os-beta"), "git@github.com:b3-fun/b3os-beta.git");
+    const bin = path.join(home, "bin");
+    fs.mkdirSync(bin);
+    const argvFile = path.join(home, "argv.txt");
+    const stdinFile = path.join(home, "stdin.txt");
+    // Stand-ins that write down their arguments and what they read on standard input. The codex one answers the
+    // runner's `exec --help` question first.
+    fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvFile}"\ncat > "${stdinFile}"\necho '{"type":"result","result":"ok"}'\n`, { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "codex"),
+      `#!/bin/sh\nif [ "$2" = "--help" ]; then echo "  --approve-for-me"; exit 0; fi\nprintf '%s\\n' "$@" > "${argvFile}"\ncat > "${stdinFile}"\n`,
+      { mode: 0o755 },
+    );
+    const task = "Port the KEK rotation to the new runner.\nKeep last week's records readable.";
+    const context = "Start from PR 212.";
+    const h = { ...HANDOFF, issue: undefined, task, context };
+    for (const agent of ["claude", "codex"] as const) {
+      fs.rmSync(argvFile, { force: true });
+      fs.rmSync(stdinFile, { force: true });
+      fs.rmSync(path.join(home, "handoffs"), { recursive: true, force: true });
+      const hub = fakeHub([{ status: 200, body: { ok: true, handoff: { ...h, status: "started" } } }]);
+      const spawned: string[][] = [];
+      const runner = new HandoffRunner({
+        coord: () => hub.coord,
+        settings: () => settings({ roots: [path.join(home, "code")], agent }),
+        checkouts: new CheckoutIndex(path.join(home, "checkouts.json")),
+        dir: path.join(home, "handoffs"),
+        which: (b) => path.join(bin, b),
+        pathEnv: async () => process.env.PATH ?? "/usr/bin:/bin",
+        env: () => ({ HOME: home }),
+        spawnImpl: ((cmd: string, args: string[], opts: object) => {
+          spawned.push([cmd, ...args]);
+          return spawn(cmd, args, opts);
+        }) as never,
+        git: async (args) => {
+          if (args[0] === "symbolic-ref") return { ok: true, stdout: "origin/main\n", stderr: "" };
+          if (args[0] === "worktree") fs.mkdirSync(args[4]!, { recursive: true });
+          return { ok: true, stdout: "", stderr: "" };
+        },
+      });
+      runner.run(h);
+      await until(() => runner.list().length === 1);
+      const rec = runner.list()[0]!;
+      await until(() => fs.existsSync(rec.exitFile) && fs.readFileSync(rec.exitFile, "utf8").trim() !== "");
+      const wt = `${checkout}-handoff-abc12345`;
+      const prompt = handoffPrompt(h, { repo: h.repo, branch: "workmesh/handoff-abc12345", base: "origin/main", dir: wt }, agent);
+      expect(prompt).toContain(task);
+      // The agent read the whole prompt on standard input.
+      expect(fs.readFileSync(stdinFile, "utf8"), agent).toBe(prompt);
+      // It came from a file in the run's own directory that only this user can read.
+      const promptFile = path.join(path.dirname(rec.logFile), "prompt.txt");
+      expect(fs.readFileSync(promptFile, "utf8"), agent).toBe(prompt);
+      expect(fs.statSync(promptFile).mode & 0o777, agent).toBe(0o600);
+      expect(fs.statSync(path.dirname(promptFile)).mode & 0o777, agent).toBe(0o700);
+      // Nothing of the task, the context or the prompt is in the process's arguments, as started and as received.
+      const argv = fs.readFileSync(argvFile, "utf8").trimEnd().split("\n");
+      for (const args of [spawned.flat(), argv]) {
+        const line = args.join("\n");
+        for (const text of ["KEK", "rotation", "records", "PR 212", "Workmesh handoff", "headless"]) expect(line.includes(text), `${agent}: ${text}`).toBe(false);
+      }
+      expect(spawned).toHaveLength(1);
+      if (agent === "claude") {
+        // No prompt argument after -p. The session's name has the id and the sender, since the handoff names no issue.
+        expect(argv.slice(0, 2)).toEqual(["-p", "--session-id"]);
+        expect(argv.slice(3)).toEqual(["--output-format", "json", "--permission-mode", "auto", "--name", "handoff abc12345 from An"]);
+      } else {
+        // `-` stands where the prompt was: codex exec reads it from standard input.
+        expect(argv).toEqual(["exec", "--json", "-C", wt, "--approve-for-me", "--skip-git-repo-check", "-o", path.join(path.dirname(rec.logFile), "result.txt"), "-c", "sandbox_workspace_write.network_access=true", "-"]);
+      }
+    }
   });
 
   it("doesn't run when another device won the start; at metadata the note says only how it ended", async () => {

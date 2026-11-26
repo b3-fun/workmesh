@@ -10,6 +10,7 @@ import { GitResolver } from "../hub/git";
 import { scrubText } from "../hub/redact";
 import type { HandoffRunnerLike } from "./delegate";
 import { droppedEnvLine, handoffEnv } from "./handoff-env";
+import { oneLine } from "../lib/untrusted";
 import type { HandoffPlan } from "./handoff-text";
 
 /**
@@ -17,7 +18,8 @@ import type { HandoffPlan } from "./handoff-text";
  * this machine's checkout of the handoff's repo (repos its sessions worked in, and `workmesh roots add <dir>`), makes
  * a git worktree on a new branch from the remote's default branch (so nobody's working tree is touched), and runs the
  * person's agent CLI headless in it: `claude -p` with a session id chosen up front (the hub links the handoff to that
- * session at `start`), or `codex exec`. The session is shared like any other in that repo, so it shows on the board.
+ * session at `start`), or `codex exec`. The prompt goes in on standard input and the environment has no variable
+ * whose name looks like a secret. The session is shared like any other in that repo, so it shows on the board.
  * At exit it reports `done` or `fail` with a short note (the agent's last words at the conversation level, else only
  * how it ended).
  *
@@ -482,19 +484,26 @@ export class HandoffRunner implements HandoffRunnerLike {
     const logFile = path.join(runDir, "agent.log");
     const exitFile = path.join(runDir, "exit-code");
     const resultFile = path.join(runDir, "result.txt");
+    // The prompt goes to the agent on standard input, from a file only this user can read. On the command line any
+    // process on the machine could read the task in the process list.
+    const promptFile = path.join(runDir, "prompt.txt");
+    fs.writeFileSync(promptFile, prompt, { mode: 0o600 });
+    fs.chmodSync(promptFile, 0o600);
     try {
       fs.rmSync(exitFile, { force: true });
     } catch {
       // fine
     }
-    const name = `handoff: ${h.task.replace(/\s+/g, " ").slice(0, 60)}`;
+    // The session's name is on the command line too, so it carries no task text: the issue or the id, and the sender.
+    const name = `handoff ${h.issue ?? shortId(h.id)} from ${oneLine(h.from.person, 60)}`;
+    // `claude -p` with no prompt argument reads the prompt from standard input.
     const argv =
       picked.agent === "claude"
         ? [
-            picked.bin, "-p", prompt, "--session-id", sessionId!, "--output-format", "json", "--permission-mode", settings.permissionMode, "--name", name,
+            picked.bin, "-p", "--session-id", sessionId!, "--output-format", "json", "--permission-mode", settings.permissionMode, "--name", name,
             ...(settings.model ? ["--model", settings.model] : []),
           ]
-        : codexExecArgs(picked.bin, { dir, resultFile, prompt, model: settings.model, approveForMe: await codexHasApproveForMe(picked.bin) });
+        : codexExecArgs(picked.bin, { dir, resultFile, model: settings.model, approveForMe: await codexHasApproveForMe(picked.bin) });
     // The agent works on someone else's task. It gets the daemon's environment without the variables whose names say
     // "secret", except what its own tool signs in with and what the person listed (handoff-env.ts).
     const passed = handoffEnv((this.deps.env ?? (() => process.env))(), picked.agent, settings.env);
@@ -503,6 +512,7 @@ export class HandoffRunner implements HandoffRunnerLike {
     delete env.CLAUDE_CODE_SESSION_ID;
     delete env.CODEX_THREAD_ID;
     const out = fs.openSync(logFile, "a", 0o600);
+    const input = fs.openSync(promptFile, "r");
     let pid: number | undefined;
     try {
       if (passed.dropped.length > 0) {
@@ -514,13 +524,14 @@ export class HandoffRunner implements HandoffRunnerLike {
         cwd: dir,
         env,
         detached: true,
-        stdio: ["ignore", out, out],
+        stdio: [input, out, out],
       });
       child.on("error", () => {});
       child.unref();
       pid = child.pid;
     } finally {
       fs.closeSync(out);
+      fs.closeSync(input);
     }
     if (!pid) return fail(`couldn't start ${picked.agent}`);
     const record: RunRecord = {
@@ -606,10 +617,14 @@ export class HandoffRunner implements HandoffRunnerLike {
  * (a commit, a push) to Codex's automatic reviewer, the counterpart of Claude Code's `auto` permission mode that a
  * Claude handoff runs in; the sandbox gets network access like a Claude run has. A Codex without the flag runs as
  * before.
+ *
+ * The prompt is not an argument: the last one is `-`, which tells `codex exec` to read the prompt from standard
+ * input (its own source says so: "If not provided as an argument (or if `-` is used), instructions are read from
+ * stdin").
  */
 export function codexExecArgs(
   bin: string,
-  o: { dir: string; resultFile: string; prompt: string; model?: string; approveForMe?: boolean },
+  o: { dir: string; resultFile: string; model?: string; approveForMe?: boolean },
 ): string[] {
   return [
     bin, "exec", "--json", "-C", o.dir,
@@ -617,7 +632,7 @@ export function codexExecArgs(
     "--skip-git-repo-check", "-o", o.resultFile,
     "-c", "sandbox_workspace_write.network_access=true",
     ...(o.model ? ["-m", o.model] : []),
-    o.prompt,
+    "-",
   ];
 }
 

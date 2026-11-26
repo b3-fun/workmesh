@@ -993,10 +993,15 @@ command run; a waiter that can't reach the daemon ends.
   shared repos this machine's sessions worked in, remembered in `checkouts.json`, and repos up to two levels under
   `handoffs.roots`), makes `git worktree add -b workmesh/handoff-<id> <checkout>-handoff-<id> <origin's default
   branch>` (`handoffs.worktree: false` runs in the checkout), and starts the agent detached, wrapped in `sh` so its
-  exit code lands in a file: `claude -p <prompt> --session-id <uuid chosen before start> --output-format json
-  --permission-mode <handoffs.permissionMode, default auto> --name "handoff: …"`, or `codex exec --json -C <dir> --approve-for-me -o <file> <prompt>`
-  (§42) (its thread id, read from the first event, goes to the hub as a second
-  `start`), each with `--model` / `-m <handoffs.model>` when the person set one (e.g. `haiku`). A handoff with no repo runs in a scratch dir under the state dir, which is shared (it is Workmesh's own
+  exit code lands in a file: `claude -p --session-id <uuid chosen before start> --output-format json
+  --permission-mode <handoffs.permissionMode, default auto> --name "handoff <issue or id> from <person>"`, or
+  `codex exec --json -C <dir> --approve-for-me -o <file> -` (§42) (its thread id, read from the first event, goes to
+  the hub as a second `start`), each with `--model` / `-m <handoffs.model>` when the person set one (e.g. `haiku`).
+  The prompt is not on the command line, where any process on the machine could read it in the process list
+  (B3-7235). The runner writes it to `prompt.txt` in the run's own directory (0600) and the agent reads it on
+  standard input: `claude -p` does so when it has no prompt argument, and `codex exec` when the argument is `-`. The
+  session's name carries no task text either.
+  A handoff with no repo runs in a scratch dir under the state dir, which is shared (it is Workmesh's own
   and holds nothing else). At exit the runner sends `done` (exit 0) or `fail`, with the agent's last words as the
   note at the conversation level (redacted, ≤ 500) and only how it ended at `metadata`. Runs survive a daemon
   restart (`handoffs/running.json`, 0600), at most `handoffs.maxRunning` (2) at once, stopped after
@@ -1330,7 +1335,8 @@ relays paired with a local hub as two people) found what follows. No wire change
   Codex unloaded (its TUI closed a minute ago) has ended: the message waits in the inbox and is delivered when the
   person resumes the thread (`codex resume <id>` fires `SessionStart`, the daemon queues it, the thread answers).
 - **Handoff runs.** `codex exec --json -C <dir> --approve-for-me --skip-git-repo-check -o <file> -c
-  sandbox_workspace_write.network_access=true [-m <model>] <prompt>`, plus a line in the prompt that `git commit` and
+  sandbox_workspace_write.network_access=true [-m <model>] -` (the prompt on standard input, §31; from Codex's
+  source, not run against a real Codex), plus a line in the prompt that `git commit` and
   `git push` need escalated sandbox permissions. Under `-s workspace-write` with approvals off a run edited files but
   never committed: Codex keeps the repo's git metadata read-only, a worktree's gitdir included (even when added with
   `--add-dir`), and gave it no network to push. `--approve-for-me` keeps that sandbox and sends each escalation to

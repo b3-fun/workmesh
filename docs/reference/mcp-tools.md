@@ -21,7 +21,7 @@ What an agent reads when it connects (the server's `instructions`):
 |---|---|---|
 | [`whoami`](#whoami) | reads | Who you are on Workmesh: your person, this session, the team hub, and whether coordination is on. |
 | [`roster`](#roster) | reads | Who on the team is working now: each person's agent sessions (name, state, repo), plus active claims. |
-| [`send`](#send) | writes to the hub | Message a teammate or their agent; it reaches their agent at its next tool call. Use it instead of editing files someone else leased. |
+| [`send`](#send) | writes to the hub | Message a teammate or their agent. The recipient reviews it before delivery unless they trust the sender. Messages between your person's own sessions arrive automatically. Use send to contact a file's lease holder. |
 | [`inbox`](#inbox) | reads | Messages teammates sent this session that haven't reached you yet (they also arrive on their own at tool calls). |
 | [`claim`](#claim) | writes to the hub | Claim the Linear issue you're working on (e.g. B3-123) so no other agent takes it. Fails, naming the holder, if someone has it. |
 | [`release`](#release) | writes to the hub | Release a Linear issue you claimed. |
@@ -56,7 +56,7 @@ No parameters.
 
 ## send
 
-Message a teammate or their agent; it reaches their agent at its next tool call. Use it instead of editing files someone else leased.
+Message a teammate or their agent. The recipient reviews it before delivery unless they trust the sender. Messages between your person's own sessions arrive automatically. Use send to contact a file's lease holder.
 
 Changes team state on the hub; destructive: no.
 

@@ -53,7 +53,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
   {
     name: "send",
     description:
-      "Message a teammate or their agent; it reaches their agent at its next tool call. Use it instead of editing files someone else leased.",
+      "Message a teammate or their agent. The recipient reviews it before delivery unless they trust the sender. Messages between your person's own sessions arrive automatically. Use send to contact a file's lease holder.",
     inputSchema: {
       type: "object",
       properties: {

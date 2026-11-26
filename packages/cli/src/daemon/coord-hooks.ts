@@ -22,6 +22,8 @@ import { TEAM_KNOWLEDGE_RULE, selectMemories } from "./memory";
 
 /** What the hook prints for the agent: a refusal (PreToolUse only) and/or context. */
 export interface HookAnswer {
+  /** Private to the local hook: the daemon checked the durable action guard. */
+  consentChecked?: boolean;
   deny?: string;
   context?: string;
   systemMessage?: string;
@@ -227,8 +229,8 @@ export class CoordHooks {
     try {
       const key = CoordHooks.agentKey(event);
       const coord = this.deps.coord();
-      if (hook === "Stop" || hook === "SubagentStop" || hook === "SessionEnd" ||
-          (hook === "UserPromptSubmit" && event.detail?.hookEvent !== "InjectedPrompt")) coord?.takeMessageSender(key);
+      if (!event.detail?.agentId && (hook === "Stop" || hook === "SessionEnd" ||
+          (hook === "UserPromptSubmit" && event.detail?.hookEvent !== "InjectedPrompt"))) coord?.takeMessageSender(key);
       const context = this.context(event, hook, deny !== undefined);
       const sender = hook === "PreToolUse" && !deny ? coord?.takeMessageSender(key) : undefined;
       if (sender) {

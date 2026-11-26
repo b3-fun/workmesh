@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { SessionEvent, SlackStatus, StatusSnapshot } from "@workmesh/core";
 import type { OwnershipSummary } from "../daemon/pusher";
 import type { CoordSummary, HookMeta, HubState } from "../daemon/server";
-import { CLIENT_HEADER, HOOK_HEADER, START_HEADER, SURFACE_HEADER } from "../daemon/server";
+import { ACTION_HEADER, CLIENT_HEADER, HOOK_HEADER, START_HEADER, SURFACE_HEADER } from "../daemon/server";
 import type { UpdateStatus } from "../daemon/updates";
 import type { HookAnswer } from "../daemon/coord-hooks";
 import type { CoordOpRequest, CoordOpResult } from "../daemon/coord-ops";
@@ -123,6 +123,7 @@ export function postEvent(
   // 0.12 (SPEC §41): what this hook's session started under, so the daemon can tell a stale session once.
   if (hook && meta.version) headers[CLIENT_HEADER] = meta.version;
   if (hook && meta.start) headers[START_HEADER] = meta.start;
+  if (hook === "PreToolUse" && meta.actionDigest) headers[ACTION_HEADER] = meta.actionDigest;
   if (hook && meta.surface) headers[SURFACE_HEADER] = meta.surface;
   return daemonFetch(port, "/event", "POST", event, { headers, timeoutMs });
 }

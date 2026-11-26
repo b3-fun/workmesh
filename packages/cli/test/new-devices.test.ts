@@ -98,7 +98,7 @@ describe("new machine notices: the daemon's list", () => {
     expect(agoWords(T + 30_000, T)).toBe("just now");
   });
 
-  it("puts a name and a place from the hub on one line, without control or invisible characters", () => {
+  it("puts a name and a place from the hub on one line, without escape sequences or invisible characters", () => {
     const esc = String.fromCharCode(27);
     const hidden = String.fromCodePoint(0x202e, 0x200b);
     const s = store();
@@ -106,10 +106,10 @@ describe("new machine notices: the daemon's list", () => {
       [{ id: "d1", machine: `sams${hidden}-laptop\n${esc}[2J`, pairedAt: T, where: `Lisbon\r\n\tPortugal${esc}]0;title${String.fromCharCode(7)}. ` }],
       { board: BOARD },
     );
-    expect(n?.machine).toBe("sams-laptop [2J");
-    expect(n?.where).toBe("Lisbon Portugal ]0;title");
+    expect(n?.machine).toBe("sams-laptop");
+    expect(n?.where).toBe("Lisbon Portugal");
     expect(n?.text).toBe(
-      "A new machine joined your Workmesh account: sams-laptop [2J, just now, from Lisbon Portugal ]0;title. " +
+      "A new machine joined your Workmesh account: sams-laptop, just now, from Lisbon Portugal. " +
         "If this wasn't you, remove it on the board: https://hub.test",
     );
     const [long] = s.observe([{ id: "d2", machine: "m".repeat(500), pairedAt: T, where: "w".repeat(500) }], { board: BOARD });

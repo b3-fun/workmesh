@@ -214,10 +214,10 @@ describe("the approve link is checked before it is opened (SPEC §3.1)", () => {
     expect(text).not.toContain(link);
   });
 
-  it("prints the code on one line, without control characters a hub may have put in it", () => {
+  it("prints the code on one line, without the escape sequences a hub may have put in it", () => {
     const esc = String.fromCharCode(27);
     const { text } = announce(HUB, "https://workmesh.b3os.org/pair", false, `AB${esc}[2JCD\n-1234`);
-    expect(text).toContain("pairing code: AB [2JCD -1234");
+    expect(text).toContain("pairing code: ABCD -1234");
     expect(text).not.toContain(esc);
   });
 });

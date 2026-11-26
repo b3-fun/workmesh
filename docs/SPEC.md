@@ -1518,4 +1518,4 @@ until the person dismisses it.
 - **Older sides.** An older hub sends no list, so nothing is told. An older daemon drops the list: its `/team` has no
   `newDevices`, and `status`, `doctor` and the menu bar show nothing.
 
-In the code: `hub/coord.ts` (`onNewDevices`), `daemon/new-devices.ts` (`NewDeviceNotices`), `lib/one-line.ts`.
+In the code: `hub/coord.ts` (`onNewDevices`), `daemon/new-devices.ts` (`NewDeviceNotices`), `lib/untrusted.ts` (`oneLine`).

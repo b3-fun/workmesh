@@ -13,7 +13,7 @@ import { hubShareLevel, hubStickyShare, loadConfig, saveConfig } from "../lib/co
 import type { Config, HubConfig } from "../lib/config";
 import { getHubState, isDaemonUp, reloadHub } from "../lib/daemon-client";
 import { configPath } from "../lib/paths";
-import { oneLine } from "../lib/one-line";
+import { oneLine } from "../lib/untrusted";
 import { readGithubLogin } from "../lib/github";
 import { bold, cyan, dim, formatDuration, green, red, select, sleep, spinner, yellow } from "../lib/ui";
 import { openBrowser } from "./setup";

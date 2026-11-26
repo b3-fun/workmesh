@@ -240,7 +240,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   optional `newDevices` goes to `daemon/new-devices.ts` (`NewDeviceNotices`: told once per id, `new-devices.json`
   0600, ≤ 200, a notice up for 24 h or until dismissed) and nowhere else: `CoordClient.apply` leaves it out of the
   cached state, so no hook context, inbox or coordination call carries it. Hub text is put on one line by
-  `lib/one-line.ts` (stands in for `lib/untrusted.ts`).
+  `lib/untrusted.ts` (`oneLine`).
 - 0.12.3 full token usage (SPEC §45, B3-7227): `hub/agents.ts` `ClaudeUsageReader` (main threads with
   `mainThread: true`: sidechain lines skipped, tasks left to the mirror; subagents and workflow agents as before) sums
   `message.usage` by model and kind once per message id (the latest line's figures; a small LRU of ids, lines of one

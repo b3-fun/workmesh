@@ -1,6 +1,6 @@
 import type { HubNewDeviceAccepted } from "@workmesh/protocol";
 import { readStateFile, writeStateFile } from "../hub/persist";
-import { oneLine } from "../lib/one-line";
+import { oneLine } from "../lib/untrusted";
 
 /**
  * New machines on the person's account (docs/SPEC.md §46, §47). The hub's sync names the machines added to the

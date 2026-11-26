@@ -1035,7 +1035,7 @@ device token names the person, requests carry ingest keys, answers carry hub key
   - A memory named in `supersedes` stays accepted until a person accepts the newer one on the board.
   - A `forget` on an accepted memory sets a pending retire. The memory stays accepted, and agents keep getting it,
     until a person retires it on the board.
-  - An agent's `forget` of its own person's proposal withdraws it (`rejected`). A `forget` on someone else's proposal
+  - A relay's `forget` of its own person's proposal withdraws it (`rejected`). A `forget` on someone else's proposal
     is refused.
   - Only accepted memories reach agents: the brief, recall answers and the notes list below never carry a proposed,
     rejected, superseded or retired one.
@@ -1115,7 +1115,7 @@ device token names the person, requests carry ingest keys, answers carry hub key
     answer lists each hit as `[m12] gotcha · b3-fun/workmesh · Sean, 3 days ago`, its title, its body (cut at 600)
     and its links.
   - `forget { id, reason? }` (`m12`, `M12`, `12`; the reason is for the reviewer): the answer says proposed or
-    withdrawn (an agent's own proposal). Proposed is a pending retire (§35): agents keep getting the memory until a
+    withdrawn (its own person's proposal). Proposed is a pending retire (§35): agents keep getting the memory until a
     person retires it on the board. A `retired` answer, from an older hub, is read too.
   - `memories { kind?, tag?, repo? }`: the brief, newest first.
   - `note` becomes `remember`: project-wide, as a note always was; kind `fact`, or `rule`/`convention` from a tag

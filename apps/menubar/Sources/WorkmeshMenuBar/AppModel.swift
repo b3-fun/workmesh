@@ -23,6 +23,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var delegateAnswered = [String: String]()
     /// v2: the daemon's text for a call that failed, by id, shown for a few seconds.
     @Published private(set) var delegateFailed = [String: String]()
+    /// New machines' notices dismissed here, hidden at once while the daemon is told.
+    @Published private(set) var dismissedNewDevices = Set<String>()
     /// GET /update: a newer Workmesh and how to install it here. nil before the
     /// first read and for a daemon without the endpoint (404).
     @Published private(set) var update: UpdateInfo?
@@ -131,6 +133,10 @@ final class AppModel: ObservableObject {
             teamChecked = true
             pruneAnswered()
             updateNotifier()
+            // Machines that joined my account: one notification each, and only ids the daemon still lists stay hidden.
+            let listed = team?.newDevices ?? []
+            notifier?.newDevices(listed)
+            if !dismissedNewDevices.isEmpty { dismissedNewDevices.formIntersection(listed.map(\.id)) }
         } catch {
             // Daemon down or a bad answer: keep the last view; /state drives "offline".
         }
@@ -217,6 +223,25 @@ final class AppModel: ObservableObject {
         Task {
             _ = try? await call(client)
             await refresh()
+        }
+    }
+
+    /// Machines that joined my account, still to show.
+    var newDevices: [NewDeviceNotice] {
+        (team?.newDevices ?? []).filter { !dismissedNewDevices.contains($0.id) }
+    }
+
+    /// I've seen it: the row goes at once and the daemon stops listing the
+    /// notice. If the daemon can't be told, the row comes back.
+    func dismissNewDevice(_ id: String) {
+        dismissedNewDevices.insert(id)
+        Task {
+            do {
+                try await client.dismissNewDevice(id: id)
+            } catch {
+                dismissedNewDevices.remove(id)
+            }
+            await refreshTeamAfterAction()
         }
     }
 

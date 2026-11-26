@@ -401,6 +401,15 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
   default, `auto-self`, a self handoff let one agent start another with no person looking. `auto-self` stays as a
   choice a person makes (B3-7235).
 
+- 11-26 New machines: each relay tells its person, once, when another machine joins their account. The notice is for
+  the person only: the daemon log, `status`, `doctor`, and the menu bar with a macOS notification, never an agent's
+  context or inbox. It stays up for 24 hours, or until dismissed in the menu bar (SPEC §46, §47; B3-7237). Before, a
+  new machine on an account went unsaid.
+
+- 11-26 Pairing: a relay opens the hub's approve link only when it is https on the host the person typed (plain http
+  only for a hub on the same machine). For any other link it prints the code and the hub's own pairing page (SPEC
+  §3.1; B3-7237). Before, the link was opened as sent.
+
 - 11-25 Memory: every memory a machine writes is a proposal, from an agent or from a terminal, and no setting accepts
   one without review. A person accepts it on the board. A memory that a newer one supersedes, or that a `forget`
   names, stays accepted until a person decides there. A machine's token proves a machine, not a person at the keyboard

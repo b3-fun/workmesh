@@ -24,6 +24,7 @@ Logs: `~/Library/Logs/workmesh-daemon.log` on a Mac (launchd), `journalctl --use
 | `!` `coordination  this hub has no leases or messages yet` / `delegation  this hub has no handoffs …` | The hub is older than your CLI. | Nothing; agents work as before. |
 | `!` `coordination  not synced with the hub yet` | The first sync hasn't happened. | Wait a few seconds. |
 | `!` `hub state  not saved yet` | The daemon writes it once it forwards. | Nothing. |
+| `!` `new machine  A new machine joined your Workmesh account: …` | A machine was added to your account in the last day. See [When a machine joins your account](getting-started.md#when-a-machine-joins-your-account). | If it was you: nothing. Dismiss it in the menu bar, or it goes after 24 hours. If it wasn't: revoke the machine on the board (Your machines → Revoke). |
 
 ### Daemon service
 

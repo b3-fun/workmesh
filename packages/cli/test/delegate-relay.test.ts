@@ -590,14 +590,14 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
       T,
     );
 
-  it("handoff: to a person by GitHub login or to me, repo from the session's directory, text redacted", async () => {
+  it("handoff: to a person by display name or to me, repo from the session's directory, text redacted", async () => {
     const hub = fakeHub([
       { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "offered", to: { person: "An" } } } },
       { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "offered" } } },
     ]);
     sync(hub.coord);
     const r = await runCoordOp(
-      { op: "handoff", args: { to: "an-b3", task: "rotate the key in ~/x with token ghp_abcdefghijklmnopqrstuvwxyz0123456789", issue: "b3-7168" }, caller: { claudeSessionId: "s1", cwd: "/w/b3os-beta/src" } },
+      { op: "handoff", args: { to: "an", task: "rotate the key in ~/x with token ghp_abcdefghijklmnopqrstuvwxyz0123456789", issue: "b3-7168" }, caller: { claudeSessionId: "s1", cwd: "/w/b3os-beta/src" } },
       deps(hub.coord, { getSession: (k) => (k === "claude-code:s1" ? ({ key: k, cwd: "/w/b3os-beta/src" } as never) : undefined) }),
     );
     expect(r.ok).toBe(true);

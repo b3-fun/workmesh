@@ -658,8 +658,8 @@ Usage: workmesh send [options] <to> <text...>
 Message a teammate or their agent (delivered at its next tool call)
 
 Arguments:
-  to             a person (name, email or GitHub login), an agent's session
-                 name, or a hub session key
+  to             a person (display name or email), an agent's session name, or a
+                 hub session key
   text           the message
 
 Options:
@@ -829,7 +829,7 @@ Hand a task to a teammate (or `me`: one of your other machines); their machine
 starts an agent for it once they accept
 
 Arguments:
-  to                   a person (name, email or GitHub login), or me
+  to                   a person (display name or email), or me
   task                 what to do
 
 Options:

@@ -287,9 +287,10 @@ export type HubClaimResponseAccepted = z.infer<typeof hubClaimResponseAcceptSche
 // ------------------------------------------------------------------ POST /relay/messages
 
 /**
- * Exactly one recipient: a person (display name, email or GitHub login, as the roster shows them; the hub picks which
- * of their sessions gets it), one session (its hub key), or an agent by its session name. `email` (§48) goes beside
- * `person` when the relay resolved the name to one roster person who has one: the hub then finds the person by it.
+ * Exactly one recipient: a person (an email, an exact display name or the part of an email before the `@`; a GitHub
+ * login finds nobody, §21), one session (its hub key), or an agent by its session name. The hub picks which of a
+ * person's sessions gets it. `email` (§48) goes beside `person` when the relay resolved the name to one roster person
+ * who has one: the hub then finds the person by it.
  */
 export const hubMessageToSchema = z.union([
   z.strictObject({ person: z.string().min(1).max(200), email: personEmail }),

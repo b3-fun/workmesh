@@ -318,7 +318,7 @@ program
 program
   .command("send")
   .description("Message a teammate or their agent (delivered at its next tool call)")
-  .argument("<to>", "a person (name, email or GitHub login), an agent's session name, or a hub session key")
+  .argument("<to>", "a person (display name or email), an agent's session name, or a hub session key")
   .argument("<text...>", "the message")
   .option("--kind <kind>", "person | agent | session, when <to> is ambiguous")
   .option("--thread <id>", "reply in a thread")
@@ -411,7 +411,7 @@ program
 program
   .command("handoff")
   .description("Hand a task to a teammate (or `me`: one of your other machines); their machine starts an agent for it once they accept")
-  .argument("<to>", "a person (name, email or GitHub login), or me")
+  .argument("<to>", "a person (display name or email), or me")
   .argument("<task...>", "what to do")
   .option("--repo <owner/name>", "the repo (default: this directory's)")
   .option("--issue <id>", "a Linear issue, e.g. B3-123")

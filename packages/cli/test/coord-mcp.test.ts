@@ -101,10 +101,11 @@ describe("coordination ops (POST /coord/op)", () => {
     expect(resolveLeasePaths(["../x"], "b3-fun/workmesh", undefined, classify)).toMatchObject({ error: expect.any(String) });
   });
 
-  it("recipients: people (name or GitHub login), agents by session name, hub keys", () => {
+  it("recipients: people by display name, agents by session name, hub keys", () => {
     const st = hubSyncAcceptSchema.parse(SYNC);
     expect(recipient("an", undefined, st)).toEqual({ person: "An" });
-    expect(recipient("an-b3", undefined, st)).toEqual({ person: "An" });
+    // A GitHub login names nobody on the roster: the text goes to the hub as typed.
+    expect(recipient("an-b3", undefined, st)).toEqual({ person: "an-b3" });
     // A session by the name the board shows, or by its short key: its hub key.
     expect(recipient("b3iq-strategy", undefined, st)).toEqual({ session: AN });
     expect(recipient("b3iq-strategy", "session", st)).toEqual({ session: AN });

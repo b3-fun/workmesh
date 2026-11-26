@@ -568,10 +568,14 @@ covered by both (`leasePathsOverlap`, exact for plain paths).
 - **Claims.** One active claimant per issue id (read case-insensitively, `b3-7167` is `B3-7167`); claiming an issue
   this session already holds refreshes its note. A claim ends at `release` or when its session ends. The hub may
   mirror claims to Linear.
-- **Messages** go to a person (display name, email or GitHub login as the roster shows them; the hub picks which of
-  their sessions gets it, else holds it for their next one), one session, or an agent by its session name. `from`
-  absent = the person wrote it themselves (the CLI outside any agent session). Text is written on purpose by an agent
-  or a person, so it is sent at either sharing level, redacted on the machine first (§9).
+- **Messages** go to a person, one session, or an agent by its session name. For a person, the hub picks which of
+  their sessions gets it, else holds it for their next one. `from` absent = the person wrote it themselves (the CLI
+  outside any agent session). Text is written on purpose by an agent or a person, so it is sent at either sharing
+  level, redacted on the machine first (§9).
+- **How the hub finds a person** (a message's `to.person`, and a handoff's, §30). It looks for an email, or for an
+  exact display name or the part of an email before the `@`. When `email` comes beside `person` (§48), the hub
+  finds the person by the email. A typed GitHub login finds nobody, because a machine reports its own person's login
+  and anyone can claim one. When the hub finds nobody, it answers `404`.
 - **Notes** are the project's shared notes, written by a session or a person, read by everyone's agents. Text as for
   messages.
 - **Holds** are set by people on the hub (the board, a Linear comment); relays only read them.
@@ -589,7 +593,7 @@ read and drops the rest one by one):
   "inbox": [{ "id": "m_1", "to": "<hubKey of one of this device's sessions>", "from": { "person": "An", "sessionName": "b3iq-strategy", "sessionKey": "<hubKey>" },
               "text": "…", "ts": 1795545600000, "thread": "t_1" }],   // oldest first, until acked
   "claims": [{ "issue": "B3-7167", "holder": Holder, "since": 1795545600000, "note": "relay side" }],
-  "roster": [{ "person": "An", "github": "an-b3", "sessions": [{ "hubKey": "<hubKey>", "name": "b3iq-strategy", "state": "working", "repo": "b3-fun/workmesh" }] }],
+  "roster": [{ "person": "An", "sessions": [{ "hubKey": "<hubKey>", "name": "b3iq-strategy", "state": "working", "repo": "b3-fun/workmesh" }] }],
   "notes": [Note],                  // optional: the newest 50
   "edits": [{ "repo": "b3-fun/workmesh", "path": "packages/cli/src/index.ts", "person": "An", "sessionKey": "<hubKey>", "sessionName": "b3iq-strategy", "ts": 1795545600000 }]
 }
@@ -608,6 +612,9 @@ read and drops the rest one by one):
 - `edits` (optional): files sessions edited in the last 10 minutes (one row per session and path, the newest),
   from the `path` the hub already has (§3.2). A relay warns its agent before it edits a file another person's
   session touched there.
+- A roster entry may carry `github`, the GitHub login that person's machine reported (§15). A hub need not send it,
+  and older hubs do. A relay never takes a typed name as a GitHub login, because a machine reports its own person's
+  login and anyone can claim one (§49).
 - Every person named above may come with their email (§48): `email` beside `person`, `byEmail` beside a hold's `by`.
 
 ## 23. The relay side (`packages/cli`)
@@ -773,7 +780,7 @@ read and drops the rest one by one):
   calling from the caller's parent process (Claude Code's `~/.claude/sessions/<pid>.json`), else
   `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`, else the live session in the caller's directory that moved last;
   none of them means the person at a terminal. Message and note text is redacted (§9) before it is sent.
-  `send`'s `to` (0.11.x) resolves on the machine from the last sync's roster: a person (name or GitHub login; §49), a
+  On the machine, `send`'s `to` (0.11.x) resolves from the last sync's roster: a person (display name or email; §49), a
   session by the name the board shows or its key (`claude-code:<id>`, or the start of the id, 6+ characters), or a hub
   key; a name that fits several live sessions is refused, listing them, rather than guessed (`--kind session|agent|
   person` narrows it). An agent's reply asks to wake its recipient (§30 `wake: true`) when it is in a thread a message to the
@@ -1817,10 +1824,11 @@ reader, §14).
     it without asking the person.
 - **Everything else keeps the rule above.** An email the hub leaves out never makes the relay stop seeing its own
   lease, claim or gate policy as its own.
-- **A name a person or an agent typed** (`send`, §23; `handoff`, §31). The relay looks it up in the last sync's
-  roster by display name or GitHub login. A typed email is looked up by email only, so a display name that looks
-  like someone's email never competes with it. The relay's own person counts as a choice, even when the roster
-  leaves them out.
+- **A name a person or an agent typed** (`send`, §23; `handoff`, §31). A typed name is a display name or an email.
+  The relay looks it up in the last sync's roster. A typed email is looked up by email only, so a display name that
+  looks like someone's email never competes with it. The relay never takes a typed name as a GitHub login, because
+  a machine reports its own person's login and anyone can claim one. The relay's own person counts as a choice, even
+  when the roster leaves them out.
   - One person: the request names them with their `email` beside `person` (§48). In a handoff, `to: "me"` carries
     the relay's own email.
   - Several people who each have an email: the call is refused and nothing is sent. The answer lists the choices:
@@ -1829,6 +1837,7 @@ reader, §14).
     any text.
   - An entry with no email (a hub that sends none): nothing tells it apart from a namesake. The name alone goes to
     the hub, which resolves it as before.
-  - Nobody on the roster by it: the string goes to the hub unchanged.
+  - Nobody on the roster by it: the string goes to the hub unchanged, since the hub may know people the roster
+    lacks. A GitHub login goes the same way, and the hub does not match logins either (§21).
 - **Unchanged:** which session a lease, hold or message belongs to. Those are matched by session key, never by a
   person's name.

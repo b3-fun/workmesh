@@ -57,7 +57,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
-        to: s("A person (name, email or GitHub login), a session's name as the board shows it, its key (claude-code:<id>), or its hub key."),
+        to: s("A person (display name or email), a session's name as the board shows it, its key (claude-code:<id>), or its hub key."),
         text: s("The message (up to 4,000 characters)."),
         kind: { type: "string", enum: ["person", "agent", "session"], description: "What `to` names, when it is ambiguous." },
         thread: s("A thread id to reply in."),
@@ -226,7 +226,7 @@ export const MCP_TOOLS: readonly ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
-        to: s("A person (name, email or GitHub login), or `me`."),
+        to: s("A person (display name or email), or `me`."),
         task: s("What to do, self-contained (up to 4,000 characters): the agent that takes it starts from nothing else."),
         repo: s("owner/name (default: this session's repo)."),
         issue: s("A Linear issue id, e.g. B3-123 (optional)."),

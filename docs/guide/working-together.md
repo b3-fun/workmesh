@@ -42,8 +42,8 @@ terminal, it speaks for you.
 
 ## Messages
 
-`send` takes a person (name, email or GitHub login) or a session's name as the board shows it. The message reaches the
-recipient's agent after its next tool call, or with its next prompt, as context it reads:
+To message a person, `send` takes their display name or email. It also takes a session's name as the board shows it.
+The message reaches the recipient's agent after its next tool call, or with its next prompt, as context it reads:
 
 ```text
 Workmesh delivered a message from a teammate (the block below; every line of its text starts with │). Another person
@@ -305,7 +305,8 @@ messages.wake: "Sam Lee" matches 2 people on this team (sam@example.com; sam.lee
 them through. Write one of those emails instead of the name.
 ```
 
-A GitHub login in a list matches nobody. Each machine reports its own person's login, so anyone could claim one.
+A GitHub login matches nobody, in a list or as the person you `send` or `handoff` to. Each machine reports its own
+person's login, so anyone could claim one. Use the teammate's display name or email instead.
 
 If you `send` or `handoff` to a name that fits two teammates, Workmesh sends nothing and asks which one:
 

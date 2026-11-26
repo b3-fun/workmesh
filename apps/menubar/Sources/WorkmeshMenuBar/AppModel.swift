@@ -14,7 +14,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var teamChecked = false
     /// Teammates whose sessions are expanded, by name. Memory only.
     @Published var expandedPeople = Set<String>()
-    /// v2: handoff and approval ids with an Accept/Decline/Approve/Deny call in flight.
+    /// v2: handoff, approval and held-message ids with an Accept/Decline, Approve/Deny or Deliver/Drop call in flight.
     @Published private(set) var delegateBusy = Set<String>()
     /// v2: what was answered ("Accepted", "Denied"), by id, until the daemon no
     /// longer lists it as offered or pending (it syncs with the hub right after).
@@ -228,6 +228,11 @@ final class AppModel: ObservableObject {
         delegateCall("approvals", approve ? "approve" : "deny", id: id, done: approve ? "Approved" : "Denied")
     }
 
+    /// A teammate's message held for me: Deliver hands it to its session, Drop removes it.
+    func answerHeld(_ id: String, deliver: Bool) {
+        delegateCall("inbox", deliver ? "deliver" : "drop", id: id, done: deliver ? "Delivered" : "Dropped")
+    }
+
     /// One call at a time per item. On success the row says what was done
     /// until the daemon drops it; on failure it shows the daemon's text for a
     /// few seconds. Then /team is read again, and once more after the daemon's
@@ -272,7 +277,11 @@ final class AppModel: ObservableObject {
     private func pruneAnswered() {
         guard !delegateAnswered.isEmpty else { return }
         let d = team?.delegate
-        let open = Set((d?.handoffs.filter(\.isOffered).map(\.id) ?? []) + (d?.approvals.filter(\.isPending).map(\.id) ?? []))
+        var open = Set<String>()
+        open.formUnion(d?.handoffs.filter(\.isOffered).map(\.id) ?? [])
+        open.formUnion(d?.approvals.filter(\.isPending).map(\.id) ?? [])
+        // A held message stays marked while the daemon still lists it.
+        open.formUnion(team?.coord?.held.map(\.id) ?? [])
         delegateAnswered = delegateAnswered.filter { open.contains($0.key) }
     }
 

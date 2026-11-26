@@ -241,27 +241,33 @@ struct TeamState: Decodable {
 //
 // Holds a teammate put on this Mac's agents, and messages waiting for them (an
 // agent gets its messages at its next tool call; these are the ones it hasn't
-// reached yet). Read leniently, like the rest of /team.
+// reached yet). `held` is teammates' messages that wait for me instead: their
+// session runs with no permission prompts, so the agent gets one only if I
+// deliver it (absent from older daemons). Read leniently, like the rest of
+// /team.
 
 struct CoordState: Decodable {
     /// nil = not synced yet; false = the hub has no coordination.
     let available: Bool?
     let holds: [CoordHold]
     let unread: [CoordMessage]
+    let held: [CoordHeld]
 
-    private enum K: String, CodingKey { case available, holds, unread }
+    private enum K: String, CodingKey { case available, holds, unread, held }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         available = c.lenient(Bool.self, .available)
         holds = c.lossy(CoordHold.self, .holds)
         unread = c.lossy(CoordMessage.self, .unread)
+        held = c.lossy(CoordHeld.self, .held)
     }
 
-    init(available: Bool?, holds: [CoordHold], unread: [CoordMessage]) {
+    init(available: Bool?, holds: [CoordHold], unread: [CoordMessage], held: [CoordHeld] = []) {
         self.available = available
         self.holds = holds
         self.unread = unread
+        self.held = held
     }
 }
 
@@ -313,6 +319,45 @@ struct CoordMessage: Decodable, Identifiable {
         from = c.text(.from) ?? "A teammate"
         fromSession = c.text(.fromSession)
         ts = c.lenient(Double.self, .ts)
+    }
+}
+
+/// A teammate's message held for me (the daemon cleaned its names and text).
+struct CoordHeld: Decodable, Identifiable {
+    let id: String
+    /// The session it is for (local key), and its name.
+    let session: String?
+    let name: String?
+    let from: String
+    let fromSession: String?
+    let text: String
+    /// When it was held and when it is dropped if I do nothing, on this Mac's clock (epoch ms).
+    let since: Double?
+    let dropAt: Double?
+
+    /// "Dropped in 42 min if you do nothing", from the daemon's drop time.
+    func fate(now: Date) -> String? {
+        guard let dropAt else { return nil }
+        let mins = Int(((dropAt / 1000 - now.timeIntervalSince1970) / 60).rounded(.up))
+        if mins <= 0 { return "About to be dropped" }
+        return mins < 120 ? "Dropped in \(mins) min if you do nothing" : "Dropped in \(mins / 60) h if you do nothing"
+    }
+
+    private enum K: String, CodingKey { case id, session, name, from, fromSession, text, since, dropAt }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        guard let id = c.text(.id), let text = c.text(.text) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "held message without id or text"))
+        }
+        self.id = id
+        self.text = text
+        session = c.text(.session)
+        name = c.text(.name)
+        from = c.text(.from) ?? "A teammate"
+        fromSession = c.text(.fromSession)
+        since = c.lenient(Double.self, .since)
+        dropAt = c.lenient(Double.self, .dropAt)
     }
 }
 

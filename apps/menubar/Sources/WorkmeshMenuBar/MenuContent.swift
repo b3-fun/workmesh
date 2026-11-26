@@ -153,13 +153,15 @@ struct MenuContent: View {
         }
 
         let holds = model.team?.coord?.holds ?? []
+        let allHeld = model.team?.coord?.held ?? []
+        let held = Array(allHeld.prefix(Self.maxMessages))
         let unread = Array((model.team?.coord?.unread ?? []).prefix(Self.maxMessages))
         let allHandoffs = model.team?.delegate?.shownHandoffs ?? []
         let allApprovals = model.team?.delegate?.shownApprovals ?? []
         let handoffs = Array(allHandoffs.prefix(Self.maxMessages))
         let approvals = Array(allApprovals.prefix(Self.maxMessages))
-        // Handoff and approval rows carry a line of buttons: about two rows tall.
-        var rowCount = needs.count + holds.count + unread.count + 2 * (handoffs.count + approvals.count)
+        // Handoff and approval rows carry a line of buttons: about two rows tall. A held message shows more of its text.
+        var rowCount = needs.count + holds.count + unread.count + 2 * (handoffs.count + approvals.count) + 3 * held.count
             + groups.reduce(0) { n, g in n + (g.0 == .idle && !idleExpanded ? 0 : g.1.count) }
         switch area {
         case .none: break
@@ -184,6 +186,10 @@ struct MenuContent: View {
             if !holds.isEmpty {
                 sectionHeader("On hold", count: holds.count > 1 ? "\(holds.count)" : nil, urgent: true)
                 ForEach(holds) { holdRow($0, hubNow: hubNow) }
+            }
+            if !held.isEmpty {
+                sectionHeader("Held messages", count: "\(allHeld.count)", urgent: true)
+                ForEach(held) { heldRow($0, now: now) }
             }
             if !unread.isEmpty {
                 sectionHeader("Messages for your agents", count: "\(model.team?.coord?.unread.count ?? unread.count)")
@@ -319,6 +325,41 @@ struct MenuContent: View {
         .padding(.vertical, 4)
         .help("\(from)\(to): \(m.text)\nDelivered at the agent's next tool call.")
         .accessibilityElement(children: .combine)
+    }
+
+    /// A teammate's message held for me. Its session runs with no permission
+    /// prompts, so the agent has not seen it: Deliver hands it over, Drop removes it.
+    private func heldRow(_ m: CoordHeld, now: Date) -> some View {
+        let from = m.fromSession.map { "\(m.from) (\($0))" } ?? m.from
+        let to = m.name.map { " → \($0)" } ?? ""
+        let fate = m.fate(now: now)
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "envelope.badge")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(from + to).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(m.text)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                delegateActions(m.id, yes: "Deliver", no: "Drop") { model.answerHeld(m.id, deliver: $0) }
+            }
+            Spacer(minLength: 4)
+            if let since = m.since {
+                Text(AgentRow.elapsed(since: since, now: now))
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .help(["\(from)\(to): \(m.text)",
+               "Held for you: the agent has not seen it. Deliver hands it to the session. Drop removes it.",
+               fate.map { "\($0)." } ?? ""]
+              .filter { !$0.isEmpty }.joined(separator: "\n"))
+        .accessibilityElement(children: .contain)
     }
 
     /// v2: a task a teammate handed me (Accept starts an agent for it on this

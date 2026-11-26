@@ -729,7 +729,8 @@ read and drops the rest one by one):
   session, name, from, fromSession, text, ts, delivered }], held: [{ id, session, name, from, fromSession, text, ts,
   since, dropAt }] }` for this machine's sessions; Workmesh.app shows "On hold" and "Messages for your agents".
   `held` is the messages held for the person (above), with cleaned names and text, at most 50, each text cut at 1,000
-  characters. They are not in `unread`.
+  characters. They are not in `unread`. Workmesh.app shows them as "Held messages", each with Deliver and Drop,
+  answered through `POST /coord/op` as the person.
 - **CLI.** `workmesh leases`, `lease`, `unlease`, `claims`, `claim`, `send`, `inbox` (also `inbox --held` and
   `inbox deliver|drop <id>`, above), `note`, `notes`, `whoami` (and `ask`), through the same daemon call as the MCP
   tools; a refusal (a claim someone else holds, a lease conflict)

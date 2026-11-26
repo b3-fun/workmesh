@@ -29,6 +29,11 @@ app is presentation + control only, so there's zero logic to keep in sync.
   this Mac and, when you're paired with a hub, on your other machines (marked
   with a small computer). A wait the hub also lists shows once, with the hub's
   reason as its line.
+- **Held messages** (orange): a teammate's message for a session that runs
+  with no permission prompts. The agent has not seen it. **Deliver** hands it
+  to the session, **Drop** removes it, and the tooltip says when it is dropped
+  if you do nothing. It comes from `GET /team`'s `coord.held` and answers
+  through `POST /coord/op` (`inbox`); an older daemon sends none.
 - **Handoffs for you** (v2): tasks a teammate handed you, with who, repo and
   issue, and **Accept** / **Decline** (Accept starts an agent for it on this
   Mac); ones already running here say so. Up to four, the header counts all.

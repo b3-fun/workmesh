@@ -40,7 +40,7 @@ For what to run when, start with the [guide](../guide/getting-started.md).
 | [`workmesh claims`](#workmesh-claims) | Linear issues claimed by your team's agents |
 | [`workmesh claim`](#workmesh-claim) | Claim a Linear issue for this agent session (--release to let it go) |
 | [`workmesh send`](#workmesh-send) | Message a teammate or their agent (delivered at its next tool call) |
-| [`workmesh inbox`](#workmesh-inbox) | Messages waiting for this machine's agents (or, inside an agent session, for that session) |
+| [`workmesh inbox`](#workmesh-inbox) | Messages waiting for this machine's agents (or, inside an agent session, for that session); deliver or drop one held for you |
 | [`workmesh note`](#workmesh-note) | Leave a note every teammate's agent can read |
 | [`workmesh notes`](#workmesh-notes) | Your team's newest shared notes |
 | [`workmesh ask`](#workmesh-ask) | Ask the team board about teammates' agents, in plain words (read-only) |
@@ -121,9 +121,9 @@ Commands:
                                      (--release to let it go)
   send [options] <to> <text...>      Message a teammate or their agent
                                      (delivered at its next tool call)
-  inbox [options]                    Messages waiting for this machine's agents
+  inbox [options] [action] [id]      Messages waiting for this machine's agents
                                      (or, inside an agent session, for that
-                                     session)
+                                     session); deliver or drop one held for you
   note [options] <text...>           Leave a note every teammate's agent can
                                      read
   notes [options]                    Your team's newest shared notes
@@ -669,12 +669,17 @@ Options:
 ## workmesh inbox
 
 ```text
-Usage: workmesh inbox [options]
+Usage: workmesh inbox [options] [action] [id]
 
 Messages waiting for this machine's agents (or, inside an agent session, for
-that session)
+that session); deliver or drop one held for you
+
+Arguments:
+  action      deliver | drop: answer a message held for you
+  id          the held message's id, or the end of it
 
 Options:
+  --held      list the messages held for you, with their ids
   --json      machine-readable output
   -h, --help  display help for command
 ```

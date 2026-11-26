@@ -670,6 +670,28 @@ read and drops the rest one by one):
       so it is not recorded.
     - The daemon's own notices (§31) wake as before. A message that may not wake is not lost, and its session is
       told nothing about the wait. It reaches the session at its next prompt or tool call, as marked text.
+  - **Held for the person** (`messages.hold`). A session that runs with no permission prompts acts on what it reads
+    before anyone sees it. So a teammate's message for such a session is not added to its context. It waits for the
+    person.
+    - The rule is `bypass` (the default), `unattended`, `always` or `never`. `bypass` holds for a session whose mode
+      is Claude Code's `bypassPermissions` or `dontAsk`, or a Codex thread with no sandbox (`full-access`, §26).
+      `unattended` also holds for `auto`. `always` holds for every session, and `never` for none.
+    - The mode is what the session's last hook said: `permission_mode` in the hook's input, kept in the event's
+      local-only detail (`permissionMode`). Without one, it is what the session's transcript last said (§26). A
+      subagent's message follows its session's mode. When the mode is not known, the message is not held, except
+      under `always`.
+    - A held message is not in a hook's context, not in a wake, and not in the agent's `inbox`. The session is told
+      nothing. The person sees it. The menu bar lists it with Deliver and Drop, and `workmesh inbox --held` lists it
+      with its id. `workmesh inbox deliver <id>` and `workmesh inbox drop <id>` answer one. All three refuse a caller
+      the daemon identifies as an agent session, as approvals do (§31).
+    - Deliver puts the message into the session's next context, whatever its mode. It wakes the session if it sits
+      idle and `wake` is on. Drop removes the message. A held message nobody answers is dropped after
+      `messages.holdMinutes` (default 60), and the daemon log says so.
+    - A dropped message is acked like a delivered one, so the hub stops listing it. The hub is not told that it was
+      dropped.
+    - Once held, a message stays held until the person answers or its time runs out. A change of the session's mode
+      does not let it through. The person's own messages and the daemon's notices are never held.
+    - The held, delivered and dropped ids are kept in the same state file, so a daemon restart changes nothing.
 - **MCP** (`mcp/server.ts`). `workmesh mcp` (stdio, JSON-RPC 2.0, one message per line; protocol versions 2024-11-05 to
   2025-11-25) gives every agent `whoami`, `roster`, `send`, `inbox`, `claim`, `release`, `lease`, `unlease`, `leases`,
   `note` and `notes` (v2 adds `handoff`, `handoffs` and `ask`). It talks to the local daemon only (`POST /coord/op` on the loopback API, bearer secret as
@@ -700,10 +722,13 @@ read and drops the rest one by one):
   becomes shared) while the hub coordinates: it is on Workmesh with its team, and how to claim, lease, read its inbox,
   and message a holder instead of editing leased files.
 - **Menu bar.** `GET /team` adds `coord: { available, holds: [{ session, name, by, reason, since }], unread: [{ id,
-  session, name, from, fromSession, text, ts, delivered }] }` for this machine's sessions; Workmesh.app shows "On
-  hold" and "Messages for your agents".
-- **CLI.** `workmesh leases`, `lease`, `unlease`, `claims`, `claim`, `send`, `inbox`, `note`, `notes`, `whoami` (and
-  `ask`), through the same daemon call as the MCP tools; a refusal (a claim someone else holds, a lease conflict)
+  session, name, from, fromSession, text, ts, delivered }], held: [{ id, session, name, from, fromSession, text, ts,
+  since, dropAt }] }` for this machine's sessions; Workmesh.app shows "On hold" and "Messages for your agents".
+  `held` is the messages held for the person (above), with cleaned names and text, at most 50, each text cut at 1,000
+  characters. They are not in `unread`.
+- **CLI.** `workmesh leases`, `lease`, `unlease`, `claims`, `claim`, `send`, `inbox` (also `inbox --held` and
+  `inbox deliver|drop <id>`, above), `note`, `notes`, `whoami` (and `ask`), through the same daemon call as the MCP
+  tools; a refusal (a claim someone else holds, a lease conflict)
   exits 1 and `--json` says `ok: false`.
 
 ---

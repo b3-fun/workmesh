@@ -60,6 +60,8 @@ these keys again within a few seconds of a change, so a hand edit needs no resta
 |---|---|---|
 | `messages` | absent | Rules for teammates' messages on this machine. Absent means the defaults below. |
 | `messages.wake` | `replies` | Whose message may start a turn in an idle session, while `wake` is on. `replies`: your own messages, and a reply from a person (or their agent) that the session wrote to in the last 7 days. `team`: any teammate's. `self`: only your own. Or a list of people, by the name the board shows or their GitHub login: `["Sam Lee", "bo-dev"]`. Set the first three with `workmesh wake replies\|team\|self`. A message that may not wake still reaches the session at its next prompt or tool call. |
+| `messages.hold` | `bypass` | Which sessions get a teammate's message only after you said so. `bypass`: a session that runs with permission prompts skipped (Claude Code's `bypassPermissions` or `dontAsk` mode, a Codex thread with no sandbox). `unattended`: also `auto` mode. `always`: every session. `never`: none. A held message shows in the menu bar and in `workmesh inbox --held`, and your agent never sees it unless you deliver it. Your own messages are never held. |
+| `messages.holdMinutes` | `60` | How long a held message waits for you before it is dropped, in minutes (1 to 10080). |
 
 ## Daemon and agents
 
@@ -148,7 +150,7 @@ Set by Workmesh itself, useful when you debug:
 | `~/.local/state/workmesh/daemon.secret` | The bearer secret for the daemon's loopback API (`0600`). |
 | `~/.local/state/workmesh/daemon.log` | The daemon's log when it runs without a service. Under launchd it logs to `~/Library/Logs/workmesh-daemon.log`; under systemd, to the journal (`journalctl --user -u workmesh`). |
 | `~/.local/state/workmesh/hub-forward.json` | Shared sessions and unsent events, so a restart loses nothing (`0600`). |
-| `~/.local/state/workmesh/messages.json` | Who each session wrote to in the last 7 days, so their answer counts as a reply (`0600`). |
+| `~/.local/state/workmesh/messages.json` | Who each session wrote to in the last 7 days, so their answer counts as a reply, and the messages held for you (`0600`). |
 | `~/.local/state/workmesh/update.log`, `update/previous/` | The last `workmesh update` run and the copy it rolls back to. |
 | `~/.local/state/workmesh/handoffs/` | Handoff runs on this machine. |
 | `~/Library/LaunchAgents/org.npclabs.workmesh.daemon.plist` | The daemon service on macOS. |

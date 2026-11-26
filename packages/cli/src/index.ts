@@ -327,7 +327,10 @@ program
 
 program
   .command("inbox")
-  .description("Messages waiting for this machine's agents (or, inside an agent session, for that session)")
+  .description("Messages waiting for this machine's agents (or, inside an agent session, for that session); deliver or drop one held for you")
+  .argument("[action]", "deliver | drop: answer a message held for you")
+  .argument("[id]", "the held message's id, or the end of it")
+  .option("--held", "list the messages held for you, with their ids")
   .option("--json", "machine-readable output")
   .action(wrap(runInbox));
 

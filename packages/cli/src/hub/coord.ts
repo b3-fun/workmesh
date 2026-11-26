@@ -89,6 +89,11 @@ export interface CoordView {
 export interface InboxPolicy {
   /** This message may start a turn in its idle session. Asked for a hub message and for the daemon's own notices. */
   wakes(item: HubSyncInboxItem, localKey: string): boolean;
+  /**
+   * This message is not to be handed to its session: it waits for the person, who delivers or drops it. Asked each
+   * time a hub message could be handed over, so the answer follows the session's permission mode as it is then.
+   */
+  holds(item: HubSyncInboxItem, localKey: string): boolean;
 }
 
 export interface CoordClientOptions {
@@ -426,12 +431,17 @@ export class CoordClient {
       .sort((a, b) => b.ts - a.ts);
   }
 
-  /** Messages for this session (exactly its key) not yet handed to it, oldest first (the daemon's own notices too). */
+  /**
+   * Messages for this session (exactly its key) that may be handed to it now, oldest first (the daemon's own notices
+   * too). A message this machine's policy holds for the person is not among them.
+   */
   pendingFor(localKey: string): HubSyncInboxItem[] {
     const out: HubSyncInboxItem[] = [];
     for (const { item } of this.inbox.values()) {
       if (this.delivered.has(item.id)) continue;
-      if (this.recipientLocalKey(item) === localKey) out.push(item);
+      if (this.recipientLocalKey(item) !== localKey) continue;
+      if (this.policy?.holds(item, localKey)) continue;
+      out.push(item);
     }
     for (const item of this.local.values()) {
       if (!this.delivered.has(item.id) && item.to === localKey) out.push(item);
@@ -464,13 +474,13 @@ export class CoordClient {
     return this.pendingFor(localKey).filter((i) => (policy ? policy.wakes(i, localKey) : CoordClient.wakes(i)));
   }
 
-  /** The local sessions (and subagents) with any undelivered message, for the daemon's wake check. */
+  /** The local sessions (and subagents) with a message that may be handed over, for the daemon's wake check. */
   sessionsWithPending(): Set<string> {
     const out = new Set<string>();
     for (const { item } of this.inbox.values()) {
       if (this.delivered.has(item.id)) continue;
       const k = this.recipientLocalKey(item);
-      if (k !== undefined) out.add(k);
+      if (k !== undefined && !this.policy?.holds(item, k)) out.add(k);
     }
     for (const item of this.local.values()) if (!this.delivered.has(item.id)) out.add(item.to);
     return out;
@@ -501,14 +511,37 @@ export class CoordClient {
     return id;
   }
 
-  /** Every message waiting for this device's sessions, delivered or not (the CLI's and menu bar's view). */
-  inboxItems(): Array<HubSyncInboxItem & { delivered: boolean; localKey: string }> {
-    const out: Array<HubSyncInboxItem & { delivered: boolean; localKey: string }> = [];
+  /**
+   * Every message waiting for this device's sessions, delivered or not (the person's view: the CLI at a terminal and
+   * the menu bar). `held` marks one that waits for the person instead of going to its session.
+   */
+  inboxItems(): Array<HubSyncInboxItem & { delivered: boolean; held: boolean; localKey: string }> {
+    const out: Array<HubSyncInboxItem & { delivered: boolean; held: boolean; localKey: string }> = [];
     for (const { item } of this.inbox.values()) {
       const localKey = this.recipientLocalKey(item);
-      if (localKey !== undefined) out.push({ ...item, delivered: this.delivered.has(item.id), localKey });
+      if (localKey === undefined) continue;
+      const delivered = this.delivered.has(item.id);
+      out.push({ ...item, delivered, held: !delivered && this.policy?.holds(item, localKey) === true, localKey });
     }
     return out.sort((a, b) => a.ts - b.ts);
+  }
+
+  /**
+   * These messages will not reach an agent: the person dropped them, or nobody answered in time. They are never
+   * handed over, and they are acked so the hub stops listing them. The hub is not told why.
+   */
+  discard(ids: readonly string[]): void {
+    for (const id of ids) {
+      if (isLocalNotice(id) || this.delivered.has(id)) continue;
+      this.delivered.add(id);
+      this.ackQueue.add(id);
+    }
+    while (this.delivered.size > MAX_DELIVERED) {
+      const first = this.delivered.values().next().value;
+      if (first === undefined) break;
+      this.delivered.delete(first);
+    }
+    void this.flushAcks();
   }
 
   /** The local session key a message is for (a hub that sends a bare local key is read the same way). */

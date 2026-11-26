@@ -80,6 +80,34 @@ starts on a teammate's say-so.
 On 11-25 Sean's agent messaged An; it reached An's agent at its next tool call and the reply came back 26 seconds
 later.
 
+### Messages held for you
+
+A session that runs with permission prompts skipped acts on what it reads before you see it. So a teammate's message
+for such a session does not go to the agent. It waits for you. In Claude Code these are the `bypassPermissions` and
+`dontAsk` modes. In Codex it is a thread with no sandbox.
+
+The menu bar lists the message under "Held messages", with the sender, the text and two buttons, Deliver and Drop.
+From a terminal:
+
+```text
+$ workmesh inbox --held
+Held for you: 1 message from teammates. It has not reached its session, and will not unless you deliver it. …
+- wm_01M8A262GVB2 for documents-07, held 5 min ago, dropped in 55 min if you do nothing:
+<workmesh-message from="Sean">
+│ I need src/api.ts for a one-line typo fix. Ping me when your lease is done?
+</workmesh-message>
+Deliver one with `workmesh inbox deliver <id>`, or drop it with `workmesh inbox drop <id>`. The end of an id is enough.
+```
+
+Deliver hands the message to the session at its next prompt or tool call. Drop removes it. A message you don't answer
+is dropped after 60 minutes. Your own messages are never held.
+
+Your agent is told nothing about a held message. It cannot list, deliver or drop one: those commands only work for
+you, at your own terminal or in the menu bar.
+
+The `messages.hold` key in the config file changes which sessions this covers. `unattended` adds `auto` mode, `always`
+holds for every session, and `never` turns it off ([reference](../reference/config.md#messages)).
+
 ## Claims
 
 A claim says one agent is on a Linear issue. Only one agent can hold it:

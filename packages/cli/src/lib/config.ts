@@ -161,6 +161,14 @@ export const configSchema = z.object({
         .union([z.enum(["replies", "team", "self"]), z.array(z.string().min(1).max(200)).max(100)])
         .optional()
         .catch(undefined),
+      /**
+       * Which sessions get a teammate's message only after the person said so. `bypass` (default): a session that
+       * runs with permission prompts skipped. `unattended`: also one in an automatic mode. `always`: every session.
+       * `never`: none. A held message is shown to the person (menu bar, `workmesh inbox --held`), never to the agent.
+       */
+      hold: z.enum(["bypass", "unattended", "always", "never"]).optional().catch(undefined),
+      /** How long a held message waits for the person before it is dropped, in minutes (default 60). */
+      holdMinutes: z.number().int().min(1).max(7 * 24 * 60).optional().catch(undefined),
     })
     .optional()
     .catch(undefined),
@@ -326,14 +334,20 @@ export function autoUpdateSettings(config: Pick<Config, "update">): { enabled: b
 /** Whose message may wake an idle session: one of the three rules, or a list of people. */
 export type MessageWakeRule = "replies" | "team" | "self" | string[];
 
+/** Which sessions get a teammate's message only after the person said so. */
+export type MessageHoldRule = "bypass" | "unattended" | "always" | "never";
+
 /** Who may reach this machine's sessions (SPEC §23), with the defaults. */
 export interface MessageSettings {
   wake: MessageWakeRule;
+  hold: MessageHoldRule;
+  /** How long a held message waits for the person before it is dropped. */
+  holdMinutes: number;
 }
 
 export function messageSettings(config: Pick<Config, "messages">): MessageSettings {
   const m = config.messages;
-  return { wake: m?.wake ?? "replies" };
+  return { wake: m?.wake ?? "replies", hold: m?.hold ?? "bypass", holdMinutes: m?.holdMinutes ?? 60 };
 }
 
 export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {

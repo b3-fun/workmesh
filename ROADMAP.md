@@ -401,6 +401,11 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
   person's own messages, and a reply from someone the session wrote to first. A teammate's unasked message no longer
   starts a turn while the person is away; it waits for the session's next prompt or tool call. `workmesh wake team`
   brings back the old rule on a machine.
+- 11-26 A session with no permission prompts gets a teammate's message only after its person delivered it (B3-7232,
+  SPEC §23). The message is held on the receiving machine, shown in the menu bar and by `workmesh inbox --held`, and
+  dropped after 60 minutes with no answer. The agent is told nothing, and cannot deliver it. A local test of four
+  current Claude models (122 sessions) led to this: 11 of 14 ran a harmless-looking command for a teammate and sent
+  the output back, with their person away.
 - 11-25 0.12.3: every session's own token usage by model and kind (input, cache reads and writes, output), Claude Code
   main threads included, read incrementally from its transcript or rollout and saved with the forwarder's state, so
   the hub can price an API-equivalent cost instead of an output-only floor (SPEC §45, #51, #52; B3-7227). Released

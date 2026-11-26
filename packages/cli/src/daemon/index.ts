@@ -134,7 +134,14 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   };
   const settings = (): ReturnType<typeof delegateSettings> => readSettings().v;
   // Who may reach this machine's sessions (SPEC §23): its own rules, and the record of who each session wrote to.
-  const messages = new MessageGate({ coord: () => coord, settings: () => readSettings().messages, file: messagesStatePath() });
+  const messages = new MessageGate({
+    coord: () => coord,
+    settings: () => readSettings().messages,
+    // A session's mode as its transcript last said it, for one whose hooks did not report it (SPEC §26).
+    mirrorMode: (key) => forwarder?.modeOf(key),
+    file: messagesStatePath(),
+    log,
+  });
   const checkouts = new CheckoutIndex(checkoutsPath());
   const runner = new HandoffRunner({
     coord: () => coord,
@@ -217,7 +224,11 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       person: hub.person?.name,
       active: () => fwd.hasLiveShared(),
       log,
-      onSync: (next, previous) => delegate.onSync(next, previous),
+      onSync: (next, previous) => {
+        // Held messages first (what waited too long is dropped), then wakes and handoffs.
+        messages.sweep();
+        delegate.onSync(next, previous);
+      },
       policy: messages,
     });
     coord.start();
@@ -300,6 +311,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     return sessionVersions.note(key, event.source, startedAt);
   };
   const applyHookEvent = (event: SessionEvent, hook: string, meta?: HookMeta) => {
+    // The hook names the session's permission mode: known before any message is handed to it (SPEC §23).
+    messages.observe(event);
     let deny: string | undefined;
     try {
       deny = coordHooks.refuse(event, hook);
@@ -347,7 +360,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     }
     const unread = coord
       .inboxItems()
-      .filter((m) => !m.delivered)
+      .filter((m) => !m.delivered && !m.held)
       .map((m) => ({
         id: m.id,
         session: m.localKey,
@@ -358,7 +371,12 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         ts: m.ts,
         delivered: m.delivered,
       }));
-    return { available: view.available, holds, unread };
+    // Held for the person: at most 50 rows, each with the start of its cleaned text.
+    const held = messages
+      .heldMessages(nameOf)
+      .slice(0, 50)
+      .map((m) => ({ ...m, text: m.text.slice(0, 1000) }));
+    return { available: view.available, holds, unread, held };
   };
 
   // 0.12 (SPEC §41): what's newer, from the hub or npm; the menu bar's release; opt-in auto-update.
@@ -460,6 +478,16 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         onAccepted: (h) => delegate.accepted(h),
         runningHandoffs: () => runner.running(),
         sent: (key, to, info) => messages.sent(key, to, info),
+        held: {
+          list: () => messages.heldMessages((local) => store.get(local)?.name),
+          deliver: (id) => {
+            const r = messages.deliver(id);
+            // An idle session with a waiter gets it now.
+            if (r.ok) delegate.check();
+            return r;
+          },
+          drop: (id) => messages.drop(id),
+        },
       }),
     wakeWait: (session, timeoutMs, signal) => delegate.wait(session, timeoutMs, signal),
     reloadHub: () => {

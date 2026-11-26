@@ -108,10 +108,15 @@ and `KeepAlive` works until the app offers launch at login itself.
 ## Updates
 
 The daemon's `GET /update` says whether a newer Workmesh is out, how this
-install can take it, and where the release's menu bar zip is (with its SHA-256,
-as GitHub lists it for the release asset). The app reads it every 10 minutes and
-when the menu opens (at most every 30 s); a daemon without the endpoint (404)
-shows nothing.
+install can take it, and where the release's menu bar zip is, with its SHA-256.
+The app reads it every 10 minutes and when the menu opens (at most every 30 s);
+a daemon without the endpoint (404) shows nothing.
+
+The daemon sends the zip only once it may be offered. The release must be older
+than the waiting time (a day by default). With release signing on, a maintainer
+key must also have signed the release's file list, and the SHA-256 is the one in
+that list. With signing off, it is the digest GitHub lists for the asset. The
+app never reads GitHub itself (docs/SPEC.md §41).
 
 **Workmesh itself.** When `install.canUpdate`, the row opens the update window,
 which runs the daemon's `run` argv as a child of the app (not through the
@@ -128,7 +133,8 @@ bar app 0.12.1** after a good run, and the row offers it on its own when only
 the app is behind. It:
 
 1. downloads the zip (https only; plain http to 127.0.0.1 for the mock),
-2. refuses it unless its SHA-256 equals the release's,
+2. refuses it unless its SHA-256 equals the one the daemon gave for the release
+   (the signed list's, with signing on),
 3. unpacks it with `ditto -x -k` and requires one app whose bundle id is this
    app's and whose version is the release's,
 4. clears `com.apple.quarantine` from every item in the new app (a read-only one gets

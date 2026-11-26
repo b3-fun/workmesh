@@ -1613,6 +1613,8 @@ reader, §14).
 
 - **The team view** already had `me.email` and `people[].email` beside `name` (§16). Pairing already answers with the
   person's email (§3.1).
+- **The relay's own email comes with any other.** A hub that sends any person's email also sends `me.email` on sync,
+  which the relay's stricter check relies on (§49).
 - **Approvers.** A gate policy's `approverEmails` has one email per entry of `approvers`, in the same order. A reader
   uses the list only when every entry is an email and it has as many entries as the reader kept names. Otherwise the
   list reads as absent, so an email is never read against the wrong approver.

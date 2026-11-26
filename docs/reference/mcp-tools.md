@@ -62,7 +62,7 @@ Changes team state on the hub; destructive: no.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `to` | string | yes | A person (name, email or GitHub login), a session's name as the board shows it, its key (claude-code:<id>), or its hub key. |
+| `to` | string | yes | A person (display name or email), a session's name as the board shows it, its key (claude-code:<id>), or its hub key. |
 | `text` | string | yes | The message (up to 4,000 characters). |
 | `kind` | `person` \| `agent` \| `session` | no | What `to` names, when it is ambiguous. |
 | `thread` | string | no | A thread id to reply in. |
@@ -215,7 +215,7 @@ Changes team state on the hub; destructive: no.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `to` | string | yes | A person (name, email or GitHub login), or `me`. |
+| `to` | string | yes | A person (display name or email), or `me`. |
 | `task` | string | yes | What to do, self-contained (up to 4,000 characters): the agent that takes it starts from nothing else. |
 | `repo` | string | no | owner/name (default: this session's repo). |
 | `issue` | string | no | A Linear issue id, e.g. B3-123 (optional). |

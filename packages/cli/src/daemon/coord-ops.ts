@@ -316,7 +316,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       if (unavailable) return unavailable;
       const toRaw = str(a.to, 300);
       const text = scrubText(str(a.text, 16_000), { home, max: 4000 })?.text;
-      if (!toRaw) return fail("`send` needs `to`: a person (name, email or GitHub login), an agent's session name, or a session's hub key.");
+      if (!toRaw) return fail("`send` needs `to`: a person (display name or email), an agent's session name, or a session's hub key.");
       if (!text) return fail("`send` needs `text`.");
       const to = recipient(toRaw, str(a.kind, 20), st, myself);
       if ("error" in to) return fail(to.error);
@@ -557,7 +557,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       if (unavailable) return unavailable;
       const toRaw = str(a.to, 200);
       const task = scrubText(str(a.task, 16_000), { home, max: 4000 })?.text;
-      if (!toRaw) return fail("`handoff` needs `to`: a person (name, email or GitHub login), or `me` for one of your other machines.");
+      if (!toRaw) return fail("`handoff` needs `to`: a person (display name or email), or `me` for one of your other machines.");
       if (!task) return fail("`handoff` needs `task`: what to do, in a few sentences.");
       const target = /^(me|myself|self)$/i.test(toRaw) ? (myself.person ? { person: myself.person, email: myself.email } : undefined) : personOf(toRaw, st, myself);
       if (!target) return fail(`Workmesh doesn't know who ${toRaw} is on this team (\`roster\` lists people).`);
@@ -819,14 +819,15 @@ function delegateError(r: Extract<CoordResult<unknown>, { ok: false }>): CoordOp
 }
 
 /** A person on the roster, as far as a typed name needs them. */
-type RosterPerson = { person: string; email?: string; github?: string };
+type RosterPerson = { person: string; email?: string };
 /** Who a typed name stands for: the person (with their email when the roster has it), or why it can't be told. */
 type ResolvedPerson = { person: string; email?: string } | { error: string };
 
 /**
- * The roster person a typed display name, email or GitHub login names (SPEC §49); undefined when the roster has
- * nobody by it. A name that fits several people who each have an email is refused with the choices, never guessed.
- * With no emails to tell them apart (a hub that sends none), the name alone goes to the hub, as before.
+ * The roster person a typed display name or email names (SPEC §49); undefined when the roster has nobody by it. A
+ * GitHub login matches nobody: a machine reports its own person's login, so anyone can claim one. A name that fits
+ * several people who each have an email is refused with the choices, never guessed. With no emails to tell them
+ * apart (a hub that sends none), the name alone goes to the hub, as before.
  */
 function rosterPerson(to: string, roster: ReadonlyArray<RosterPerson> | undefined, me?: PersonRef): ResolvedPerson | undefined {
   const low = to.toLowerCase();
@@ -835,7 +836,7 @@ function rosterPerson(to: string, roster: ReadonlyArray<RosterPerson> | undefine
   if (me?.person && !people.some((p) => samePerson(p, me))) people.push({ person: me.person, email: me.email });
   // A typed email names a person by email only: a display name that looks like someone's email never competes with it.
   const typed = emailKey(to);
-  const hits = people.filter((p) => (typed !== undefined ? emailKey(p.email) === typed : p.person.toLowerCase() === low || p.github?.toLowerCase() === low));
+  const hits = people.filter((p) => (typed !== undefined ? emailKey(p.email) === typed : p.person.toLowerCase() === low));
   const first = hits[0];
   if (!first) return undefined;
   // One entry per email: a person the roster lists twice is still one person.
@@ -852,7 +853,7 @@ function rosterPerson(to: string, roster: ReadonlyArray<RosterPerson> | undefine
   return { error: `"${to}" matches ${byEmail.size} people on this team: ${list}. Use one of those emails instead of the name.` };
 }
 
-/** A `to` string → the person the roster names (display name, email, GitHub login), else the string itself. */
+/** A `to` string → the person the roster names (display name or email), else the string itself. */
 export function personOf(to: string, st: { roster: ReadonlyArray<RosterPerson> } | undefined, me?: PersonRef): ResolvedPerson | undefined {
   const hit = rosterPerson(to, st?.roster, me);
   if (hit) return hit;

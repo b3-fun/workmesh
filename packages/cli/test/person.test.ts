@@ -463,7 +463,6 @@ describe("a name a person or an agent typed (SPEC §49)", () => {
 
   it("one person: the request carries their email beside the name", () => {
     expect(recipient("an", undefined, two)).toEqual({ person: "An", email: "an@example.com" });
-    expect(recipient("an-b3", undefined, two)).toEqual({ person: "An", email: "an@example.com" });
     expect(recipient("AN@example.com", "person", two)).toEqual({ person: "An", email: "an@example.com" });
     // An email picks one of two people with the same name.
     expect(recipient(OTHER_SAM, undefined, two)).toEqual(namesake);
@@ -480,10 +479,30 @@ describe("a name a person or an agent typed (SPEC §49)", () => {
       error: '"Sam Lee" matches 2 people on this team: sam.lee@example.org ("Sam Lee"); sam@example.com ("Sam Lee"). Use one of those emails instead of the name.',
     });
     expect(recipient("Sam Lee", undefined, roster(me, an), me)).toEqual(me);
-    // A GitHub login that is also someone else's display name fits both: asked, not guessed.
-    expect(recipient("an-b3", undefined, roster(an, { person: "an-b3", email: "riley@example.com" }))).toEqual({
-      error: '"an-b3" matches 2 people on this team: an@example.com ("An"); riley@example.com ("an-b3"). Use one of those emails instead of the name.',
-    });
+  });
+
+  it("a GitHub login names nobody on this machine: the text goes to the hub as typed", () => {
+    // The roster lists An with the login an-b3, which is not An's display name.
+    expect(recipient("an-b3", undefined, two)).toEqual({ person: "an-b3" });
+    expect(recipient("AN-B3", "person", two)).toEqual({ person: "AN-B3" });
+    // A login that is someone else's display name names that person only.
+    expect(recipient("an-b3", undefined, roster(an, { person: "an-b3", email: "riley@example.com" }))).toEqual({ person: "an-b3", email: "riley@example.com" });
+  });
+
+  it("send to a GitHub login: the request carries the text as typed, not the person or their email", async () => {
+    const x = relay({ replies: [{ status: 200, body: { ok: true, id: "m_9" } }] });
+    x.sync({ roster: [{ ...an, sessions: [] }] });
+    const sent = await runCoordOp({ op: "send", args: { to: "an-b3", text: "can I take src/api.ts?" }, caller: {} }, x.ops);
+    expect(sent).toMatchObject({ ok: true, text: "Sent to an-b3 (message m_9)." });
+    expect(x.calls).toEqual([{ url: "https://hub.test/relay/messages", body: { to: { person: "an-b3" }, text: "can I take src/api.ts?" } }]);
+  });
+
+  it("handoff to a GitHub login: the request carries the text as typed, not the person or their email", async () => {
+    const x = relay({ replies: [{ status: 200, body: { ok: true, handoff: handoff({ from: me, to: { person: "an-b3" } }) } }] });
+    x.sync({ roster: [{ ...an, sessions: [] }] });
+    const handed = await runCoordOp({ op: "handoff", args: { to: "an-b3", task: "finish the port" }, caller: {} }, x.ops);
+    expect(handed.text).toMatch(/^Handed to an-b3 \(handoff h_1\)/);
+    expect(x.calls).toEqual([{ url: "https://hub.test/relay/handoffs", body: { action: "create", to: { person: "an-b3" }, task: "finish the port" } }]);
   });
 
   it("a typed email names a person by email only; the choices show each email first, the name quoted", () => {
@@ -504,7 +523,7 @@ describe("a name a person or an agent typed (SPEC §49)", () => {
   it("with no emails to tell people apart, the name goes to the hub as before", () => {
     const plain = roster({ person: "Sam Lee" }, { person: "Sam Lee" }, { person: "An", github: "an-b3" });
     expect(recipient("sam lee", undefined, plain)).toEqual({ person: "Sam Lee" });
-    expect(recipient("an-b3", undefined, plain, { person: "Sam Lee", email: SAM })).toEqual({ person: "An" });
+    expect(recipient("an", undefined, plain, { person: "Sam Lee", email: SAM })).toEqual({ person: "An" });
     expect(recipient("sam lee", undefined, plain, { person: "Sam Lee", email: SAM })).toEqual({ person: "Sam Lee" });
     // One of the two has no email: nothing tells them apart, so the hub resolves the name.
     expect(recipient("Sam Lee", undefined, roster(namesake, { person: "Sam Lee" }))).toEqual({ person: "Sam Lee" });
@@ -545,7 +564,7 @@ describe("a name a person or an agent typed (SPEC §49)", () => {
   it("a hub that sends no emails gets the bodies it always got", async () => {
     const x = relay({ paired: { name: "Sam Lee" }, replies: [{ status: 200, body: { ok: true, id: "m_8" } }, { status: 200, body: { ok: true, handoff: handoff({ from: { person: "Sam Lee" }, to: { person: "Sam Lee" } }) } }] });
     x.sync({ me: { person: "Sam Lee" }, roster: [{ person: "An", github: "an-b3", sessions: [] }] });
-    await runCoordOp({ op: "send", args: { to: "an-b3", text: "hi" }, caller: {} }, x.ops);
+    await runCoordOp({ op: "send", args: { to: "an", text: "hi" }, caller: {} }, x.ops);
     const mine = await runCoordOp({ op: "handoff", args: { to: "me", task: "finish the port" }, caller: {} }, x.ops);
     expect(mine.text).toMatch(/^Handed to yourself/);
     expect(x.calls.map((c) => c.body)).toEqual([

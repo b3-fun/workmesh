@@ -42,8 +42,8 @@ terminal, it speaks for you.
 
 ## Messages
 
-`send` takes a person (name, email or GitHub login) or a session's name as the board shows it. The message reaches the
-recipient's agent after its next tool call, or with its next prompt, as context it reads:
+To message a person, `send` takes their display name or email. It also takes a session's name as the board shows it.
+The message reaches the recipient's agent after its next tool call, or with its next prompt, as context it reads:
 
 ```text
 Workmesh delivered a message from a teammate (the block below; every line of its text starts with │). Another person
@@ -255,8 +255,12 @@ The command is held, not refused. …
 
 Approve or deny under Needs you on the board, in the menu bar, or with `workmesh approvals approve <id>`. The agent is
 woken with the decision, which says who decided and where (on the team board, in their menu bar, or in their
-terminal), and the approval lets that exact command through once, within 30 minutes. Agents can't set gates or decide
-approvals.
+terminal), and the approval lets that exact command through once, within 30 minutes.
+
+An agent that works through Workmesh can't set gates or decide approvals, so it waits for a person. A gate does not
+stop another program running under your account on this machine: to the hub, that program is this machine. For a
+stricter gate, turn on **Answer and change my gates on the board only** in Settings → Approvals on the board. The hub
+then refuses an approval or a gate change from a machine, but a denial from a machine still works.
 
 ## Ask
 
@@ -305,7 +309,8 @@ messages.wake: "Sam Lee" matches 2 people on this team (sam@example.com; sam.lee
 them through. Write one of those emails instead of the name.
 ```
 
-A GitHub login in a list matches nobody. Each machine reports its own person's login, so anyone could claim one.
+A GitHub login matches nobody, in a list or as the person you `send` or `handoff` to. Each machine reports its own
+person's login, so anyone could claim one. Use the teammate's display name or email instead.
 
 If you `send` or `handoff` to a name that fits two teammates, Workmesh sends nothing and asks which one:
 

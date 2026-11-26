@@ -1841,3 +1841,84 @@ reader, §14).
     lacks. A GitHub login goes the same way, and the hub does not match logins either (§21).
 - **Unchanged:** which session a lease, hold or message belongs to. Those are matched by session key, never by a
   person's name.
+
+---
+
+# Review exchange: agents review each other's PRs (Sean, 2026-11-26, Linear B3-7259)
+
+Sean, 11-26: "agents asking (maybe automatically) each other for PR review when PRs are ready". When a session opens a
+PR or marks one ready, its agent (or its relay, by the person's standing rule) asks the hub for a review. The hub
+routes it to one or two teammates, never the author, and each gets a **review handoff**: a read-only handoff (§30) that
+their relay runs in a fresh checkout of the PR's head, with no way to push, merge or approve. The findings come back to
+the author's session as data and show on the board. The author's agent fixes and asks again, for at most three rounds;
+then it is a person's turn. **An agent review never approves or merges a PR.** A person's approval stays required
+(SOC 2): there is no approving verdict in the protocol, and the reviewer's relay refuses `gh pr review --approve` and
+every merge.
+
+All of it is one new endpoint, two optional fields on a handoff and one optional object on sync, beside v2. An older
+hub answers `404` and sends no `reviews`; a relay then offers no reviews.
+
+## 52. Review endpoints
+
+Code form: `packages/protocol/src/review.ts` (two readings per body, §14). Auth, keys and status codes as in §21: the
+device token names the person, requests carry ingest keys, answers carry hub keys.
+
+| Body (`POST /relay/reviews`) | Answer |
+|---|---|
+| `{ action: "request", from?: sessionKey, repo, pr, focus?: ≤ 1000, reviewers?: [{ person, email? }] (1–2), count?: 1 \| 2, auto?: true, agent?: claude \| codex, model?, headSha?, paths?: [path] ≤ 300, owners?: [owner] ≤ 50 }` | `{ ok: true, round, rounds, reviewers: [{ id, to: { person, email? }, why, agent? }] }`; `404` nobody to review it; `409` the PR had its rounds, or a round is open (`round`, `reviewers`), or a named reviewer fits more than one person (`candidates`) |
+| `{ action: "policy", accept: auto \| ask \| never, agent?, model?, post: boolean }` | `{ ok: true }` |
+| `{ action: "report", id, sessionKey?, result: ReviewResult }` | `{ ok: true }`; `404` no such review handoff run by this machine; `409` its state doesn't allow it |
+| `{ action: "result", id }` | `{ ok: true, result? }` (absent while it runs); `404` not one this person sent or ran |
+
+- **request.** The author's session (`from`, an ingest key; absent: the person at a terminal or on the board) asks for
+  a review of `repo#pr`. `focus` is what the author wants looked at. `reviewers` names people; `count` asks for two
+  reviewers instead of one. `agent` and `model` are the author's own harness and model. `headSha`, `paths` (the PR's
+  changed files, repo-relative, §21 path rules) and `owners` (their CODEOWNERS owners: `@login`, `@org/team` or an
+  email, in the file's spelling) are what the author's checkout says about the PR. `auto: true` says the relay asked
+  by its person's standing rule (§53), not because an agent or the person asked just now. Paths and owners are
+  metadata about a shared repo, like a lease's paths (§3.3); no diff, file content or PR text goes in a request.
+- **Routing** (the hub picks up to `count` reviewers, never the author, never twice the same person):
+  1. The people the request names, when each is found by §48's rule and is not the author. A name that fits more than
+     one person answers `409` with `candidates`, and nothing is made.
+  2. Otherwise: CODEOWNERS owners of the changed paths. An email owner is the person with that email. A `@login` owner
+     is a person only when exactly one member reports that GitHub login; a team is not read. A login is only a hint
+     here (a machine reports its own person's login, §49): it decides an order, never who may do what.
+  3. Then people whose sessions recently worked those paths in that repo (edits, leases, claims, sessions).
+  4. Then people who are online and idle.
+  Within each step the hub prefers a person whose machine reviews with another agent CLI than the author's (a Codex
+  review for a Claude Code PR, and the reverse), then another model. Only people with a machine whose review policy is
+  `auto` or `ask` are candidates. `404` when nobody is left.
+- **One review handoff per reviewer** (§30, `kind: "review"`): from the author's session to the reviewer, with
+  `review: { pr, round, rounds, focus?, headSha?, why, authorAgent? }` and the repo. Its `task` is the hub's own line
+  ("Review PR #212 in b3-fun/b3os-beta, round 1 of 3"); a relay builds the review from `review`, never from `task`.
+  The handoff moves as §30 says (offered → accepted → started → done | failed, or declined); `report` makes it `done`.
+- **Rounds.** A PR (`repo#pr`) gets at most `HUB_REVIEW_ROUNDS_MAX` (3) rounds of agent review. A round is the review
+  handoffs one request made. A request while a round is open (some handoff in it not finished) answers `409` with that
+  round. A request after the last round answers `409`: the PR is ready for a person.
+- **Only machines that can read it.** A hub sends a review handoff (on sync, on `/relay/team`, in an answer) only to
+  devices that sent a `policy`. A relay that predates reviews never sees one, so it can't run one as a task. A relay
+  reading a handoff whose `kind` it doesn't know, or a review without a readable `review`, drops it (§30).
+- **policy.** This machine's rule for review handoffs and what it reviews with: `accept` (`auto` runs them at once,
+  `ask` waits for the person as any handoff does, `never` runs none here), the agent CLI and model, and `post`
+  (whether it posts its reviews on the PR). The relay sends it at start and when it changes. The hub keeps the latest
+  per device.
+- **report.** The machine running a review handoff (its `device`, §30) sends the result and the handoff is `done`.
+  The hub keeps the result and puts its numbers on the handoff (`review.outcome`). The text is the reviewer agent's,
+  redacted on the reviewer's machine (§9) and blanked again by the hub (§10). It goes at either sharing level: it is
+  written on purpose for a teammate, as a handoff's task is (§30). A failed review is a `fail` move with a note
+  (§30).
+- **result.** The whole result for the author's relay (or the reviewer's), which a sync carries only as
+  `review.outcome`.
+- **ReviewResult** = `{ verdict, summary: ≤ 2000, findings: [Finding] ≤ 50, headSha?, agent?, model?, tests?: passed |
+  failed | not_run, posted?: true }`. `verdict` is `no_issues`, `comments` (only low or nit findings) or
+  `changes_suggested` (a high or medium one); there is no approving verdict, and a reader takes one it doesn't know as
+  `comments`. **Finding** = `{ file?, line?, endLine?, severity: high | medium | low | nit, summary: ≤ 500,
+  suggestion?: ≤ 2000 }`; a reader takes a severity it doesn't know as `low`.
+
+`GET /relay/sync` (§21) gains one optional object: `reviews: { auto: boolean, autoRepos: [repo] }`. Present means the
+hub has the review exchange. `auto` is the device's person's own setting ("ask for an agent review when my PR is
+ready", off by default); `autoRepos` are the repos where every ready PR gets one (none by default). The sync's
+`handoffs` (§30) carry review handoffs with their `kind` and `review`, as above.
+
+What the hub does with a round is the hub's own (the board, a person's turn after the last round): the hosted hub's
+docs say how.

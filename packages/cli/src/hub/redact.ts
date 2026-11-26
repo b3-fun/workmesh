@@ -233,7 +233,7 @@ const PREFIXED: Array<{ re: RegExp; when?: (token: string) => boolean }> = [
   { re: /\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b/g }, // AWS access key id
   { re: /\bnpm_[A-Za-z0-9]{30,}/g }, // npm
   { re: /\blin_(?:api|oauth)_[A-Za-z0-9]{20,}/g }, // Linear
-  { re: /\bbp_[0-9a-f]{32,}/g }, // Workmesh hub device token
+  { re: /\b(?:bp|wr)_[0-9a-f]{32,}/g }, // Workmesh hub device token
   { re: /\bab_[0-9a-f]{32,}/g }, // Workmesh relay device token
   { re: /\bAIza[0-9A-Za-z_-]{35}/g }, // Google API key
   { re: /\bya29\.[0-9A-Za-z_-]{20,}/g }, // Google OAuth access token

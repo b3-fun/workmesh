@@ -57,6 +57,7 @@ const message = (over: Partial<Message> = {}): Message => ({
   to: ME,
   from: { person: "Sam", sessionName: "auth-refactor", sessionKey: SAM },
   text: "Can you rebase?",
+  release: "trusted",
   ts: T,
   wake: true,
   ...over,
@@ -158,6 +159,29 @@ function harness(opts: { settings?: Partial<MessageSettings>; file?: string } = 
     },
   };
 }
+
+it("requires a decision on an unmarked or unknown release from another person, including at normal permission levels", async () => {
+  for (const release of [undefined, "unknown" as never]) {
+    const x = harness({ settings: { hold: "never", wake: "team" } });
+    x.sync({ inbox: [message({ release, text: "The review is ready." })] });
+    expect(x.boundary("s1", "default") ?? "").not.toContain("The review is ready.");
+    expect(x.coord.wakeFor(LOCAL)).toEqual([]);
+    expect((await x.op("inbox")).text).toContain("No new messages");
+    expect((await x.op("inbox", { action: "deliver", id: "wm_01" }, PERSON)).ok).toBe(true);
+    expect(x.boundary()).toContain("│ The review is ready.");
+  }
+});
+
+it("acceptance on the board reaches an agent once, even on a machine holding trusted senders", async () => {
+  const x = harness({ settings: { hold: "always" } });
+  x.sync({ inbox: [message({ release: "accepted" })] });
+  const first = await x.op("inbox");
+  expect(first.text).toContain("│ Can you rebase?");
+  expect(first.data).toMatchObject({ messages: [{ id: "wm_01" }], quoted: first.text });
+  expect(x.coord.takeMessageSender(LOCAL)).toBe("Sam");
+  expect(x.coord.takeMessageSender(LOCAL)).toBeUndefined();
+  expect(x.coord.pendingFor(LOCAL)).toEqual([]);
+});
 
 /** The ids a waiter for this session would be woken with. */
 const wakes = (x: ReturnType<typeof harness>, key = LOCAL) => x.coord.wakeFor(key).map((i) => i.id);
@@ -305,7 +329,7 @@ describe("who may wake an idle session", () => {
       const x = harness({ settings: { wake: wake as MessageSettings["wake"] } });
       x.sync({
         inbox: [
-          message({ id: "wm_me", from: { person: "an" }, wake: undefined }),
+          message({ id: "wm_me", release: "own", from: { person: "an" }, wake: undefined }),
           message({ id: "wm_mine", from: { person: "An", sessionKey: `${DEV}:codex:t1` } }),
           message({ id: "wm_quiet", from: { person: "An", sessionKey: `${DEV}:codex:t1` }, wake: undefined }),
         ],
@@ -614,15 +638,15 @@ describe("a teammate's message for a session with no permission prompts", () => 
     const callers: CoordOpRequest["caller"][] = [{ cwd: "/nowhere" }, { cwd: "/nowhere", client: "claude-code" }, { cwd: "/nowhere", client: "mcp:cli" }];
     for (const caller of callers) {
       const r = await x.op("inbox", {}, caller);
-      expect(r.text, JSON.stringify(caller)).toContain("│ Second one.");
+      expect(r.ok, JSON.stringify(caller)).toBe(false);
       expect(r.text, JSON.stringify(caller)).not.toContain("Can you rebase?");
       expect(r.text, JSON.stringify(caller)).not.toMatch(/held/i);
-      expect((r.data as { messages: Array<{ id: string }> }).messages.map((m) => m.id)).toEqual(["wm_02"]);
+      expect(r.data).toBeUndefined();
     }
     // With nothing but a held message, such a caller reads an empty list.
     const y = started();
     y.sync({ inbox: [message()] });
-    expect(await y.op("inbox", {}, { cwd: "/nowhere", client: "claude-code" })).toMatchObject({ ok: true, text: "No messages waiting for this machine's agents.", data: { messages: [] } });
+    expect(await y.op("inbox", {}, { cwd: "/nowhere", client: "claude-code" })).toMatchObject({ ok: false });
   });
 
   it("a held message does not wake its session; a delivered one does", async () => {
@@ -637,7 +661,7 @@ describe("a teammate's message for a session with no permission prompts", () => 
 
   it("my own messages are never held, and Workmesh's own notices are unaffected", () => {
     const x = started({ settings: { hold: "always" } });
-    x.sync({ inbox: [message({ id: "wm_me", from: { person: "An" } }), message({ id: "wm_mine", from: { person: "Someone", sessionKey: `${DEV}:codex:t1` } })] });
+    x.sync({ inbox: [message({ id: "wm_me", release: "own", from: { person: "An" } }), message({ id: "wm_mine", from: { person: "Someone", sessionKey: `${DEV}:codex:t1` } })] });
     const id = x.coord.notify(LOCAL, "Workmesh: your handoff to Sam is done.");
     expect(x.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual(["wm_me", "wm_mine", id]);
     expect(x.gate.heldMessages()).toEqual([]);
@@ -765,7 +789,7 @@ describe("who may message this machine's sessions at all", () => {
 
   it("`self` drops a teammate's message here: never stored, never delivered, acked, and logged once an hour per sender", async () => {
     const x = harness({ settings: { from: "self" } });
-    const inbox = [message(), message({ id: "wm_02" }), message({ id: "wm_bo", from: { person: "Bo" } }), message({ id: "wm_me", from: { person: "An" } })];
+    const inbox = [message(), message({ id: "wm_02" }), message({ id: "wm_bo", from: { person: "Bo" } }), message({ id: "wm_me", release: "own", from: { person: "An" } })];
     x.sync({ inbox });
     expect(x.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual(["wm_me"]);
     expect(x.coord.inboxItems().map((i) => i.id)).toEqual(["wm_me"]);
@@ -957,10 +981,10 @@ describe("my own message, on a hub that sends emails (SPEC §49)", () => {
     expect(x.acked().sort()).toEqual(["wm_bare", "wm_namesake"]);
   });
 
-  it("on a hub that sends no email of mine, the display name decides, as before", () => {
+  it("without my email or a hub ownership decision, a display name cannot identify my messages", () => {
     const x = harness({ settings: { wake: "self" } });
     x.sync({ inbox });
-    expect(wakes(x)).toEqual(["wm_me", "wm_bare", "wm_namesake"]);
+    expect(wakes(x)).toEqual([]);
   });
 });
 
@@ -994,7 +1018,7 @@ describe("a message the hub made from a Linear prompt", () => {
   it("follows the rules of any teammate's message, also when Linear names its author as this machine's person", async () => {
     // Linear names the author. No paired machine vouches for the name, so it is never the person's own message.
     const named = linear({ from: { person: "An" } });
-    const own = message({ id: "wm_own", from: { person: "An" } });
+    const own = message({ id: "wm_own", release: "own", from: { person: "An" } });
     // Wake: the person's own message wakes under every rule; this one only as a teammate's would.
     const x = harness();
     x.sync({ inbox: [named, own] });

@@ -223,6 +223,7 @@ export class CoordClient {
   private readonly refusedIds = new Set<string>();
   private readonly onSync: CoordClientOptions["onSync"];
   private readonly policy: InboxPolicy | undefined;
+  waitingMessages: NonNullable<HubSyncAccepted["waitingMessages"]> = [];
   private readonly onNewDevices: CoordClientOptions["onNewDevices"];
   /** v2 endpoints this hub answered 404 to, and until when that is remembered. */
   private readonly v2Absent = new Map<string, number>();
@@ -509,9 +510,10 @@ export class CoordClient {
    * no paired machine or signed-in member vouches for the name. Such a message follows a teammate's rules.
    */
   isOwn(item: HubSyncInboxItem): boolean {
+    if (item.release === "own") return true;
     if (item.via !== undefined) return false;
     if (item.from.sessionKey !== undefined && this.localKey(item.from.sessionKey) !== undefined) return true;
-    return this.surelyMe(item.from);
+    return !!this.self().email && this.surelyMe(item.from);
   }
 
   /** Waiting messages that may wake this session if it is idle, oldest first: this machine's policy decides. */
@@ -595,6 +597,15 @@ export class CoordClient {
     return this.localKey(item.to) ?? (!item.to.startsWith("dev_") && item.to.includes(":") ? item.to : undefined);
   }
 
+  private readonly afterMessage = new Map<string, Set<string>>();
+
+  /** Consume once at the next tool call in this session, or clear at the end of its turn. */
+  takeMessageSender(key: string): string | undefined {
+    const sender = this.afterMessage.get(key);
+    this.afterMessage.delete(key);
+    return sender ? Array.from(sender).join(", ") : undefined;
+  }
+
   /** These messages reached their agent: never hand them over again, and ack them to the hub. */
   markDelivered(ids: readonly string[]): void {
     for (const id of ids) {
@@ -603,6 +614,13 @@ export class CoordClient {
       const item = this.inbox.get(id)?.item;
       const to = item ? this.recipientLocalKey(item) : undefined;
       if (item && to !== undefined) {
+        if (!this.isOwn(item)) {
+          const senders = this.afterMessage.get(to) ?? new Set<string>();
+          if (!senders.size && this.afterMessage.size >= MAX_DELIVERED) this.afterMessage.delete(this.afterMessage.keys().next().value!);
+          const name = label(item.from.person) || "a teammate";
+          if (!senders.has(name)) senders.add(senders.size < 3 ? name : "other teammates");
+          this.afterMessage.set(to, senders);
+        }
         this.received.push({
           to: CoordClient.family(to),
           id,
@@ -789,7 +807,8 @@ export class CoordClient {
     const newDevices = sync.newDevices;
     const previous = this.state;
     // The person's name comes with the sync, and the policy reads it to tell their own messages from a teammate's.
-    this.state = { ...this.withoutLocalIds(sync), newDevices: undefined };
+    this.waitingMessages = (sync.waitingMessages ?? []).map(({ id, sender }) => ({ id, sender: label(sender) }));
+    this.state = { ...this.withoutLocalIds(sync), newDevices: undefined, waitingMessages: undefined };
     const s = this.withoutRefused(this.state);
     this.state = s;
     this.fetchedAt = now;

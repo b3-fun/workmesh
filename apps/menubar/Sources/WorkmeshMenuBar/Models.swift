@@ -249,20 +249,27 @@ struct TeamState: Decodable {
 // deliver it (absent from older daemons). Read leniently, like the rest of
 // /team.
 
+struct WaitingMessage: Decodable, Identifiable {
+    let id: String
+    let sender: String
+}
+
 struct CoordState: Decodable {
     /// nil = not synced yet; false = the hub has no coordination.
     let available: Bool?
     let holds: [CoordHold]
     let unread: [CoordMessage]
     let held: [CoordHeld]
+    let waitingMessages: [WaitingMessage]
 
-    private enum K: String, CodingKey { case available, holds, unread, held }
+    private enum K: String, CodingKey { case available, holds, unread, held, waitingMessages }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         available = c.lenient(Bool.self, .available)
         holds = c.lossy(CoordHold.self, .holds)
         unread = c.lossy(CoordMessage.self, .unread)
+        waitingMessages = c.lossy(WaitingMessage.self, .waitingMessages)
         held = c.lossy(CoordHeld.self, .held)
     }
 
@@ -271,6 +278,7 @@ struct CoordState: Decodable {
         self.holds = holds
         self.unread = unread
         self.held = held
+        self.waitingMessages = []
     }
 }
 

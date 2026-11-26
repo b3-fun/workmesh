@@ -1,3 +1,4 @@
+import { DeviceCredentials } from "../hub/device-auth";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -164,6 +165,7 @@ export function machineName(hostname = os.hostname()): string {
 export interface PairResult {
   deviceId: string;
   deviceToken: string;
+  refreshToken?: string;
   person?: { email: string; name: string };
   project: HubProjectRule;
 }
@@ -183,6 +185,7 @@ export interface PairOptions {
 
 async function postJson(fetchImpl: typeof fetch, url: string, body: unknown): Promise<Response> {
   return fetchImpl(url, {
+    redirect: "error",
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -229,7 +232,7 @@ export async function pairWithHub(hubUrl: string, opts: PairOptions): Promise<Pa
       throw new Error("the hub approved the pairing but sent no valid device token — pair again");
     }
     if (!poll.project) throw new Error("the hub sent no project sharing rule — pair again");
-    return { deviceId: pair.deviceId, deviceToken: poll.deviceToken, person: poll.person, project: poll.project };
+    return { deviceId: pair.deviceId, deviceToken: poll.deviceToken, ...(poll.refreshToken ? { refreshToken: poll.refreshToken } : {}), person: poll.person, project: poll.project };
   }
   throw new Error("pairing code expired — run `workmesh hub connect` again");
 }
@@ -316,7 +319,8 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
     spin?.stop();
   }
 
-  const previous = config.hub?.url === hubUrl ? config.hub : undefined;
+  const replaced = config.hub;
+  const previous = replaced?.url === hubUrl ? replaced : undefined;
   let share: HubShareLevel;
   if (flagShare) {
     share = flagShare;
@@ -343,6 +347,7 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
     stickyShare: previous?.stickyShare,
     github,
   };
+  if (result.refreshToken) new DeviceCredentials(config.hub).write({ current: result.refreshToken });
   saveConfig(config);
   const who = result.person ? ` as ${result.person.name} (${result.person.email})` : "";
   console.log(green(`connected ${machine} to ${result.project.name}${who}`));
@@ -357,6 +362,7 @@ export async function runHubConnect(url: string, opts: HubConnectOptions = {}): 
   console.log(dim(`  change it any time: workmesh hub share ${share === "conversation" ? "metadata" : "conversation"}`));
   console.log(`  sessions: ${stickySummary(hubStickyShare(config.hub))}`);
   const state = await reloadDaemon(config);
+  if (replaced && replaced.deviceId !== result.deviceId) new DeviceCredentials(replaced).remove();
   if (state?.enabled) console.log(green("  the daemon is forwarding now"));
   else if (state === undefined) console.log(`  start the daemon: ${bold("workmesh start --detach")}`);
 }
@@ -488,6 +494,7 @@ export async function runHubDisconnect(): Promise<void> {
   console.log(green(`disconnected from ${hub.url}; the device token was removed from ${configPath()}`));
   console.log(dim("  to revoke the device on the hub as well, use Devices on the board"));
   await reloadDaemon(config);
+  new DeviceCredentials(hub).remove();
 }
 
 async function changeDir(input: string, kind: "include" | "exclude"): Promise<void> {

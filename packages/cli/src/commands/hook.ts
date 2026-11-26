@@ -57,8 +57,8 @@ export function hookOutput(
     out.permissionDecisionReason = agent === "codex" ? answer.deny.replace(/\.\s*$/, "") : answer.deny;
   }
   if (answer.context) out.additionalContext = answer.context;
-  if (Object.keys(out).length === 1) return undefined;
-  return JSON.stringify({ hookSpecificOutput: out });
+  if (Object.keys(out).length === 1 && !answer.systemMessage) return undefined;
+  return JSON.stringify({ hookSpecificOutput: out, ...(answer.systemMessage ? { systemMessage: answer.systemMessage } : {}) });
 }
 
 function hookEventName(json: unknown): string | undefined {

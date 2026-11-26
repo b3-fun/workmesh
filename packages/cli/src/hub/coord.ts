@@ -1243,7 +1243,8 @@ export class CoordClient {
 /**
  * A hub's `429` (SPEC §21) as the caller reads it. The hub's body `{ ok: false, error }` names the limit that was hit,
  * so the agent or person learns which one. The reason is cleaned to one line, and the wait `Retry-After` gives in
- * seconds is added in plain words. With no reason, the answer says the hub asked to slow down.
+ * seconds is added in plain words, unless the reason already says when to try again. With no reason, the answer says
+ * the hub asked to slow down.
  */
 function slowDown(raw: unknown, retryAfter: string | null): Extract<CoordResult<never>, { ok: false }> {
   const said = (raw as { error?: unknown } | null | undefined)?.error;
@@ -1251,7 +1252,7 @@ function slowDown(raw: unknown, retryAfter: string | null): Extract<CoordResult<
   const v = retryAfter?.trim() ?? "";
   // RFC 9110 delta-seconds; an HTTP date gives no wait to repeat.
   const secs = /^\d{1,7}$/.test(v) ? Number(v) : undefined;
-  const wait = secs === undefined ? undefined : `try again in ${waitWords(secs)}`;
+  const wait = secs === undefined || /try again/i.test(reason) ? undefined : `try again in ${waitWords(secs)}`;
   const error = reason ? (wait ? `${reason}; ${wait}` : reason) : `the hub asked to slow down; ${wait ?? "try again in a minute"}`;
   return { ok: false, status: 429, error, ...(secs === undefined ? {} : { retryAfterMs: secs * 1000 }) };
 }

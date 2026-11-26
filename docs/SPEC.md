@@ -761,8 +761,8 @@ read and drops the rest one by one):
   took is applied to the cached sync at once, so `claims` and `leases` (and the hooks) show it before the next sync;
   so is the person's own gate policy from `gates set` (0.12.1; §31), and memory writes to the brief (§36).
   When the hub answers a call with `429`, the answer gives the hub's reason on one line, at most 200 characters. A
-  `Retry-After` in seconds adds the wait in plain words ("try again in 40 s"). With no reason, the answer says that
-  the hub asked to slow down.
+  `Retry-After` in seconds adds the wait in plain words ("try again in 40 s"), unless the reason already says when to
+  try again. With no reason, the answer says that the hub asked to slow down.
 - **Registration.** `workmesh setup` (and `setup --hooks-only`; `--no-mcp` skips it) registers the server with Claude
   Code at user scope (`claude mcp add -s user workmesh -- <node> <cli> mcp` when the `claude` CLI is on PATH, else a
   merge into `~/.claude.json`, written by rename) and with Codex as `[mcp_servers.workmesh]` in `~/.codex/config.toml`.

@@ -241,6 +241,26 @@ describe("CoordClient state for hooks", () => {
     expect(await send()).toEqual({ ok: false, status: 429, error: "at most 30 holds an hour" });
     expect(x.hub.calls).toHaveLength(5);
   });
+
+  it("a 429 whose reason already says when to try again gets no second wait", async () => {
+    const x = client({
+      replies: [
+        { status: 429, body: { ok: false, error: "at most 20 messages a minute to one person; try again in 40 s" }, headers: { "retry-after": "40" } },
+        { status: 429, body: { ok: false, error: "at most 10 holds an hour per person; try again later" }, headers: { "retry-after": "3600" } },
+        { status: 429, body: { ok: false, error: "too many requests; Try Again shortly" }, headers: { "retry-after": "40" } },
+        { status: 429, body: { ok: false, error: "at most 50 leases per machine; release some" }, headers: { "retry-after": "40" } },
+      ],
+    });
+    const send = () => x.c.message({ from: "claude-code:s1", to: { person: "An" }, text: "hi" });
+    const first = await send();
+    expect(first).toEqual({ ok: false, status: 429, error: "at most 20 messages a minute to one person; try again in 40 s", retryAfterMs: 40_000 });
+    expect(JSON.stringify(first).match(/try again/gi)).toHaveLength(1);
+    expect(await send()).toEqual({ ok: false, status: 429, error: "at most 10 holds an hour per person; try again later", retryAfterMs: 3_600_000 });
+    // Any case.
+    expect(await send()).toMatchObject({ error: "too many requests; Try Again shortly" });
+    // A reason that says what to do, but not when: the wait is added.
+    expect(await send()).toMatchObject({ error: "at most 50 leases per machine; release some; try again in 40 s" });
+  });
 });
 
 // ------------------------------------------------------------------ hook decisions

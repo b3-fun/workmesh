@@ -14,6 +14,8 @@ import type { AgentSession } from "@workmesh/core";
 import { CoordClient } from "../hub/coord";
 import type { CoordResult } from "../hub/coord";
 import { scrubText } from "../hub/redact";
+import { cleanHandoff, handoffListLine, handoffView } from "./handoff-text";
+import type { HandoffStart } from "./handoff-text";
 import { forgetOp, memoriesOp, noteAsMemory, recallOp, rememberOp } from "./memory-ops";
 
 /**
@@ -95,6 +97,8 @@ export interface CoordOpsDeps {
   onAccepted?: (h: HubHandoffAccepted) => void;
   /** v2: handoff ids running on this machine. */
   runningHandoffs?: () => ReadonlySet<string>;
+  /** v2: what the person's Accept of this handoff starts on this machine, in one line opening with `lead`. */
+  handoffStart?: (h: HubHandoffAccepted, lead: string) => HandoffStart | undefined;
   /** Ask: this machine's IANA time zone, for "today" and clock times (default: the process's). */
   timeZone?: () => string | undefined;
   now?: () => number;
@@ -510,24 +514,35 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         return {
           ok: true,
           text: action === "accept" ? `Accepted ${id}: this machine starts an agent for it.` : `Declined ${id}.`,
-          data: { handoff: r.body.handoff },
+          data: { handoff: cleanHandoff(r.body.handoff) },
         };
       }
-      if (action !== "list") return fail("`handoffs` takes action list, accept or decline.");
+      if (action !== "list" && action !== "show") return fail("`handoffs` takes action list, show, accept or decline.");
       await coord.refreshed();
       const st = coord.view().state;
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
       if (st.handoffs === undefined) return fail("This team's hub has no handoffs yet (it predates Workmesh v2).");
       const me = coord.me()?.toLowerCase();
       const running = deps.runningHandoffs?.() ?? new Set<string>();
+      if (action === "show") {
+        // The whole handoff, for a person to read before they answer it.
+        const id = str(a.id, 64);
+        if (!id) return fail("`handoffs` show needs `id` (`handoffs` lists them).");
+        const h = st.handoffs.find((x) => x.id === id);
+        if (!h) return fail(`No handoff ${id} for you or from you in the hub's list (\`handoffs\` lists them).`);
+        const runningHere = running.has(h.id);
+        const canAccept = h.status === "offered" && !runningHere && me !== undefined && h.to.person.toLowerCase() === me;
+        const start = canAccept ? deps.handoffStart?.(h, "Accepting starts") : undefined;
+        const ago = h.createdAt > 0 ? mins(coord.hubNow(now) - h.createdAt) : undefined;
+        return {
+          ok: true,
+          text: handoffView(h, { runningHere, ago, start }),
+          data: { handoff: cleanHandoff(h), canAccept, ...(start ? { onAccept: start } : {}) },
+        };
+      }
       if (st.handoffs.length === 0) return { ok: true, text: "No handoffs.", data: { handoffs: [] } };
-      const lines = st.handoffs.slice(0, 30).map((h) => {
-        const dir = me !== undefined && h.to.person.toLowerCase() === me ? `from ${h.from.person}` : `to ${h.to.person}`;
-        const where = [h.repo, h.issue].filter(Boolean).join(", ");
-        const here = running.has(h.id) ? " [running here]" : "";
-        return `- ${h.id} · ${h.status} · ${dir}${where ? ` · ${where}` : ""}${here}: ${h.task.replace(/\s+/g, " ").slice(0, 160)}${h.note ? ` (${h.note.slice(0, 120)})` : ""}`;
-      });
-      return { ok: true, text: lines.join("\n"), data: { handoffs: st.handoffs } };
+      const lines = st.handoffs.slice(0, 30).map((h) => handoffListLine(h, { me, runningHere: running.has(h.id) }));
+      return { ok: true, text: lines.join("\n"), data: { handoffs: st.handoffs.map(cleanHandoff) } };
     }
 
     case "gates": {

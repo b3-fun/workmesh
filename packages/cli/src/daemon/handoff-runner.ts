@@ -9,6 +9,7 @@ import type { CoordClient } from "../hub/coord";
 import { GitResolver } from "../hub/git";
 import { scrubText } from "../hub/redact";
 import type { HandoffRunnerLike } from "./delegate";
+import type { HandoffPlan } from "./handoff-text";
 
 /**
  * v2 handoffs on this machine (docs/SPEC.md §31): an accepted handoff gets a fresh agent session. The runner finds
@@ -391,6 +392,22 @@ export class HandoffRunner implements HandoffRunnerLike {
       return `no checkout of ${h.repo} here (\`workmesh roots add <dir>\` names where your repos live)`;
     }
     return undefined;
+  }
+
+  /**
+   * What accepting `h` would start here, for the person to read before they accept: the agent and permission mode a
+   * run would use, and where it would run. It reads the same settings as a run and starts nothing.
+   */
+  plan(h: HubHandoffAccepted): HandoffPlan {
+    const settings = this.deps.settings();
+    const picked = this.agentFor();
+    const cannot = this.cannotRun(h);
+    return {
+      ...(picked ? { agent: picked.agent } : {}),
+      ...(picked?.agent === "claude" ? { permissionMode: settings.permissionMode } : {}),
+      where: !h.repo ? "scratch" : settings.worktree ? "worktree" : "checkout",
+      ...(cannot ? { cannot } : {}),
+    };
   }
 
   /** Claims the run on the hub (`start`), prepares the directory, and launches the agent. Never throws. */

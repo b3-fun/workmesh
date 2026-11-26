@@ -924,10 +924,27 @@ command run; a waiter that can't reach the daemon ends.
   value or env value, and is redacted (§9). Agents can't set gates or decide approvals: `gates` and
   `approvals approve|deny` refuse a caller the daemon identifies as an agent session, and the MCP server has no tools
   for them. (A cooperative guard rail, not a sandbox: anything running as the person can call the hub.)
-- **Handoffs** (`daemon/delegate.ts`, `daemon/handoff-runner.ts`). MCP `handoff { to, task, repo?, issue?, context? }`
-  (repo: the calling session's, by default; `to: "me"` is the person themselves) and `handoffs { action: list |
-  accept | decline, id?, note? }`; CLI `workmesh handoff`, `handoffs`, `handoffs policy`, `roots`. Task and context
-  are redacted (§9). The policy `handoffs.accept` in config: `auto-self` (absent = this): a handoff the person sent
+- **Handoffs** (`daemon/delegate.ts`, `daemon/handoff-runner.ts`, `daemon/handoff-text.ts`). MCP `handoff { to, task,
+  repo?, issue?, context? }` (repo: the calling session's, by default; `to: "me"` is the person themselves) and
+  `handoffs { action: list | accept | decline, id?, note? }`; CLI `workmesh handoff`, `handoffs [list | show <id> |
+  accept <id> | decline <id>]`, `handoffs policy`, `roots`. Task and context are redacted (§9).
+  - **The person reads all of it before they accept** (B3-7234). Accepting starts an agent on their machine. The
+    sender's task and context become that agent's instructions.
+  - The full view (`handoffs show <id>`) prints who it is from, repo, issue and status, then the whole task and the
+    whole context. Escape sequences, control characters and invisible characters are removed first
+    (`lib/untrusted.ts`). Every line of the sender's text stands behind `│`, so none of it can pass for a line of
+    Workmesh's own.
+  - For a handoff the person can accept, the last line says what starts. It names the agent CLI, the permission mode
+    for Claude Code (`handoffs.permissionMode`) and where the run happens: a new worktree, the checkout, or a scratch
+    folder. Example: "Accepting starts a Claude Code agent on this Mac in auto mode, in a new worktree of
+    b3-fun/b3os-beta." When this machine can't run the handoff, the line says why instead.
+  - Accepting from a terminal (`workmesh handoffs accept <id>`) always prints that view and asks "Accept and start an
+    agent? [y/N]". No option skips the question. With no terminal to ask in (or with `--json`), nothing is accepted,
+    and the command points to the menu bar and the board.
+  - The list keeps one line per handoff, with 160 characters of the task. A line ends with `[more: workmesh handoffs
+    show <id>]` when the handoff has a longer task or a context.
+
+  The policy `handoffs.accept` in config: `auto-self` (absent = this): a handoff the person sent
   themselves is accepted by a machine of theirs at once (the sending machine waits 20 s so another of their machines
   may take it first), anyone else's waits for the person; `ask`: every handoff waits; `never`: this machine runs
   none. Accepted for this device (`device`), or accepted on the board with no device, the runner `start`s it (the
@@ -983,6 +1000,12 @@ command run; a waiter that can't reach the daemon ends.
   running here; pending approvals this machine's agents asked for or the person may decide); Workmesh.app shows
   "Handoffs for you" (Accept / Decline) and "Approvals" (Approve / Deny), answered through `POST /coord/op` as the
   person.
+  - Each handoff in `delegate.handoffs` carries its whole `task`, and its `context` when it has one (B3-7234). Both
+    are cleaned as for `handoffs show`. Before, it carried the first 500 characters of the task and no context.
+  - A handoff offered to the person also says what Accept starts: `onAccept: { agent?: "claude" | "codex",
+    permissionMode?, text }`. The line to show is `text`. Example: "Starts a Claude Code agent on this Mac in auto
+    mode, in a new worktree of b3-fun/b3os-beta." The `agent` is absent when this machine can't run the handoff.
+  - These fields are additive: an older app shows two lines of `task` as before.
 - **`workmesh init <hub-url>`.** Hooks and MCP (as `setup --hooks-only`), the daemon (the service when it can,
   restarted on this build; else in the background), and `hub connect` unless this machine is paired with that hub and
   the hub still accepts its token (`--repair` pairs again; `--share` sets the level either way).

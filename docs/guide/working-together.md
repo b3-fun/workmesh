@@ -109,6 +109,31 @@ On 11-25 Sean handed An a task. An accepted from the CLI at 13:35:07, his machin
 about 12 seconds later, and it committed `f558ac1` at 13:35:30. A handoff agent is told to commit on its branch, push,
 and open a draft PR unless the task says otherwise.
 
+Read a handoff before you accept it. Accepting starts an agent on your machine, and the sender's text becomes its
+instructions. `workmesh handoffs` lists one line per handoff. `workmesh handoffs show <id>` prints all of it, like this
+(an example, not a live run):
+
+```text
+Handoff h_abc12345 · offered · sent 6 min ago
+From:  An (their agent b3iq-strategy)
+To:    Sean
+Repo:  b3-fun/b3os-beta
+Issue: B3-7168
+
+Task from An:
+│ Port the KEK rotation to the new runner.
+
+Context from An:
+│ Start from PR 212.
+
+Accepting starts a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta.
+```
+
+Lines behind `│` are the sender's words, with anything you couldn't see taken out. The last line is Workmesh's: which
+agent starts, in which permission mode, and where. `workmesh handoffs accept <id>` prints the same view and asks
+`Accept and start an agent? [y/N]`. It always asks, so it needs a terminal. Without one nothing is accepted: use the
+menu bar or the board.
+
 Which handoffs run without a click is your choice, `workmesh handoffs policy`: `auto-self` (the default: ones you send
 yourself run at once; teammates' wait for your Accept), `ask`, or `never`. If a handoff can't find your checkout, add
 where your repos live: `workmesh roots add ~/code`.

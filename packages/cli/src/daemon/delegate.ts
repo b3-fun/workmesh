@@ -11,6 +11,9 @@ import type { HubSyncInboxItem } from "../hub/coord";
 import { gateVerb, matchGates } from "./gates";
 import type { GateMatch } from "./gates";
 import { formatInbox } from "./coord-hooks";
+import { NOTHING_VISIBLE, handoffStart, readable } from "./handoff-text";
+import type { HandoffPlan, HandoffStart } from "./handoff-text";
+import { oneLine } from "../lib/untrusted";
 
 /**
  * v2 Delegate, the relay side (docs/SPEC.md §31): approval gates in the hook path, handoffs taken by this person's
@@ -59,6 +62,8 @@ export interface HandoffRunnerLike {
   cannotRun(h: HubHandoffAccepted): string | undefined;
   /** Start it (the hub already said yes to `start`, or is asked by the runner). Never throws. */
   run(h: HubHandoffAccepted): void;
+  /** What accepting it would start here, for the person to read first. Starts nothing. */
+  plan?(h: HubHandoffAccepted): HandoffPlan;
 }
 
 export interface DelegateDeps {
@@ -92,12 +97,17 @@ interface Waiter {
 /** What the menu bar shows (GET /team `delegate`). */
 export interface DelegateSummary {
   available: boolean;
-  /** Handoffs offered to this person (Accept / Decline), and ones running here. */
+  /**
+   * Handoffs offered to this person (Accept / Decline), and ones running here. `task` and `context` are the whole
+   * text, cleaned for a person to read. `onAccept` says what Accept starts on this machine (offered ones only).
+   */
   handoffs: Array<{
     id: string;
     from: string;
     fromSession?: string;
     task: string;
+    context?: string;
+    onAccept?: HandoffStart;
     repo?: string;
     issue?: string;
     status: HubHandoffAccepted["status"];
@@ -503,6 +513,15 @@ export class Delegate {
     return this.deps.coord()?.view().state?.handoffs ?? [];
   }
 
+  /**
+   * What this person's Accept starts on this machine: the agent, its permission mode and where, in one line they read
+   * before they accept. Undefined when this daemon has no runner.
+   */
+  onAccept(h: HubHandoffAccepted, lead?: string): HandoffStart | undefined {
+    const plan = this.deps.runner?.plan?.(h);
+    return plan ? handoffStart(plan, h, lead) : undefined;
+  }
+
   // --- wake ------------------------------------------------------------------------
 
   /** A session event the daemon applied: an `end` stops its waiter; anything may make a message deliverable. */
@@ -628,11 +647,17 @@ export class Delegate {
       const offeredToMe = me !== undefined && h.to.person.toLowerCase() === me && h.status === "offered";
       const here = running.has(h.id);
       if (!offeredToMe && !here) continue;
+      // The whole task and context, so the person can read all of it before Accept. Cleaning never adds a
+      // character, so both stay within the protocol's limit.
+      const context = readable(h.context);
+      const onAccept = offeredToMe && !here ? this.onAccept(h) : undefined;
       handoffs.push({
         id: h.id,
-        from: h.from.person,
-        fromSession: h.from.sessionName,
-        task: h.task.slice(0, 500),
+        from: oneLine(h.from.person, 120),
+        fromSession: h.from.sessionName === undefined ? undefined : oneLine(h.from.sessionName, 120),
+        task: readable(h.task) ?? NOTHING_VISIBLE,
+        ...(context === undefined ? {} : { context }),
+        ...(onAccept ? { onAccept } : {}),
         repo: h.repo,
         issue: h.issue,
         status: h.status,

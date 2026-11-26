@@ -43,9 +43,14 @@ app is presentation + control only, so there's zero logic to keep in sync.
     select text in. The first click on **Accept** opens the box too and accepts
     nothing. The button then reads **Accept and run**, and the next click
     accepts.
-  - The task, the context and the line come from the daemon (`task`, `context`
-    and `onAccept` in `GET /team`'s `delegate`). An older daemon sends the first
-    500 characters of the task and no line.
+  - A handoff you accepted somewhere else, such as on the board, starts
+    nothing on this Mac by itself. Its row asks "Accepted on the board: run it
+    here?" and has one button, **Run here**. It takes the same two steps as
+    Accept: while the row can't show all of the text the button reads **Run
+    here…** and opens it, and the next click starts the agent.
+  - The task, the context, the line and the question come from the daemon
+    (`task`, `context`, `onAccept` and `runHere` in `GET /team`'s `delegate`).
+    An older daemon sends the first 500 characters of the task and no line.
 - **Approvals** (v2): merges, deploys, publishes, force-pushes and spends an
   agent may not do without a yes. Ones you may decide get **Approve** /
   **Deny** (orange header); your own agents' asks that someone else decides say
@@ -221,7 +226,8 @@ the output path, optionally `WORKMESH_SNAPSHOT_EXPAND=An` (comma-separated
 names) and `WORKMESH_SNAPSHOT_APPEARANCE=dark`. With `--scenario delegate`,
 `WORKMESH_SNAPSHOT_HANDOFF=h_1` opens that handoff's whole text, and
 `WORKMESH_SNAPSHOT_ACCEPT=h_1,h_1` clicks Accept on it twice before the picture
-(once opens the text, twice accepts; `MOCK_DAEMON_VERBOSE=1` logs the calls). `WORKMESH_SNAPSHOT_SHEET=update-running`
+(once opens the text, twice accepts; `MOCK_DAEMON_VERBOSE=1` logs the calls).
+For `h_4`, which waits for "Run here", the same option clicks that button. `WORKMESH_SNAPSHOT_SHEET=update-running`
 (or `update-finished`, `update-failed`, `update-cant`, `update-app-failed`)
 draws the update window in that state with fixture output instead (no daemon
 read; build the app at 0.12.0 so `update-finished` shows the relaunch offer). It hosts the menu in an

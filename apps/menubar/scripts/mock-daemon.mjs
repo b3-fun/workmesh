@@ -11,8 +11,9 @@
 // view), legacy (a daemon from before GET /team: 404), coord (team plus v1: a hold on
 // one of this Mac's agents and a message waiting for another), delegate (team plus
 // v2: handoffs offered to me or running here, and approvals; POST /coord/op answers
-// them, so Accept, Decline, Approve and Deny work against the mock; h_1 has a long
-// task and a context, h_3 is short and can't run on this Mac).
+// them, so Accept, Decline, Run here, Approve and Deny work against the mock; h_1
+// has a long task and a context, h_3 is short and can't run on this Mac, h_4 was
+// accepted on the board and waits for "Run here").
 //
 // GET /update: legacy answers 404 (an older daemon), the scenarios above "up to
 // date". The update scenarios are team plus a newer release:
@@ -271,6 +272,19 @@ const delegate = {
       createdAt: ago(2),
       runningHere: false,
     },
+    // Accepted on the board: this Mac starts it only after "Run here".
+    {
+      id: "h_4",
+      from: "An",
+      task: "Write the changelog entry for 0.12.4",
+      context: "The three merged PRs are 61, 62 and 64.",
+      onAccept: { agent: "claude", permissionMode: "auto", text: "Starts a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/workmesh." },
+      runHere: "Accepted on the board: run it here?",
+      repo: "b3-fun/workmesh",
+      status: "accepted",
+      createdAt: ago(12),
+      runningHere: false,
+    },
     { id: "h_2", from: "Gio", task: "Move the stake API to the new farm cutoff and redeploy staging", context: "The cutoff is block 21,400,000.", repo: "b3-fun/stake", status: "started", createdAt: ago(25), runningHere: true },
   ],
   approvals: [
@@ -292,6 +306,13 @@ function coordOp(body) {
     }
     Object.assign(delegate.handoffs[i], { status: "accepted", runningHere: true });
     return { ok: true, text: `Accepted ${id}: this machine starts an agent for it.` };
+  }
+  if (op === "handoffs" && action === "run") {
+    const h = delegate.handoffs.find((x) => x.id === id && x.status === "accepted" && x.runHere);
+    if (!h) return { ok: false, text: `Workmesh: ${id} isn't waiting to run on this machine.` };
+    delete h.runHere;
+    Object.assign(h, { status: "started", runningHere: true });
+    return { ok: true, text: `Running ${id} here: this machine starts an agent for it.` };
   }
   if (op === "approvals" && (action === "approve" || action === "deny")) {
     const i = delegate.approvals.findIndex((a) => a.id === id && a.canDecide);

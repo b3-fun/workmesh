@@ -1044,6 +1044,8 @@ command run; a waiter that can't reach the daemon ends.
     handoff with a context, shows two lines and "Show all". That opens the whole task and context in a box that
     scrolls and whose text can be selected. On such a row the first click on Accept opens the box and accepts
     nothing. The button then reads "Accept and run", and the next click accepts.
+  - A handoff that waits for "run it here" shows the `runHere` question and one button, "Run here" (B3-7235). It
+    takes the same two steps: while the row can't show the whole text the button reads "Run here…" and opens it.
 - **`workmesh init <hub-url>`.** Hooks and MCP (as `setup --hooks-only`), the daemon (the service when it can,
   restarted on this build; else in the background), and `hub connect` unless this machine is paired with that hub and
   the hub still accepts its token (`--repair` pairs again; `--share` sets the level either way).

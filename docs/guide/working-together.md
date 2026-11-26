@@ -164,6 +164,15 @@ Workmesh tells people apart by their sign-in email, not by the name it shows. Tw
 people. One's leases, claims, gates and handoffs are not taken for the other's. A handoff runs without a click only
 when it came from your own email.
 
+If you `send` or `handoff` to a name that fits two teammates, Workmesh sends nothing and asks which one:
+
+```text
+"Sam Lee" matches 2 people on this team: Sam Lee <sam@example.com>; Sam Lee <sam.lee@example.org>. Use one of those
+emails instead of the name.
+```
+
+Then use the email: `workmesh send sam.lee@example.org "…"`.
+
 This needs a hub that sends emails. With an older hub, Workmesh matches people by name, as before.
 
 ## When you're refused

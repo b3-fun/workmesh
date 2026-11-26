@@ -6,7 +6,7 @@ import { CoordClient } from "../src/hub/coord";
 import { Delegate, decisionText } from "../src/daemon/delegate";
 import type { HandoffRunnerLike } from "../src/daemon/delegate";
 import { CoordHooks, claimsLine, gateNote, knowledge } from "../src/daemon/coord-hooks";
-import { runCoordOp } from "../src/daemon/coord-ops";
+import { recipient, runCoordOp } from "../src/daemon/coord-ops";
 import type { CoordOpsDeps } from "../src/daemon/coord-ops";
 import { emailKey, gateApprovers, samePerson } from "../src/lib/person";
 
@@ -368,5 +368,87 @@ describe("replies: a message from one namesake is no reason to wake the other (S
     expect(x.coord.isReply(LOCAL, alexB)).toBe(false);
     // A name alone (a hub that sends no roster emails) is matched by name, as before.
     expect(x.coord.isReply(LOCAL, { person: "alex kim" })).toBe(true);
+  });
+});
+
+describe("a name a person or an agent typed (SPEC §49)", () => {
+  const an = { person: "An", email: "an@example.com", github: "an-b3" };
+  const roster = (...people: Array<{ person: string; email?: string; github?: string }>) =>
+    hubSyncAcceptSchema.parse({ ...BASE, roster: people.map((p) => ({ ...p, sessions: [] })) });
+  const two = roster(me, namesake, an);
+  const refusal = { error: '"Sam Lee" matches 2 people on this team: Sam Lee <sam@example.com>; Sam Lee <sam.lee@example.org>. Use one of those emails instead of the name.' };
+
+  it("one person: the request carries their email beside the name", () => {
+    expect(recipient("an", undefined, two)).toEqual({ person: "An", email: "an@example.com" });
+    expect(recipient("an-b3", undefined, two)).toEqual({ person: "An", email: "an@example.com" });
+    expect(recipient("AN@example.com", "person", two)).toEqual({ person: "An", email: "an@example.com" });
+    // An email picks one of two people with the same name.
+    expect(recipient(OTHER_SAM, undefined, two)).toEqual(namesake);
+    expect(recipient("Sam@Example.com", undefined, two)).toEqual(me);
+    // The roster lists a person twice: still one person.
+    expect(recipient("sam lee", undefined, roster(namesake, namesake))).toEqual(namesake);
+  });
+
+  it("a name that fits two people is refused with the choices, never guessed", () => {
+    expect(recipient("Sam Lee", undefined, two)).toEqual(refusal);
+    expect(recipient("sam lee", "person", two)).toEqual({ ...refusal, error: refusal.error.replace('"Sam Lee"', '"sam lee"') });
+    // My own name is a choice even when the roster leaves me out: it never goes to a namesake unasked.
+    expect(recipient("Sam Lee", undefined, roster(namesake, an), me)).toEqual({
+      error: '"Sam Lee" matches 2 people on this team: Sam Lee <sam.lee@example.org>; Sam Lee <sam@example.com>. Use one of those emails instead of the name.',
+    });
+    expect(recipient("Sam Lee", undefined, roster(me, an), me)).toEqual(me);
+  });
+
+  it("with no emails to tell people apart, the name goes to the hub as before", () => {
+    const plain = roster({ person: "Sam Lee" }, { person: "Sam Lee" }, { person: "An", github: "an-b3" });
+    expect(recipient("sam lee", undefined, plain)).toEqual({ person: "Sam Lee" });
+    expect(recipient("an-b3", undefined, plain, { person: "Sam Lee", email: SAM })).toEqual({ person: "An" });
+    expect(recipient("sam lee", undefined, plain, { person: "Sam Lee", email: SAM })).toEqual({ person: "Sam Lee" });
+    // One of the two has no email: nothing tells them apart, so the hub resolves the name.
+    expect(recipient("Sam Lee", undefined, roster(namesake, { person: "Sam Lee" }))).toEqual({ person: "Sam Lee" });
+    // Nobody on the roster by that name: the string goes to the hub unchanged.
+    expect(recipient("Riley Park", undefined, two)).toEqual({ person: "Riley Park" });
+    expect(recipient("riley@example.com", undefined, two)).toEqual({ person: "riley@example.com" });
+  });
+
+  it("send: refuses the shared name and sends nothing; by email it reaches the one person", async () => {
+    const x = relay({ replies: [{ status: 200, body: { ok: true, id: "m_7" } }] });
+    x.sync({ roster: [{ ...me, sessions: [] }, { ...namesake, sessions: [] }] });
+    const no = await runCoordOp({ op: "send", args: { to: "Sam Lee", text: "can I take src/api.ts?" }, caller: {} }, x.ops);
+    expect(no).toMatchObject({ ok: false, text: refusal.error });
+    expect(x.calls).toEqual([]);
+    const ok = await runCoordOp({ op: "send", args: { to: OTHER_SAM, text: "can I take src/api.ts?" }, caller: {} }, x.ops);
+    expect(ok).toMatchObject({ ok: true, text: "Sent to Sam Lee (message m_7)." });
+    expect(x.calls).toEqual([{ url: "https://hub.test/relay/messages", body: { to: namesake, text: "can I take src/api.ts?" } }]);
+  });
+
+  it("handoff: refuses the shared name; a namesake by email is a teammate, `me` is this person by email", async () => {
+    const offered = (to: { person: string; email?: string }) => ({ status: 200, body: { ok: true, handoff: handoff({ from: me, to }) } });
+    const x = relay({ replies: [offered(namesake), offered(me)] });
+    x.sync({ roster: [{ ...namesake, sessions: [] }] });
+    const no = await runCoordOp({ op: "handoff", args: { to: "Sam Lee", task: "finish the port" }, caller: {} }, x.ops);
+    expect(no.ok).toBe(false);
+    expect(no.text).toBe('"Sam Lee" matches 2 people on this team: Sam Lee <sam.lee@example.org>; Sam Lee <sam@example.com>. Use one of those emails instead of the name.');
+    expect(x.calls).toEqual([]);
+    const theirs = await runCoordOp({ op: "handoff", args: { to: OTHER_SAM, task: "finish the port" }, caller: {} }, x.ops);
+    expect(theirs.text).toMatch(/^Handed to Sam Lee \(handoff h_1\)\. It waits for Sam Lee's Accept/);
+    const mine = await runCoordOp({ op: "handoff", args: { to: "me", task: "finish the port" }, caller: {} }, x.ops);
+    expect(mine.text).toMatch(/^Handed to yourself \(handoff h_1\)/);
+    expect(x.calls.map((c) => c.body)).toEqual([
+      { action: "create", to: namesake, task: "finish the port" },
+      { action: "create", to: me, task: "finish the port" },
+    ]);
+  });
+
+  it("a hub that sends no emails gets the bodies it always got", async () => {
+    const x = relay({ paired: { name: "Sam Lee" }, replies: [{ status: 200, body: { ok: true, id: "m_8" } }, { status: 200, body: { ok: true, handoff: handoff({ from: { person: "Sam Lee" }, to: { person: "Sam Lee" } }) } }] });
+    x.sync({ me: { person: "Sam Lee" }, roster: [{ person: "An", github: "an-b3", sessions: [] }] });
+    await runCoordOp({ op: "send", args: { to: "an-b3", text: "hi" }, caller: {} }, x.ops);
+    const mine = await runCoordOp({ op: "handoff", args: { to: "me", task: "finish the port" }, caller: {} }, x.ops);
+    expect(mine.text).toMatch(/^Handed to yourself/);
+    expect(x.calls.map((c) => c.body)).toEqual([
+      { to: { person: "An" }, text: "hi" },
+      { action: "create", to: { person: "Sam Lee" }, task: "finish the port" },
+    ]);
   });
 });

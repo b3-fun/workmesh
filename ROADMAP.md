@@ -397,6 +397,12 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
 
 ## Decision log
 
+- 11-26 Updates: a new release waits 24 hours before `doctor`, `status` and the menu bar offer it and before
+  auto-update installs it (`update.waitHours`; `0` turns the wait off). `workmesh update` run by hand still installs at
+  once. Once a maintainer key is pinned, the menu bar app installs only a release whose file list that key signed; this
+  version pins none, so the app's download is still checked against the SHA-256 GitHub lists (SPEC §41; B3-7242).
+  Before, whoever could publish a GitHub release controlled both the file and its hash.
+
 - 11-26 Handoffs: the default policy is `ask`, so every handoff waits for its person, their own too. Under the old
   default, `auto-self`, a self handoff let one agent start another with no person looking. `auto-self` stays as a
   choice a person makes (B3-7235).

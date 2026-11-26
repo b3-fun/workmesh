@@ -13,7 +13,7 @@ import { getHealth, getState, pauseDaemon, postEvent, resumeDaemon } from "../sr
 const SECRET = "a".repeat(64);
 const AUTH = { authorization: `Bearer ${SECRET}` };
 
-const WRONG_HOST = { ok: false, error: "host not allowed: use 127.0.0.1 or localhost with the daemon's port" };
+const WRONG_HOST = { ok: false, error: "host not allowed: use 127.0.0.1 or localhost" };
 const HAS_ORIGIN = { ok: false, error: "requests with an Origin header are not allowed" };
 
 const CONFIG: SafeConfig = {
@@ -159,50 +159,55 @@ const REQUESTS: Sent[] = [
 
 describe("isLoopbackHost", () => {
   it.each([
-    ["127.0.0.1:4519", 4519],
-    ["localhost:4519", 4519],
-    ["[::1]:4519", 4519],
-    ["LOCALHOST:4519", 4519],
-    ["127.0.0.1:80", 80],
-    // A client leaves plain HTTP's default port, 80, out of the header.
-    ["127.0.0.1", 80],
-    ["localhost", 80],
-    ["[::1]", 80],
-  ])("accepts %s for a daemon on port %i", (host, port) => {
-    expect(isLoopbackHost(host, port)).toBe(true);
+    ["127.0.0.1:4519"],
+    ["localhost:4519"],
+    ["[::1]:4519"],
+    // no port
+    ["127.0.0.1"],
+    ["localhost"],
+    ["[::1]"],
+    // any case
+    ["LOCALHOST:4519"],
+    ["LocalHost"],
+    // any port: a caller behind a port forward sends the port it dialed
+    ["127.0.0.1:5519"],
+    ["localhost:80"],
+    ["[::1]:65535"],
+  ])("accepts %s", (host) => {
+    expect(isLoopbackHost(host)).toBe(true);
   });
 
   it.each([
-    // another name with the right port
-    ["example.com:4519", 4519],
-    ["example.com", 80],
-    ["192.168.1.20:4519", 4519],
-    ["0.0.0.0:4519", 4519],
-    ["127.0.0.2:4519", 4519],
-    // the right name with another port, or with none (none means 80)
-    ["127.0.0.1:4520", 4519],
-    ["127.0.0.1:80", 4519],
-    ["127.0.0.1", 4519],
-    ["localhost", 4519],
-    ["[::1]", 4519],
+    // another name, with or without a port
+    ["example.com:4519"],
+    ["example.com"],
+    ["192.168.1.20:4519"],
+    ["0.0.0.0:4519"],
+    ["127.0.0.2:4519"],
+    ["127-0-0-1:4519"],
     // a name that only starts or ends like an allowed one
-    ["localhost.example.com:4519", 4519],
-    ["127.0.0.1.example.com:4519", 4519],
-    ["127.0.0.1:4519.example.com", 4519],
-    ["notlocalhost:4519", 4519],
-    ["localhost.:4519", 4519],
-    // other spellings of the same address or port
-    ["::1:4519", 4519],
-    ["[::1]4519", 4519],
-    ["[0:0:0:0:0:0:0:1]:4519", 4519],
-    ["127.0.0.1:04519", 4519],
-    ["127.1:4519", 4519],
-    ["", 4519],
-    [undefined, 4519],
-    // no port to compare with (the connection is already gone)
-    ["127.0.0.1:4519", undefined],
-  ])("refuses %s for a daemon on port %s", (host, port) => {
-    expect(isLoopbackHost(host, port)).toBe(false);
+    ["localhost.example.com:4519"],
+    ["127.0.0.1.example.com:4519"],
+    ["127.0.0.1:4519.example.com"],
+    ["notlocalhost:4519"],
+    ["localhost.:4519"],
+    // other spellings of the same address
+    ["::1:4519"],
+    ["::1"],
+    ["[::1]4519"],
+    ["[0:0:0:0:0:0:0:1]:4519"],
+    ["127.1:4519"],
+    // something other than a port after the name
+    ["127.0.0.1:"],
+    ["localhost:abc"],
+    ["127.0.0.1:4519:80"],
+    ["localhost:4519/"],
+    // no name
+    [":4519"],
+    [""],
+    [undefined],
+  ])("refuses %s", (host) => {
+    expect(isLoopbackHost(host)).toBe(false);
   });
 });
 
@@ -219,22 +224,31 @@ describe("daemon server: who is calling", () => {
 
   const ownHost = (): string => `127.0.0.1:${h.port}`;
 
-  it("answers a request that names this machine and the daemon's port", async () => {
-    for (const name of ["127.0.0.1", "localhost", "[::1]", "LOCALHOST"]) {
-      const res = await send(h.port, { headers: { host: `${name}:${h.port}` } });
-      expect(res.status, name).toBe(200);
+  it("answers a request that names this machine, with any port or none", async () => {
+    // The last one is what a caller behind a port forward sends: the port it dialed, not the daemon's.
+    const hosts = [
+      `127.0.0.1:${h.port}`,
+      `localhost:${h.port}`,
+      `[::1]:${h.port}`,
+      `LOCALHOST:${h.port}`,
+      "127.0.0.1",
+      `127.0.0.1:${h.port + 1}`,
+    ];
+    for (const host of hosts) {
+      const res = await send(h.port, { headers: { host } });
+      expect(res.status, host).toBe(200);
     }
-    const state = await send(h.port, { path: "/state", headers: { host: `localhost:${h.port}`, ...AUTH } });
+    const state = await send(h.port, { path: "/state", headers: { host: `localhost:${h.port + 1}`, ...AUTH } });
     expect(state.status).toBe(200);
   });
 
   it("refuses any other Host header with 421: every endpoint, with the secret too, and nothing runs", async () => {
     const hosts = [
       `example.com:${h.port}`,
-      `127.0.0.1:${h.port + 1}`,
-      "127.0.0.1",
-      "localhost",
+      "example.com",
       `localhost.example.com:${h.port}`,
+      `127.0.0.1.example.com:${h.port}`,
+      `127.0.0.1:${h.port}.example.com`,
       "",
     ];
     for (const host of hosts) {

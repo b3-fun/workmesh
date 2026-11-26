@@ -149,6 +149,11 @@ export const configSchema = z.object({
       /** The model a handoff's agent runs on (`--model` / `-m`, e.g. `haiku`, `sonnet`); absent: the agent's default. */
       model: z.string().regex(/^[\w.:\[\]/-]{1,80}$/).optional().catch(undefined),
       maxMinutes: z.number().int().min(5).max(24 * 60).optional().catch(undefined),
+      /**
+       * Environment variables a handoff's agent gets although their names look like secrets (`GH_TOKEN`). The agent
+       * starts without such variables, except what its own tool signs in with. Names only, never values.
+       */
+      env: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)).max(100).optional().catch(undefined),
     })
     .optional()
     .catch(undefined),
@@ -324,6 +329,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
   permissionMode: string;
   model?: string;
   maxMinutes: number;
+  env: string[];
   customGates: string[];
 } {
   const h = config.handoffs;
@@ -338,6 +344,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
     permissionMode: h?.permissionMode ?? "auto",
     ...(h?.model ? { model: h.model } : {}),
     maxMinutes: h?.maxMinutes ?? 120,
+    env: h?.env ?? [],
     customGates: config.gates?.custom ?? [],
   };
 }

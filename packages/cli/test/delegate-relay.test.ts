@@ -6,6 +6,7 @@ import { hubSyncAcceptSchema } from "@workmesh/protocol";
 import type { HubHandoffAccepted, HubSyncResponse } from "@workmesh/protocol";
 import { CoordClient } from "../src/hub/coord";
 import { CheckoutIndex, HandoffRunner, codexThreadFromLog, handoffPrompt, resultText } from "../src/daemon/handoff-runner";
+import { secretEnvName } from "../src/daemon/handoff-env";
 import type { RunnerSettings } from "../src/daemon/handoff-runner";
 import { runCoordOp } from "../src/daemon/coord-ops";
 import type { CoordOpsDeps } from "../src/daemon/coord-ops";
@@ -184,6 +185,78 @@ describe("handoff runner (SPEC §31)", () => {
       note: "Ported it; PR 214 is up. Token [redacted] redacted.",
     });
     expect(runner.running().size).toBe(0);
+  });
+
+  it("the agent starts without the variables whose names look like secrets, except its own sign-in and handoffs.env", async () => {
+    fakeRepo(path.join(home, "code", "b3os-beta"), "git@github.com:b3-fun/b3os-beta.git");
+    const bin = path.join(home, "bin");
+    fs.mkdirSync(bin);
+    const envFile = path.join(home, "claude-env.txt");
+    // A stand-in `claude` that writes down the environment it was started with.
+    fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nenv > "${envFile}"\necho '{"type":"result","subtype":"success","result":"ok"}'\n`, { mode: 0o755 });
+    const hub = fakeHub([
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "started" } } },
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "done" } } },
+    ]);
+    // The daemon's own environment, as a daemon started from a shell would have it. Every value is made up.
+    const passes = { HOME: home, LANG: "en_US.UTF-8", NVM_DIR: "/home/sam/.nvm", JAVA_HOME: "/opt/jdk-21", SSH_AUTH_SOCK: "/tmp/ssh-agent.sock", AWS_PROFILE: "dev" };
+    const signIn = { ANTHROPIC_API_KEY: "value-anthropic-key", CLAUDE_CODE_OAUTH_TOKEN: "value-oauth" };
+    const listed = { MY_SERVICE_TOKEN: "value-listed" };
+    const secrets = {
+      GITHUB_TOKEN: "value-github",
+      NPM_TOKEN: "value-npm",
+      AWS_SECRET_ACCESS_KEY: "value-aws",
+      OPENAI_API_KEY: "value-openai",
+      PGPASSWORD: "value-pg",
+      STRIPE_KEY: "value-stripe",
+      WORKMESH_TOKEN: "value-workmesh",
+    };
+    const runner = new HandoffRunner({
+      coord: () => hub.coord,
+      settings: () => settings({ roots: [path.join(home, "code")], env: ["MY_SERVICE_TOKEN", "NOT_SET_ANYWHERE"] }),
+      checkouts: new CheckoutIndex(path.join(home, "checkouts.json")),
+      dir: path.join(home, "handoffs"),
+      which: (b) => (b === "claude" ? path.join(bin, "claude") : undefined),
+      pathEnv: async () => process.env.PATH ?? "/usr/bin:/bin",
+      env: () => ({ ...passes, ...signIn, ...listed, ...secrets, PATH: "/daemon/path", CLAUDE_CODE_SESSION_ID: "the-daemon-shell's" }),
+      git: async (args) => {
+        if (args[0] === "symbolic-ref") return { ok: true, stdout: "origin/main\n", stderr: "" };
+        if (args[0] === "worktree") fs.mkdirSync(args[4]!, { recursive: true });
+        return { ok: true, stdout: "", stderr: "" };
+      },
+    });
+    runner.run(HANDOFF);
+    await until(() => runner.list().length === 1);
+    const rec = runner.list()[0]!;
+    await until(() => fs.existsSync(rec.exitFile) && fs.readFileSync(rec.exitFile, "utf8").trim() !== "");
+    const child = Object.fromEntries(
+      fs
+        .readFileSync(envFile, "utf8")
+        .split("\n")
+        .filter((l) => l.includes("="))
+        .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+    ) as Record<string, string>;
+    // The tool chain, the agent tool's own sign-in and the listed name pass, with their values.
+    expect(child).toMatchObject({ ...passes, ...signIn, ...listed, WORKMESH_HANDOFF: HANDOFF.id });
+    expect(child.PATH).toBe(process.env.PATH ?? "/usr/bin:/bin");
+    // Nothing else whose name looks like a secret got through, nor the outer session's id.
+    for (const name of Object.keys(secrets)) expect(name in child, name).toBe(false);
+    expect(Object.keys(child).filter(secretEnvName).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "MY_SERVICE_TOKEN"]);
+    expect("CLAUDE_CODE_SESSION_ID" in child).toBe(false);
+    // The run's log opens with the names that were dropped, and holds none of their values.
+    const log = fs.readFileSync(rec.logFile, "utf8");
+    expect(log.split("\n")[0]).toBe(
+      "workmesh: 7 environment variables were not passed to the agent, because the name looks like a secret: " +
+        "AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, NPM_TOKEN, OPENAI_API_KEY, PGPASSWORD, STRIPE_KEY, WORKMESH_TOKEN. " +
+        "To pass one, add its name to handoffs.env in the Workmesh config.",
+    );
+    for (const value of Object.values(secrets)) expect(log.includes(value), value).toBe(false);
+    expect(fs.statSync(rec.logFile).mode & 0o777).toBe(0o600);
+    // The line doesn't get in the way of the run's result.
+    expect(resultText({ agent: "claude", logFile: rec.logFile })).toBe("ok");
+    runner.poll();
+    await until(() => hub.calls.length === 2);
+    expect(hub.calls[1]!.body).toMatchObject({ action: "done", id: HANDOFF.id, note: "ok" });
   });
 
   it("doesn't run when another device won the start; at metadata the note says only how it ended", async () => {

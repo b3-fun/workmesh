@@ -9,6 +9,7 @@ import type { CoordClient } from "../hub/coord";
 import { GitResolver } from "../hub/git";
 import { scrubText } from "../hub/redact";
 import type { HandoffRunnerLike } from "./delegate";
+import { droppedEnvLine, handoffEnv } from "./handoff-env";
 import type { HandoffPlan } from "./handoff-text";
 
 /**
@@ -41,6 +42,8 @@ export interface RunnerSettings {
   model?: string;
   /** A run is stopped after this long (default 120 min). */
   maxMinutes: number;
+  /** Variables the agent gets although their names look like secrets (`handoffs.env`; absent: none). */
+  env?: readonly string[];
   /** This machine's sharing level: the done note carries the agent's last words only at `conversation`. */
   share: HubShareLevel;
 }
@@ -74,6 +77,8 @@ export interface HandoffRunnerDeps {
   /** `git` runner (tests pass a fake). */
   git?: (args: string[], cwd: string, timeoutMs?: number) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
   pathEnv?: () => Promise<string>;
+  /** The daemon's own environment (tests pass their own). */
+  env?: () => NodeJS.ProcessEnv;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -490,13 +495,21 @@ export class HandoffRunner implements HandoffRunnerLike {
             ...(settings.model ? ["--model", settings.model] : []),
           ]
         : codexExecArgs(picked.bin, { dir, resultFile, prompt, model: settings.model, approveForMe: await codexHasApproveForMe(picked.bin) });
-    const env: NodeJS.ProcessEnv = { ...process.env, PATH: await (this.deps.pathEnv ?? loginPath)(), WORKMESH_HANDOFF: h.id, WM_EXIT_FILE: exitFile };
+    // The agent works on someone else's task. It gets the daemon's environment without the variables whose names say
+    // "secret", except what its own tool signs in with and what the person listed (handoff-env.ts).
+    const passed = handoffEnv((this.deps.env ?? (() => process.env))(), picked.agent, settings.env);
+    const env: NodeJS.ProcessEnv = { ...passed.env, PATH: await (this.deps.pathEnv ?? loginPath)(), WORKMESH_HANDOFF: h.id, WM_EXIT_FILE: exitFile };
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_SESSION_ID;
     delete env.CODEX_THREAD_ID;
     const out = fs.openSync(logFile, "a", 0o600);
     let pid: number | undefined;
     try {
+      if (passed.dropped.length > 0) {
+        // Names only, so the person can see what to add to `handoffs.env`.
+        fs.writeSync(out, `${droppedEnvLine(passed.dropped)}\n`);
+        this.log(`handoff ${h.id}: ${passed.dropped.length} environment variable(s) not passed to the agent (names in ${logFile})`);
+      }
       const child = (this.deps.spawnImpl ?? spawn)("/bin/sh", ["-c", '"$@"; echo $? > "$WM_EXIT_FILE"', "workmesh-handoff", ...argv], {
         cwd: dir,
         env,

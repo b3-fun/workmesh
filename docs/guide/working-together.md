@@ -150,6 +150,11 @@ its own. `workmesh handoffs` and the menu bar show it as "accepted on the board:
 <id>` prints the whole handoff and what starts, then asks. In the menu bar it takes the same two steps as Accept. To get
 the old behaviour back, set `handoffs.runAccepted` to `auto` in the config. That trusts the hub's word that you accepted.
 
+The started agent gets your daemon's environment without the variables whose names look like secrets, such as
+`GITHUB_TOKEN` or `AWS_SECRET_ACCESS_KEY`. It keeps what Claude Code or Codex needs to sign in. If a handoff needs one
+more, add its name to `handoffs.env` in the config. The run's log (`agent.log` under
+`~/.local/state/workmesh/handoffs/`) names what was left out.
+
 By default every handoff waits for your Accept, your own too. That is the `ask` policy. `workmesh handoffs policy
 auto-self` lets handoffs you send yourself start with no click. It trusts every machine and token of yours: each of
 them, and any agent running there, can then start an agent on this machine. `never` runs none here. If a handoff can't

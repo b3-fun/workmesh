@@ -42,7 +42,8 @@ Written by `workmesh hub connect` (or `init`). Don't copy this section between m
 | `handoffs.roots` | `[]` | Folders whose git repos count as checkouts for handoffs (`workmesh roots add <dir>`). |
 | `handoffs.worktree` | `true` | Run each handoff in a new git worktree on its own branch. |
 | `handoffs.maxRunning` | `2` | Handoffs running at once on this machine (0 to 10). |
-| `handoffs.permissionMode` | `auto` | Claude Code `--permission-mode` for a handoff's session. |
+| `handoffs.permissionMode` | `auto` | Claude Code `--permission-mode` for a handoff's session. The default stays `auto`: `acceptEdits` can't commit in a headless run, and you read the whole handoff and see the mode before you accept. |
+| `handoffs.env` | `[]` | Environment variables a handoff's agent gets although their names look like secrets, for example `["GH_TOKEN"]`. The agent starts without such variables, except what its own tool signs in with. The run's log names what was left out. |
 | `handoffs.model` | the agent's default | The model a handoff runs on, e.g. `sonnet`. |
 | `handoffs.maxMinutes` | `120` | How long a handoff run may take (5 to 1440). |
 | `wake` | `true` | Wake an idle session when a message, approval or handoff result arrives for it (`workmesh wake on\|off`). |

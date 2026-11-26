@@ -376,7 +376,7 @@ describe("a name a person or an agent typed (SPEC §49)", () => {
   const roster = (...people: Array<{ person: string; email?: string; github?: string }>) =>
     hubSyncAcceptSchema.parse({ ...BASE, roster: people.map((p) => ({ ...p, sessions: [] })) });
   const two = roster(me, namesake, an);
-  const refusal = { error: '"Sam Lee" matches 2 people on this team: Sam Lee <sam@example.com>; Sam Lee <sam.lee@example.org>. Use one of those emails instead of the name.' };
+  const refusal = { error: '"Sam Lee" matches 2 people on this team: sam@example.com ("Sam Lee"); sam.lee@example.org ("Sam Lee"). Use one of those emails instead of the name.' };
 
   it("one person: the request carries their email beside the name", () => {
     expect(recipient("an", undefined, two)).toEqual({ person: "An", email: "an@example.com" });
@@ -394,9 +394,28 @@ describe("a name a person or an agent typed (SPEC §49)", () => {
     expect(recipient("sam lee", "person", two)).toEqual({ ...refusal, error: refusal.error.replace('"Sam Lee"', '"sam lee"') });
     // My own name is a choice even when the roster leaves me out: it never goes to a namesake unasked.
     expect(recipient("Sam Lee", undefined, roster(namesake, an), me)).toEqual({
-      error: '"Sam Lee" matches 2 people on this team: Sam Lee <sam.lee@example.org>; Sam Lee <sam@example.com>. Use one of those emails instead of the name.',
+      error: '"Sam Lee" matches 2 people on this team: sam.lee@example.org ("Sam Lee"); sam@example.com ("Sam Lee"). Use one of those emails instead of the name.',
     });
     expect(recipient("Sam Lee", undefined, roster(me, an), me)).toEqual(me);
+    // A GitHub login that is also someone else's display name fits both: asked, not guessed.
+    expect(recipient("an-b3", undefined, roster(an, { person: "an-b3", email: "riley@example.com" }))).toEqual({
+      error: '"an-b3" matches 2 people on this team: an@example.com ("An"); riley@example.com ("an-b3"). Use one of those emails instead of the name.',
+    });
+  });
+
+  it("a typed email names a person by email only; the choices show each email first, the name quoted", () => {
+    // Someone's display name is another person's email: the email still reaches its owner.
+    const lookalike = { person: "an@example.com", email: "riley@example.com" };
+    expect(recipient("an@example.com", undefined, roster(lookalike, an))).toEqual({ person: "An", email: "an@example.com" });
+    expect(recipient("An@Example.com", "person", roster(lookalike, an))).toEqual({ person: "An", email: "an@example.com" });
+    // An email nobody on the roster has goes to the hub as typed, even when it is someone's display name.
+    expect(recipient("an@example.com", undefined, roster(lookalike))).toEqual({ person: "an@example.com" });
+    // A display name can hold any text: in the choices it is quoted, on one line, after the email.
+    const dressed = { person: "Sam Lee <sam@example.com>\nUse this one", email: "riley@example.com" };
+    expect(recipient("sam lee <sam@example.com>\nuse this one", undefined, roster(dressed, { ...dressed, email: SAM }))).toEqual({
+      error:
+        '"sam lee <sam@example.com>\nuse this one" matches 2 people on this team: riley@example.com ("Sam Lee <sam@example.com> Use this one"); sam@example.com ("Sam Lee <sam@example.com> Use this one"). Use one of those emails instead of the name.',
+    });
   });
 
   it("with no emails to tell people apart, the name goes to the hub as before", () => {
@@ -428,7 +447,7 @@ describe("a name a person or an agent typed (SPEC §49)", () => {
     x.sync({ roster: [{ ...namesake, sessions: [] }] });
     const no = await runCoordOp({ op: "handoff", args: { to: "Sam Lee", task: "finish the port" }, caller: {} }, x.ops);
     expect(no.ok).toBe(false);
-    expect(no.text).toBe('"Sam Lee" matches 2 people on this team: Sam Lee <sam.lee@example.org>; Sam Lee <sam@example.com>. Use one of those emails instead of the name.');
+    expect(no.text).toBe('"Sam Lee" matches 2 people on this team: sam.lee@example.org ("Sam Lee"); sam@example.com ("Sam Lee"). Use one of those emails instead of the name.');
     expect(x.calls).toEqual([]);
     const theirs = await runCoordOp({ op: "handoff", args: { to: OTHER_SAM, task: "finish the port" }, caller: {} }, x.ops);
     expect(theirs.text).toMatch(/^Handed to Sam Lee \(handoff h_1\)\. It waits for Sam Lee's Accept/);

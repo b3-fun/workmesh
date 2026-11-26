@@ -678,7 +678,9 @@ function rosterPerson(to: string, roster: ReadonlyArray<RosterPerson> | undefine
   const people: RosterPerson[] = [...(roster ?? [])];
   // This machine's own person counts even when the roster leaves them out: their name must not go to a namesake.
   if (me?.person && !people.some((p) => samePerson(p, me))) people.push({ person: me.person, email: me.email });
-  const hits = people.filter((p) => p.person.toLowerCase() === low || p.github?.toLowerCase() === low || emailKey(p.email) === low);
+  // A typed email names a person by email only: a display name that looks like someone's email never competes with it.
+  const typed = emailKey(to);
+  const hits = people.filter((p) => (typed !== undefined ? emailKey(p.email) === typed : p.person.toLowerCase() === low || p.github?.toLowerCase() === low));
   const first = hits[0];
   if (!first) return undefined;
   // One entry per email: a person the roster lists twice is still one person.
@@ -687,9 +689,10 @@ function rosterPerson(to: string, roster: ReadonlyArray<RosterPerson> | undefine
   // An entry without an email: nothing tells it apart from a namesake, so the hub resolves the name, as before.
   if (byEmail.has(undefined)) return { person: first.person };
   if (byEmail.size === 1) return { person: first.person, email: first.email };
+  // The email leads, and the display name is quoted: a name can hold any text, an email is checked on the wire.
   const list = [...byEmail.values()]
     .slice(0, 8)
-    .map((p) => `${p.person.replace(/\s+/g, " ").trim()} <${p.email}>`)
+    .map((p) => `${p.email} (${JSON.stringify(p.person.replace(/\s+/g, " ").trim())})`)
     .join("; ");
   return { error: `"${to}" matches ${byEmail.size} people on this team: ${list}. Use one of those emails instead of the name.` };
 }

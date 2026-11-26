@@ -167,8 +167,8 @@ when it came from your own email.
 If you `send` or `handoff` to a name that fits two teammates, Workmesh sends nothing and asks which one:
 
 ```text
-"Sam Lee" matches 2 people on this team: Sam Lee <sam@example.com>; Sam Lee <sam.lee@example.org>. Use one of those
-emails instead of the name.
+"Sam Lee" matches 2 people on this team: sam@example.com ("Sam Lee"); sam.lee@example.org ("Sam Lee"). Use one of
+those emails instead of the name.
 ```
 
 Then use the email: `workmesh send sam.lee@example.org "…"`.

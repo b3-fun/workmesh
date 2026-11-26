@@ -1426,13 +1426,15 @@ reader, §14).
     session's start, and whose recent edit gets a heads-up.
   - Replies (§23): whether the person a message goes to is the one whose agent wrote first.
 - **A name a person or an agent typed** (`send`, §23; `handoff`, §31). The relay looks it up in the last sync's
-  roster by display name, GitHub login or email. Its own person counts as a choice, even when the roster leaves
-  them out.
+  roster by display name or GitHub login. A typed email is looked up by email only, so a display name that looks
+  like someone's email never competes with it. The relay's own person counts as a choice, even when the roster
+  leaves them out.
   - One person: the request names them with their `email` beside `person` (§48). In a handoff, `to: "me"` carries
     the relay's own email.
   - Several people who each have an email: the call is refused and nothing is sent. The answer lists the choices:
-    `"Sam Lee" matches 2 people on this team: Sam Lee <sam@example.com>; Sam Lee <sam.lee@example.org>. Use one of
-    those emails instead of the name.`
+    `"Sam Lee" matches 2 people on this team: sam@example.com ("Sam Lee"); sam.lee@example.org ("Sam Lee"). Use one
+    of those emails instead of the name.` Each email leads and each display name is quoted, since a name can hold
+    any text.
   - An entry with no email (a hub that sends none): nothing tells it apart from a namesake. The name alone goes to
     the hub, which resolves it as before.
   - Nobody on the roster by it: the string goes to the hub unchanged.

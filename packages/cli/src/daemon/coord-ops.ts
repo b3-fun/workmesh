@@ -69,6 +69,12 @@ export const coordCallerSchema = z
   .default({});
 export type CoordCaller = z.infer<typeof coordCallerSchema>;
 
+/**
+ * The `client` names that are a person's own surfaces: the CLI and the menu bar app. The MCP server sends its MCP
+ * client's name, and never one of these (mcp/server.ts).
+ */
+export const PERSON_CLIENTS: readonly string[] = ["cli", "menubar"];
+
 export const coordOpRequestSchema = z.object({
   op: z.enum(COORD_OPS),
   args: z.record(z.string(), z.unknown()).default({}),
@@ -504,10 +510,17 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       if (unavailable) return unavailable;
       const action = str(a.action, 20) ?? "list";
       if (action === "accept" || action === "decline") {
+        // Accepting starts an agent on this machine with someone else's text as its instructions, so the answer is
+        // a person's: the CLI at their terminal or the menu bar, and never a caller the daemon reads as an agent
+        // session. Every call through the MCP server is an agent's, also one whose session the daemon can't name.
+        const person = key === undefined && PERSON_CLIENTS.includes(req.caller.client ?? "");
+        if (!person) {
+          return fail("Handoffs are accepted or declined by a person, on the board, in the menu bar or in their own terminal, not by an agent.");
+        }
         const id = str(a.id, 64);
         if (!id) return fail(`\`handoffs\` ${action} needs \`id\` (\`handoffs\` lists them).`);
         const note = str(a.note, 500);
-        const r = await coord.handoff({ action, id, ...(key ? { sessionKey: CoordClient.family(key) } : {}), ...(note ? { note } : {}) });
+        const r = await coord.handoff({ action, id, ...(note ? { note } : {}) });
         if (!r.ok) return delegateError(r);
         if (!r.body.ok) return fail(`Workmesh: ${r.body.error || `the hub didn't ${action} it`}`, r.body);
         if (action === "accept") deps.onAccepted?.(r.body.handoff);

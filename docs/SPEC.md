@@ -849,8 +849,9 @@ the device token names the person, requests carry ingest keys, answers carry hub
 
 - **Handoff** = `{ id, from: { person, sessionKey?, sessionName? }, to: { person }, task, repo?, issue?, context?,
   status, createdAt, updatedAt?, device?, sessionKey?, note? }`. `status`: `offered` → `accepted` → `started` →
-  `done` | `failed`, or `offered` → `declined`. Only the recipient accepts or declines (on the board, in their menu
-  bar, from one of their agents, or by their relay's policy for a handoff they sent themselves, §31). An `accept`
+  `done` | `failed`, or `offered` → `declined`. Only the recipient accepts or declines. That is the person: on the
+  board, in their menu bar or in their own terminal. Their relay's policy may accept a handoff they sent themselves
+  (§31). Their agents don't: a relay refuses an `accept` or `decline` that an agent asks for (§31, B3-7234). An `accept`
   from a relay makes that device the runner (`device`); one accepted on the board has no `device` until a relay
   starts it, and then the first `start` wins (the hub answers the others `409`). `start`, `done` and `fail` come from
   the runner; `start` may carry the session it started (`sessionKey`), and a second `start` from the same device only
@@ -926,10 +927,19 @@ command run; a waiter that can't reach the daemon ends.
   for them. (A cooperative guard rail, not a sandbox: anything running as the person can call the hub.)
 - **Handoffs** (`daemon/delegate.ts`, `daemon/handoff-runner.ts`, `daemon/handoff-text.ts`). MCP `handoff { to, task,
   repo?, issue?, context? }` (repo: the calling session's, by default; `to: "me"` is the person themselves) and
-  `handoffs { action: list | accept | decline, id?, note? }`; CLI `workmesh handoff`, `handoffs [list | show <id> |
-  accept <id> | decline <id>]`, `handoffs policy`, `roots`. Task and context are redacted (§9).
-  - **The person reads all of it before they accept** (B3-7234). Accepting starts an agent on their machine. The
-    sender's task and context become that agent's instructions.
+  `handoffs` (the list only); CLI `workmesh handoff`, `handoffs [list | show <id> | accept <id> | decline <id>]`,
+  `handoffs policy`, `roots`. Task and context are redacted (§9).
+  - **Only a person accepts or declines** (B3-7234). Accepting starts an agent on their machine, so the answer is
+    not an agent's to give. The daemon takes an accept or a decline only from a person's own surfaces: the CLI and
+    the menu bar app (`caller.client` is `cli` or `menubar`). It must also read no agent session behind the call
+    (§23). Any other caller gets this refusal, and nothing goes to the hub: "Handoffs are accepted or declined by a
+    person, on the board, in the menu bar or in their own terminal, not by an agent."
+  - So every call through the MCP server is refused, also one whose session the daemon can't name. The MCP
+    `handoffs` tool takes no arguments and only lists. An MCP client that calls itself `cli` or `menubar` is sent on
+    as `mcp:<name>`. The relay's own accept by policy (`auto-self`, below) is unchanged.
+  - Like the gates, this is a cooperative guard rail, not a sandbox: anything running as the person can call the hub.
+  - **The person reads all of it before they accept** (B3-7234). The sender's task and context become the new
+    agent's instructions.
   - The full view (`handoffs show <id>`) prints who it is from, repo, issue and status, then the whole task and the
     whole context. Escape sequences, control characters and invisible characters are removed first
     (`lib/untrusted.ts`). Every line of the sender's text stands behind `│`, so none of it can pass for a line of

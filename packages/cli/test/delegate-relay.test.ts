@@ -494,6 +494,56 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     expect(hub.calls).toEqual([{ url: "https://hub.test/relay/handoffs", body: { action: "accept", id: "h_abc12345" } }]);
   });
 
+  it("a handoff is accepted or declined by a person: an agent caller is refused, and the hub hears nothing", async () => {
+    const hub = fakeHub([
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF } } },
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "declined" } } },
+    ]);
+    sync(hub.coord, { handoffs: [{ ...HANDOFF, status: "offered" }] as never });
+    const accepted: string[] = [];
+    const live = [{ key: "claude-code:s7", source: "claude-code", sessionId: "s7", cwd: "/w/b3os-beta", updatedAt: T }];
+    const d = deps(hub.coord, {
+      onAccepted: (h) => accepted.push(h.id),
+      listSessions: () => live as never,
+      getSession: (k) => live.find((s) => s.key === k) as never,
+      claudeSessions: () => new Map([["s7", { pid: 4242, sessionId: "s7" }]]),
+    });
+    const agents: Array<[string, Record<string, unknown>]> = [
+      ["the MCP server under a Claude Code session", { ppid: 4242, client: "claude-code" }],
+      ["the CLI in an agent's shell (session id in its environment)", { claudeSessionId: "s7", client: "cli" }],
+      ["the CLI in a Codex thread's shell", { codexThreadId: "t1", client: "cli" }],
+      ["the CLI in a live session's directory", { cwd: "/w/b3os-beta", client: "cli" }],
+      ["an MCP client whose session the daemon can't name", { client: "some-agent-tool" }],
+      ["an MCP client that calls itself the CLI", { client: "mcp:cli" }],
+      ["a caller that names no surface", {}],
+    ];
+    for (const [what, caller] of agents) {
+      for (const action of ["accept", "decline"]) {
+        const r = await runCoordOp({ op: "handoffs", args: { action, id: "h_abc12345", note: "x" }, caller }, d);
+        expect(r, `${action} from ${what}`).toEqual({
+          ok: false,
+          text: "Handoffs are accepted or declined by a person, on the board, in the menu bar or in their own terminal, not by an agent.",
+          data: undefined,
+        });
+      }
+      // Reading stays open to an agent.
+      expect((await runCoordOp({ op: "handoffs", args: {}, caller }, d)).ok, `list from ${what}`).toBe(true);
+      expect((await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_abc12345" }, caller }, d)).ok, `show from ${what}`).toBe(true);
+    }
+    expect(hub.calls).toEqual([]);
+    expect(accepted).toEqual([]);
+    // A person: the CLI at their own terminal, and the menu bar app.
+    const cli = await runCoordOp({ op: "handoffs", args: { action: "accept", id: "h_abc12345" }, caller: { client: "cli", cwd: "/somewhere/else", ppid: 77 } }, d);
+    expect(cli).toMatchObject({ ok: true, text: "Accepted h_abc12345: this machine starts an agent for it." });
+    const bar = await runCoordOp({ op: "handoffs", args: { action: "decline", id: "h_abc12345", note: "not this week" }, caller: { client: "menubar" } }, d);
+    expect(bar).toMatchObject({ ok: true, text: "Declined h_abc12345." });
+    expect(hub.calls.map((c) => c.body)).toEqual([
+      { action: "accept", id: "h_abc12345" },
+      { action: "decline", id: "h_abc12345", note: "not this week" },
+    ]);
+    expect(accepted).toEqual(["h_abc12345"]);
+  });
+
   it("handoffs show prints the whole task and context, without what a person can't see, and what Accept starts", async () => {
     const hub = fakeHub();
     // Made from code points, so this file holds no invisible character.

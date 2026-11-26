@@ -109,9 +109,15 @@ On 11-25 Sean handed An a task. An accepted from the CLI at 13:35:07, his machin
 about 12 seconds later, and it committed `f558ac1` at 13:35:30. A handoff agent is told to commit on its branch, push,
 and open a draft PR unless the task says otherwise.
 
-Read a handoff before you accept it. Accepting starts an agent on your machine, and the sender's text becomes its
-instructions. `workmesh handoffs` lists one line per handoff. `workmesh handoffs show <id>` prints all of it, like this
-(an example, not a live run):
+Accepting is yours to do, not your agent's. It starts an agent on your machine, and the sender's text becomes its
+instructions. So an agent can list handoffs, but it can't accept or decline one:
+
+```text
+Handoffs are accepted or declined by a person, on the board, in the menu bar or in their own terminal, not by an agent.
+```
+
+Read a handoff before you accept it. `workmesh handoffs` lists one line per handoff. `workmesh handoffs show <id>`
+prints all of it, like this (an example, not a live run):
 
 ```text
 Handoff h_abc12345 · offered · sent 6 min ago

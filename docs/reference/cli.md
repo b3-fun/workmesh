@@ -55,7 +55,7 @@ For what to run when, start with the [guide](../guide/getting-started.md).
 | [`workmesh roots`](#workmesh-roots) | Where your repos live, so a handoff finds its checkout here (repos your sessions worked in count too) |
 | [`workmesh gates`](#workmesh-gates) | Approval gates on your own agents: they ask before they merge, deploy, publish, force-push or spend |
 | [`workmesh approvals`](#workmesh-approvals) | Approvals your agents asked for, and ones you can decide; approve or deny one |
-| [`workmesh wake`](#workmesh-wake) | Show or set whether an idle session wakes for a message, an approval or a handoff result (on by default) |
+| [`workmesh wake`](#workmesh-wake) | Show or set whether an idle session wakes (on by default), and whose messages may wake it (replies by default) |
 | [`workmesh mcp`](#workmesh-mcp) | Serve the team coordination tools over MCP (stdio), for Claude Code and Codex |
 | [`workmesh doctor`](#workmesh-doctor) | Check config, daemon, relay, and hook installs |
 
@@ -152,8 +152,8 @@ Commands:
   approvals [options] [action] [id]  Approvals your agents asked for, and ones
                                      you can decide; approve or deny one
   wake [value]                       Show or set whether an idle session wakes
-                                     for a message, an approval or a handoff
-                                     result (on by default)
+                                     (on by default), and whose messages may
+                                     wake it (replies by default)
   mcp                                Serve the team coordination tools over MCP
                                      (stdio), for Claude Code and Codex
   doctor [options]                   Check config, daemon, relay, and hook
@@ -922,11 +922,11 @@ Options:
 ```text
 Usage: workmesh wake [options] [value]
 
-Show or set whether an idle session wakes for a message, an approval or a
-handoff result (on by default)
+Show or set whether an idle session wakes (on by default), and whose messages
+may wake it (replies by default)
 
 Arguments:
-  value       on | off
+  value       on | off, or who may wake: replies | team | self
 
 Options:
   -h, --help  display help for command

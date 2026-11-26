@@ -18,6 +18,7 @@ import { scrubText } from "../hub/redact";
 import { QUOTE_MARK, cleanData, label, messageBlock, oneLine, quoted } from "../lib/untrusted";
 import { formatInbox } from "./coord-hooks";
 import { forgetOp, memoriesOp, noteAsMemory, recallOp, rememberOp } from "./memory-ops";
+import { recipientPerson } from "./messages";
 
 /**
  * v1 Coordinate operations for the MCP server and the CLI (docs/SPEC.md §23): `POST /coord/op` on the daemon's
@@ -102,6 +103,11 @@ export interface CoordOpsDeps {
   onAccepted?: (h: HubHandoffAccepted) => void;
   /** v2: handoff ids running on this machine. */
   runningHandoffs?: () => ReadonlySet<string>;
+  /**
+   * A session here sent a message the hub took: who to, and in which thread (SPEC §23). The daemon keeps it, so that
+   * person's answer counts as a reply.
+   */
+  sent?: (localKey: string, to: HubMessageTo, info: { id: string; thread?: string; person?: string }) => void;
   /** Ask: this machine's IANA time zone, for "today" and clock times (default: the process's). */
   timeZone?: () => string | undefined;
   now?: () => number;
@@ -304,6 +310,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       });
       if (!r.ok) return hubError(r);
       if (!r.body.ok) return fail(`Workmesh: ${hubSaid(r.body.error, "the hub didn't take the message")}`);
+      if (key) deps.sent?.(CoordClient.family(key), to, { id: r.body.id, ...(thread ? { thread } : {}), person: recipientPerson(to, st?.roster) });
       const where = "person" in to ? to.person : "agent" in to ? to.agent : to.session;
       return { ok: true, text: `Sent to ${idOf(where)} (message ${idOf(r.body.id)}).`, data: { id: r.body.id, to } };
     }

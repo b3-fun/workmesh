@@ -44,12 +44,22 @@ Written by `workmesh hub connect` (or `init`). Don't copy this section between m
 | `handoffs.permissionMode` | `auto` | Claude Code `--permission-mode` for a handoff's session. |
 | `handoffs.model` | the agent's default | The model a handoff runs on, e.g. `sonnet`. |
 | `handoffs.maxMinutes` | `120` | How long a handoff run may take (5 to 1440). |
-| `wake` | `true` | Wake an idle session when a message, approval or handoff result arrives for it (`workmesh wake on\|off`). |
+| `wake` | `true` | Wake an idle session when a message that may wake it, an approval or a handoff result arrives (`workmesh wake on\|off`). Whose messages may wake is `messages.wake`. |
 | `gates` | absent | Your own patterns for the `custom` approval gate. The gates themselves live on the hub (`workmesh gates set …`). |
 | `gates.custom` | `[]` | Case-insensitive regexes over a shell command, up to 50. |
 | `update` | absent | Updates the daemon installs on its own. Absent means off. |
 | `update.auto` | `false` | `workmesh update --auto on\|off`. |
 | `update.scope` | `patch` | `patch` takes 0.12.0 to 0.12.3; `minor` (`--auto on --minor`) takes 0.13.0 too. Never a new major. |
+
+## Messages
+
+Who may reach this machine's sessions. Your machine decides: a sender, or the hub, can only ask. The daemon reads
+these keys again within a few seconds of a change, so a hand edit needs no restart.
+
+| Key | Default | What it is |
+|---|---|---|
+| `messages` | absent | Rules for teammates' messages on this machine. Absent means the defaults below. |
+| `messages.wake` | `replies` | Whose message may start a turn in an idle session, while `wake` is on. `replies`: your own messages, and a reply from a person (or their agent) that the session wrote to in the last 7 days. `team`: any teammate's. `self`: only your own. Or a list of people, by the name the board shows or their GitHub login: `["Sam Lee", "bo-dev"]`. Set the first three with `workmesh wake replies\|team\|self`. A message that may not wake still reaches the session at its next prompt or tool call. |
 
 ## Daemon and agents
 
@@ -138,6 +148,7 @@ Set by Workmesh itself, useful when you debug:
 | `~/.local/state/workmesh/daemon.secret` | The bearer secret for the daemon's loopback API (`0600`). |
 | `~/.local/state/workmesh/daemon.log` | The daemon's log when it runs without a service. Under launchd it logs to `~/Library/Logs/workmesh-daemon.log`; under systemd, to the journal (`journalctl --user -u workmesh`). |
 | `~/.local/state/workmesh/hub-forward.json` | Shared sessions and unsent events, so a restart loses nothing (`0600`). |
+| `~/.local/state/workmesh/messages.json` | Who each session wrote to in the last 7 days, so their answer counts as a reply (`0600`). |
 | `~/.local/state/workmesh/update.log`, `update/previous/` | The last `workmesh update` run and the copy it rolls back to. |
 | `~/.local/state/workmesh/handoffs/` | Handoff runs on this machine. |
 | `~/Library/LaunchAgents/org.npclabs.workmesh.daemon.plist` | The daemon service on macOS. |

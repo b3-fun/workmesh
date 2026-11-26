@@ -146,6 +146,24 @@ export const configSchema = z.object({
     .catch(undefined),
   /** v2: wake an idle session when a message for it arrives (default true; `workmesh wake off`). */
   wake: z.boolean().optional().catch(undefined),
+  /**
+   * Who may reach this machine's sessions (SPEC §23). This machine decides: what a sender or the hub asks for is a
+   * request. Absent = the defaults below. A malformed section, or a malformed key in it, reads as absent.
+   */
+  messages: z
+    .object({
+      /**
+       * Whose message may start a turn in an idle session, while `wake` is on. `replies` (default): your own messages,
+       * and a reply from a person (or their agent) that the session wrote to first. `team`: anyone on the team.
+       * `self`: only your own. A list of people: those people, and your own.
+       */
+      wake: z
+        .union([z.enum(["replies", "team", "self"]), z.array(z.string().min(1).max(200)).max(100)])
+        .optional()
+        .catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
   /** v2: the person's own patterns for the `custom` approval gate (case-insensitive regexes over a shell command). */
   gates: z
     .object({ custom: z.array(z.string().max(300)).max(50).default([]).catch([]) })
@@ -303,6 +321,19 @@ export function readHubConfig(file = configPath()): HubConfig | undefined | "unr
 /** Auto-update settings (SPEC §41): off unless the person turned it on; patch releases only by default. */
 export function autoUpdateSettings(config: Pick<Config, "update">): { enabled: boolean; scope: "patch" | "minor" } {
   return { enabled: config.update?.auto === true, scope: config.update?.scope ?? "patch" };
+}
+
+/** Whose message may wake an idle session: one of the three rules, or a list of people. */
+export type MessageWakeRule = "replies" | "team" | "self" | string[];
+
+/** Who may reach this machine's sessions (SPEC §23), with the defaults. */
+export interface MessageSettings {
+  wake: MessageWakeRule;
+}
+
+export function messageSettings(config: Pick<Config, "messages">): MessageSettings {
+  const m = config.messages;
+  return { wake: m?.wake ?? "replies" };
 }
 
 export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {

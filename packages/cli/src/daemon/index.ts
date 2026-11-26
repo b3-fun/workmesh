@@ -9,6 +9,7 @@ import type { WorkflowWatcher } from "../adapters/workflow";
 import {
   autoUpdateSettings,
   delegateSettings,
+  messageSettings,
   formatOptionsFromConfig,
   hubShareLevel,
   hubStickyShare,
@@ -24,6 +25,7 @@ import { CoordClient } from "../hub/coord";
 import { CoordHooks } from "./coord-hooks";
 import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
+import { MessageGate } from "./messages";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
 import { codexHomeOfRollout } from "../hub/agents";
 import { CodexEndGuard } from "./codex-liveness";
@@ -32,7 +34,7 @@ import type { CoordSummary, HookMeta } from "./server";
 import { readGithubLogin } from "../lib/github";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
-import { checkoutsPath, handoffsDir, hubForwardStatePath, sessionVersionsPath, stateDir, updateCheckPath, updateLogPath } from "../lib/paths";
+import { checkoutsPath, handoffsDir, hubForwardStatePath, messagesStatePath, sessionVersionsPath, stateDir, updateCheckPath, updateLogPath } from "../lib/paths";
 import { detectInstall, managerBin } from "../lib/install-method";
 import type { InstallInfo } from "../lib/install-method";
 import { fetchMenubarRelease, fetchRegistryInfo, npmRegistry } from "../lib/registry";
@@ -121,12 +123,18 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   let liveClaude: Map<string, ClaudeProcess> | undefined = claudeOn ? readLiveClaudeSessions(claudeDir) : undefined;
   // v2 Delegate (SPEC §31): the settings are read from disk (at most every 2 s), so `workmesh roots|wake|handoffs`
   // apply without a restart.
-  let settingsCache: { at: number; v: ReturnType<typeof delegateSettings> } | undefined;
-  const settings = (): ReturnType<typeof delegateSettings> => {
+  let settingsCache: { at: number; v: ReturnType<typeof delegateSettings>; messages: ReturnType<typeof messageSettings> } | undefined;
+  const readSettings = (): NonNullable<typeof settingsCache> => {
     const now = Date.now();
-    if (!settingsCache || now - settingsCache.at > 2000) settingsCache = { at: now, v: delegateSettings(loadConfigSafe()) };
-    return settingsCache.v;
+    if (!settingsCache || now - settingsCache.at > 2000) {
+      const onDisk = loadConfigSafe();
+      settingsCache = { at: now, v: delegateSettings(onDisk), messages: messageSettings(onDisk) };
+    }
+    return settingsCache;
   };
+  const settings = (): ReturnType<typeof delegateSettings> => readSettings().v;
+  // Who may reach this machine's sessions (SPEC §23): its own rules, and the record of who each session wrote to.
+  const messages = new MessageGate({ coord: () => coord, settings: () => readSettings().messages, file: messagesStatePath() });
   const checkouts = new CheckoutIndex(checkoutsPath());
   const runner = new HandoffRunner({
     coord: () => coord,
@@ -210,6 +218,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       active: () => fwd.hasLiveShared(),
       log,
       onSync: (next, previous) => delegate.onSync(next, previous),
+      policy: messages,
     });
     coord.start();
     runner.start();
@@ -450,6 +459,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         claudeSessions: () => readLiveClaudeSessions(claudeDir),
         onAccepted: (h) => delegate.accepted(h),
         runningHandoffs: () => runner.running(),
+        sent: (key, to, info) => messages.sent(key, to, info),
       }),
     wakeWait: (session, timeoutMs, signal) => delegate.wait(session, timeoutMs, signal),
     reloadHub: () => {
@@ -469,9 +479,10 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         ...liveConfig,
         ...patch,
         hub: hubOnDisk === "unreadable" ? liveConfig.hub : hubOnDisk,
-        // v2 sections the CLI writes while the daemon runs (roots, wake, gates).
+        // v2 sections the CLI writes while the daemon runs (roots, wake, gates, who may reach a session).
         handoffs: onDisk.handoffs,
         wake: onDisk.wake,
+        messages: onDisk.messages,
         gates: onDisk.gates,
         update: onDisk.update,
       };
@@ -562,6 +573,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         if (livenessTimer) clearInterval(livenessTimer);
         updates.stop();
         sessionVersions.flush();
+        messages.flush();
         if (codexDirTimer) clearInterval(codexDirTimer);
         codexEnds.stop();
         server.close();

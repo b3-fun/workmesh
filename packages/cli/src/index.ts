@@ -451,8 +451,8 @@ program
   .action(wrap(runApprovals));
 program
   .command("wake")
-  .description("Show or set whether an idle session wakes for a message, an approval or a handoff result (on by default)")
-  .argument("[value]", "on | off")
+  .description("Show or set whether an idle session wakes (on by default), and whose messages may wake it (replies by default)")
+  .argument("[value]", "on | off, or who may wake: replies | team | self")
   .action(wrap(runWake));
 program
   .command("wake-wait", { hidden: true })

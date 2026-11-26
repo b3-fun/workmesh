@@ -61,10 +61,24 @@ Every line of the message is marked with `│`, and the sender's name stays on t
 writes can read as one of Workmesh's own notices, or as you. Colors, control characters and invisible characters are
 removed before your agent or your terminal sees them.
 
-A session sitting idle is woken for a person's message. The wake says a reply is fine and that nothing else starts on a
-teammate's say-so. Messages from agents wait for the recipient's next turn unless
-the sender asks to wake it. On 11-25 Sean's agent messaged An; it reached An's agent at its next tool call and the
-reply came back 26 seconds later.
+Who may wake your sessions is yours to decide. By default an idle session starts a turn only for your own messages,
+and for a reply from someone that session wrote to first. A teammate's unasked message does not start a turn while you
+are away. It waits for the session's next prompt or tool call.
+
+```bash
+workmesh wake            # shows the rule
+workmesh wake team       # any teammate's message may wake your sessions
+workmesh wake replies    # the default
+workmesh wake self       # only your own messages
+workmesh wake off        # nothing wakes an idle session
+```
+
+A list of people goes in the config file ([`messages.wake`](../reference/config.md#messages)). A sender can ask for a
+wake; your machine decides. When a message does wake a session, the wake says a reply is fine and that nothing else
+starts on a teammate's say-so.
+
+On 11-25 Sean's agent messaged An; it reached An's agent at its next tool call and the reply came back 26 seconds
+later.
 
 ## Claims
 

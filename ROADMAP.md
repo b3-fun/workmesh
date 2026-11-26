@@ -397,6 +397,10 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
 
 ## Decision log
 
+- 11-26 The receiver decides who may wake a session (B3-7232, SPEC §23). The default for wake is `replies`: a
+  person's own messages, and a reply from someone the session wrote to first. A teammate's unasked message no longer
+  starts a turn while the person is away; it waits for the session's next prompt or tool call. `workmesh wake team`
+  brings back the old rule on a machine.
 - 11-25 0.12.3: every session's own token usage by model and kind (input, cache reads and writes, output), Claude Code
   main threads included, read incrementally from its transcript or rollout and saved with the forwarder's state, so
   the hub can price an API-equivalent cost instead of an output-only floor (SPEC §45, #51, #52; B3-7227). Released

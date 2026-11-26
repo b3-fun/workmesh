@@ -128,6 +128,11 @@ export function sessionVersionsPath(): string {
   return path.join(stateDir(), "session-versions.json");
 }
 
+/** Who each session wrote to, and the messages held for the person (SPEC §23), 0600. */
+export function messagesStatePath(): string {
+  return path.join(stateDir(), "messages.json");
+}
+
 /** 0.12: the copy of the installed package `workmesh update` keeps until the new version passes its checks. */
 export function updateBackupDir(): string {
   return path.join(stateDir(), "update", "previous");

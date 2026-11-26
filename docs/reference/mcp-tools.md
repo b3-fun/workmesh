@@ -66,7 +66,7 @@ Changes team state on the hub; destructive: no.
 | `text` | string | yes | The message (up to 4,000 characters). |
 | `kind` | `person` \| `agent` \| `session` | no | What `to` names, when it is ambiguous. |
 | `thread` | string | no | A thread id to reply in. |
-| `wake` | boolean | no | Wake the recipient if it is idle (default: a person's messages and replies to a session that wrote to you wake). |
+| `wake` | boolean | no | Ask to wake the recipient if it is idle. Their machine decides: by default a reply to a message they sent you wakes them, and any other message waits for their next turn. |
 
 ## inbox
 

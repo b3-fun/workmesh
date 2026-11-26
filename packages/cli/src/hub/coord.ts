@@ -82,6 +82,15 @@ export interface CoordView {
   state?: HubSyncAccepted;
 }
 
+/**
+ * Who may reach this machine's sessions (SPEC §23), decided on this machine (`daemon/messages.ts`). The hub's flags
+ * and a sender's wishes are a request. Without a policy every message is taken as the hub sent it.
+ */
+export interface InboxPolicy {
+  /** This message may start a turn in its idle session. Asked for a hub message and for the daemon's own notices. */
+  wakes(item: HubSyncInboxItem, localKey: string): boolean;
+}
+
 export interface CoordClientOptions {
   url: string;
   token: string;
@@ -108,6 +117,8 @@ export interface CoordClientOptions {
   onSync?: (next: HubSyncAccepted, previous: HubSyncAccepted | undefined) => void;
   /** v3 (SPEC §36): the brief is fetched at most this often (default 10 s). */
   briefMinMs?: number;
+  /** Who may reach this machine's sessions (SPEC §23). Absent: every message as the hub sent it. */
+  policy?: InboxPolicy;
 }
 
 /** v3 Memory (SPEC §35): one accepted memory as the brief carries it. */
@@ -190,6 +201,7 @@ export class CoordClient {
   /** Ids of sync items refused for carrying the daemon's own notice prefix (each is logged once). */
   private readonly refusedIds = new Set<string>();
   private readonly onSync: CoordClientOptions["onSync"];
+  private readonly policy: InboxPolicy | undefined;
   /** v2 endpoints this hub answered 404 to, and until when that is remembered. */
   private readonly v2Absent = new Map<string, number>();
   /** Teammates' messages handed to this device's sessions, newest last, for telling a reply from new chatter. */
@@ -233,6 +245,7 @@ export class CoordClient {
     this.holdGraceMs = opts.holdGraceMs ?? 30 * 60_000;
     this.staleMs = opts.staleMs ?? 90_000;
     this.onSync = opts.onSync;
+    this.policy = opts.policy;
     this.briefMinMs = opts.briefMinMs ?? 10_000;
   }
 
@@ -427,16 +440,28 @@ export class CoordClient {
   }
 
   /**
-   * v2 (SPEC §31): whether a message should wake an idle session: the hub's `wake` when it set one, else yes for a
-   * message a person wrote (no sending session) and no for one an agent sent.
+   * v2 (SPEC §31): whether a message asks to wake an idle session: the hub's `wake` when it set one, else yes for a
+   * message a person wrote (no sending session) and no for one an agent sent. A request: this machine's policy has
+   * the last word (`wakeFor`).
    */
   static wakes(item: HubSyncInboxItem): boolean {
     return item.wake ?? item.from.sessionKey === undefined;
   }
 
-  /** Waiting messages that should wake this session if it is idle, oldest first. */
+  /**
+   * Whether a message is this device's person's own: one of this device's sessions sent it, or the hub names its
+   * sender as it names this device's person (their other machines, the board, a terminal).
+   */
+  isOwn(item: HubSyncInboxItem): boolean {
+    if (item.from.sessionKey !== undefined && this.localKey(item.from.sessionKey) !== undefined) return true;
+    const me = this.me()?.toLowerCase();
+    return me !== undefined && item.from.person.toLowerCase() === me;
+  }
+
+  /** Waiting messages that may wake this session if it is idle, oldest first: this machine's policy decides. */
   wakeFor(localKey: string): HubSyncInboxItem[] {
-    return this.pendingFor(localKey).filter((i) => CoordClient.wakes(i));
+    const policy = this.policy;
+    return this.pendingFor(localKey).filter((i) => (policy ? policy.wakes(i, localKey) : CoordClient.wakes(i)));
   }
 
   /** The local sessions (and subagents) with any undelivered message, for the daemon's wake check. */

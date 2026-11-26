@@ -1,5 +1,6 @@
 import fs from "node:fs";
-import { loadConfig, loadConfigSafe, saveConfig } from "../lib/config";
+import { loadConfig, loadConfigSafe, messageSettings, saveConfig } from "../lib/config";
+import type { MessageWakeRule } from "../lib/config";
 import { isDaemonUp, wakeWait } from "../lib/daemon-client";
 import { bold, dim, green } from "../lib/ui";
 import { readStdin } from "./hook";
@@ -136,18 +137,38 @@ export async function runWakeWait(source: string): Promise<void> {
   process.exit(code);
 }
 
-/** `workmesh wake [on|off]`: show or set whether idle sessions are woken for their messages. */
+/** Whose messages a wake rule lets start a turn (SPEC §23), as `workmesh wake` says it. */
+export function wakeRuleText(rule: MessageWakeRule): string {
+  if (rule === "team") return "any teammate's message";
+  if (rule === "self") return "your own messages only";
+  if (Array.isArray(rule)) return `your own messages, and messages from ${rule.join(", ")}`;
+  return "your own messages, and a reply to a message the session sent";
+}
+
+/**
+ * `workmesh wake [on|off|replies|team|self]`: show or set whether idle sessions are woken (`wake`), and whose
+ * messages may wake them (`messages.wake`). This machine decides: a sender can only ask.
+ */
 export async function runWake(value?: string): Promise<void> {
   const config = loadConfig();
   const current = config.wake ?? true;
+  const rule = messageSettings(config).wake;
   if (value === undefined) {
     console.log(
-      `${bold(current ? "on" : "off")} — ${current ? "an idle session starts a turn when a teammate's message, an approval or a handoff result arrives for it" : "messages wait for the session's next turn"}`,
+      `${bold(current ? "on" : "off")} — ${current ? `an idle session starts a turn for ${wakeRuleText(rule)}, and for an approval or a handoff result` : "messages wait for the session's next turn"}`,
     );
+    console.log(dim(`  who may wake: ${Array.isArray(rule) ? "a list of people" : rule} (workmesh wake replies | team | self; a list of people goes in the config file as messages.wake)`));
     return;
   }
   const v = value.trim().toLowerCase();
-  if (!["on", "off", "true", "false", "yes", "no"].includes(v)) throw new Error(`unknown value "${value}" — use on or off`);
+  if (v === "replies" || v === "team" || v === "self") {
+    config.messages = { ...config.messages, wake: v };
+    saveConfig(config);
+    console.log(green(`who may wake: ${v}`));
+    console.log(dim(`  an idle session starts a turn for ${wakeRuleText(v)}; takes effect within a few seconds`));
+    return;
+  }
+  if (!["on", "off", "true", "false", "yes", "no"].includes(v)) throw new Error(`unknown value "${value}" — use on, off, replies, team or self`);
   const next = v === "on" || v === "true" || v === "yes";
   config.wake = next;
   saveConfig(config);

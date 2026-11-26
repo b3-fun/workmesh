@@ -648,7 +648,28 @@ read and drops the rest one by one):
   - A handoff's prompt (§31) fences the sender's text the same way. Their names stay on the lines that carry them.
     The task and the context are marked lines, so no line of them reads as one of the lines Workmesh adds around
     them. The task is still the session's task: the rule for messages is not said over it.
-  - This is a second layer. What may be sent to a session, and what may wake it, is decided elsewhere.
+  - This is a second layer. What may wake a session is the next rule.
+- **Who may reach a session** (`daemon/messages.ts`, B3-7232). Any teammate, or any teammate's agent, can send a
+  message to any session, and the sender chooses whether it asks to wake an idle one. The receiving machine has the
+  last word. It decides from its own config (`messages`). The hub's flags are a request.
+  - **Who may wake** (`messages.wake`, while `wake` is on). A message must first ask to wake: its `wake` flag says
+    so, or it has none and a person wrote it (§30). Then the receiving machine's rule must allow its sender. The rule
+    is `replies` (the default), `team`, `self`, or a list of people.
+    - A person's own messages always pass. A message is their own when one of this device's sessions sent it, or
+      when the hub names its sender as it names this device's person: another of their machines, the board, a
+      terminal.
+    - `replies` also lets a reply pass. A message is a reply when its sender is a person the session wrote to in the
+      last 7 days, or one of that person's sessions or agents. It is also a reply when it is in a thread the session
+      wrote in: its `thread` is the id of a message the session sent, or the thread that message carried.
+    - `team` lets anyone on the team pass, as every relay did before this rule. `self` lets nobody else pass. A list
+      lets those people pass, by the name the hub shows or by their GitHub login in the roster.
+    - The relay keeps the record this needs. For each message a local session sends, it notes the session, the
+      hub's id for the message, its thread, and who it went to: the person named, or the person whose session or
+      agent was named, read from the roster. The record is in the state dir (`messages.json`, 0600). It holds at most
+      500 messages, and each is dropped after 7 days. A message the person sends from a terminal is not a session's,
+      so it is not recorded.
+    - The daemon's own notices (§31) wake as before. A message that may not wake is not lost, and its session is
+      told nothing about the wait. It reaches the session at its next prompt or tool call, as marked text.
 - **MCP** (`mcp/server.ts`). `workmesh mcp` (stdio, JSON-RPC 2.0, one message per line; protocol versions 2024-11-05 to
   2025-11-25) gives every agent `whoami`, `roster`, `send`, `inbox`, `claim`, `release`, `lease`, `unlease`, `leases`,
   `note` and `notes` (v2 adds `handoff`, `handoffs` and `ask`). It talks to the local daemon only (`POST /coord/op` on the loopback API, bearer secret as
@@ -659,7 +680,7 @@ read and drops the rest one by one):
   `send`'s `to` (0.11.x) resolves on the machine from the last sync's roster: a person (name or GitHub login), a
   session by the name the board shows or its key (`claude-code:<id>`, or the start of the id, 6+ characters), or a hub
   key; a name that fits several live sessions is refused, listing them, rather than guessed (`--kind session|agent|
-  person` narrows it). An agent's reply wakes its recipient (§30 `wake: true`) when it is in a thread a message to the
+  person` narrows it). An agent's reply asks to wake its recipient (§30 `wake: true`) when it is in a thread a message to the
   sender opened or carried, or goes to the session (or that session's person) that wrote to the sender in the last 30
   minutes; other agent messages keep the hub's default (they don't wake). A claim, release, lease or unlease the hub
   took is applied to the cached sync at once, so `claims` and `leases` (and the hooks) show it before the next sync;
@@ -907,7 +928,8 @@ the device token names the person, requests carry ingest keys, answers carry hub
   A hub that predates it ignores the field.
 - **Wake**: an inbox item (§21) may carry `wake: true`, meaning "start a turn in this session if it is idle". Absent,
   a relay wakes for a message a person wrote (no `from.sessionKey`) and not for one an agent sent; a sender sets
-  `wake` on the request to choose. The hub copies it onto the inbox item.
+  `wake` on the request to choose. The hub copies it onto the inbox item. The flag is a request: the receiving relay
+  decides who may wake its sessions (§23).
 
 `GET /relay/sync` (§21) gains three optional lists. A hub without v2 sends none; a relay reads their absence as "no
 v2 on this hub", and an empty list as "v2, nothing now".
@@ -983,7 +1005,8 @@ command run; a waiter that can't reach the daemon ends.
   same inbox as teammates' messages, delivered the same way and never acked to the hub. A notice is printed as
   Workmesh's own line, outside any block. So the names, notes and tasks the hub passed on are one line each in it
   (§23). Only the daemon can make a notice: a sync item that carries a notice's id prefix is refused (§42).
-- **Wake.** An inbox item wakes an idle session when its `wake` says so, else when a person wrote it; the daemon's
+- **Wake.** An inbox item asks to wake an idle session when its `wake` says so, else when a person wrote it. Whether
+  it does is the receiving machine's rule (§23): by default its person's own messages and replies. The daemon's
   notices about outcomes wake too. Claude Code: `workmesh setup` (and `init`; `--no-wake` skips it) adds a Stop hook
   `{ type: "command", command: "<node> <cli> wake-wait claude-code", asyncRewake: true, timeout: 3600, rewakeMessage,
   rewakeSummary }`: the last two (0.11.x) replace Claude Code's "Stop hook blocking error from command …" before the

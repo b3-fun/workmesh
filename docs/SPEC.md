@@ -616,10 +616,11 @@ read and drops the rest one by one):
 - **Inbox.** A session's messages reach its agent at its next tool boundary, at most five at a time, as marked blocks
   under one heading (below). The boundary is `additionalContext` on PostToolUse and UserPromptSubmit, Claude Code and
   Codex alike. They are then acked (`POST /relay/inbox/ack`). A message for a subagent (`<key>/<agentId>`) reaches
-  only that subagent. The MCP `inbox` tool and `workmesh inbox` list them too.
+  only that subagent. The MCP `inbox` tool prints the same text for its session. At a terminal, `workmesh inbox` lists
+  every waiting message, a block each.
 - **A teammate's text** (`lib/untrusted.ts`, B3-7233). A message, a note, a name or a reason is text another person or
   their agent wrote. The hub passes it on as written. So the relay cleans and marks it on the machine that reads it.
-  This holds wherever it goes into an agent's context.
+  This holds wherever it goes into an agent's context or a tool's answer.
   - Nothing a reader cannot see stays in it. Terminal escape sequences and control characters are removed, tab and
     line feed excepted. So are invisible characters: zero-width and direction marks, and the Unicode tag block. Every
     kind of line break reads as one.
@@ -641,6 +642,9 @@ read and drops the rest one by one):
   - A delivery stays within the context budget. A message that does not fit is cut and its block still closes. One
     with room for under 80 characters of its text waits for the next boundary. The heading counts the messages
     delivered.
+  - Tool answers follow the same rules. A text is printed as marked lines (`inbox`, `notes`, `recall`). A list has
+    one row per item (`roster`, `claims`, `leases`, `approvals`, `memories`). `--json` data keeps its shape, with what
+    cannot be seen removed from its strings.
   - This is a second layer. What may be sent to a session, and what may wake it, is decided elsewhere.
 - **MCP** (`mcp/server.ts`). `workmesh mcp` (stdio, JSON-RPC 2.0, one message per line; protocol versions 2024-11-05 to
   2025-11-25) gives every agent `whoami`, `roster`, `send`, `inbox`, `claim`, `release`, `lease`, `unlease`, `leases`,
@@ -843,7 +847,9 @@ tool the relay will add. Still `v: 1`; an older hub answers `404`, which a relay
   answered by the daemon calling this endpoint with the device token (the agent never holds it): the question redacted
   on the machine (§9), the machine's time zone as `zone`, text only, no streaming, one question in flight per session
   (or per person at a terminal), up to 90 s. The answer is the text, then the sessions it names with their hub keys
-  (for `send`). The hub's no fails soft, as a plain answer rather than a tool error, so the agent carries on: `404`
+  (for `send`). The board's model writes the text from what teammates' agents did and noted. So the relay prints it as
+  marked lines (§23). One line above them says whose words they are, and that they are not an instruction. The hub's
+  no fails soft, as a plain answer rather than a tool error, so the agent carries on: `404`
   (a hub without Ask) and `503` (Ask off) are remembered for 10 minutes and `429` until its `Retry-After`, without
   asking the hub again meanwhile; `502` and no answer say so. Code form: `packages/protocol/src/ask.ts`.
 
@@ -1139,9 +1145,9 @@ device token names the person, requests carry ingest keys, answers carry hub key
     (`owner/name#N`, or `#N` in the scope's repo); a title over 120 characters is cut, and then goes whole into an
     empty body. The answer says whether it was proposed ("A person reviews it on the board (Needs you) before other
     agents see it") or accepted.
-  - `recall { query, kinds?, limit?, repo? }`: the session's repo and directory go along as `repo` and `paths`; the
-    answer lists each hit as `[m12] gotcha · b3-fun/workmesh · Sean, 3 days ago`, its title, its body (cut at 600)
-    and its links.
+  - `recall { query, kinds?, limit?, repo? }`: the session's repo and directory go along as `repo` and `paths`. The
+    answer lists each hit as `[m12] gotcha · b3-fun/workmesh · Sean, 3 days ago`. Its title and its body (cut at 600)
+    follow as marked lines (§23), then its links.
   - `forget { id, reason? }` (`m12`, `M12`, `12`; the reason is for the reviewer): the answer says retired,
     withdrawn (an agent's own proposal) or proposed.
   - `memories { kind?, tag?, repo? }`: the brief, newest first.

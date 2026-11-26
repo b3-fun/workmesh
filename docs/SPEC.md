@@ -1431,20 +1431,65 @@ an upgrade went on without the new tools until someone restarted them. From 0.12
   steps for this version. `update.json` (state dir, 0600) records the version whose setup last ran (`init` and
   `setup` write it too) and the last update (`ok`, `rolledBack`, `auto`). One update at a time (`update.lock`).
   `--check` only reports (`--json` too); `--to <version>` picks a version (0.12.0 or newer).
-- **Notices.** The daemon serves `GET /update` (bearer secret): `{current, latest?, available, checkedAt?, source?:
-  "hub" | "npm", install: {method, canUpdate, hint?}, run?: [node, cli, "update"], auto: {enabled, scope}, last?,
-  menubar?}`. `latest` is the hub's `latestClient` (§40) when the hub sends it, else (or when the hub's is older than this
+- **Notices.** The daemon serves `GET /update` (bearer secret): `{current, latest?, available, waiting?: {version,
+  since, until}, waitHours, checkedAt?, source?: "hub" | "npm", install: {method, canUpdate, hint?}, run?: [node, cli,
+  "update"], auto: {enabled, scope}, last?, signing: {on}, menubar?, menubarHeld?}`. `latest` is the hub's
+  `latestClient` (§40) when the hub sends it, else (or when the hub's is older than this
   relay, a hub that hasn't read npm since a release) the registry's, read at most every 6 h (attempts count, failed ones too; kept in `update-check.json` across restarts); the newer of the two wins.
-  `menubar` (macOS) is the latest GitHub release's `Workmesh-menubar-macos.zip` with the SHA-256 digest GitHub reports
-  for the asset, read at most every 6 h; a release without a digest offers nothing. `/health` adds `version`.
+  The daemon sets `available` once `latest` is newer than this relay and older than the waiting time (below). Before
+  that, `waiting` says since when it is out and until when it waits.
+  On macOS, `menubar` is the latest GitHub release's `Workmesh-menubar-macos.zip`, read at most every 6 h, once it may
+  be offered. It carries the SHA-256 digest GitHub reports for the asset (a release without a digest offers nothing),
+  or, with release signing on, the SHA-256 from the release's signed list (below). When a release's zip is not
+  offered, `menubarHeld` says why. `/health` adds `version`.
   `workmesh status` ends with "0.12.1 available: `workmesh update`"; `doctor` has a `version` check (that notice, or the
-  daemon still on an older build than the CLI).
+  daemon still on an older build than the CLI). Both name a release that is still waiting instead of offering it.
+- **Waiting time.** A brand-new release is not taken at once, so a bad one can be pulled before machines install it on
+  their own. The daemon offers a release (`available`, `menubar`) only once it is `update.waitHours` old, and
+  auto-update installs it only then. The default is 24, 0 is no wait, and 720 is the most.
+  - Age counts from the publish time, or from when this daemon first saw the release, whichever is earlier. So a
+    source that gives no time, or a wrong one, delays an offer by the waiting time at most.
+  - For a version, the publish time is npm's `time`, read from the full packument (the abbreviated one has none). For
+    the menu bar's release it is GitHub's `published_at`, or the zip's `updated_at` when that is later.
+  - The hub's `latestClient` carries no time. For a newer version the hub names, the daemon asks the registry within
+    its 6 h limit, and counts from the first sight until it knows.
+  - Only the newest release counts: one that comes out during the wait starts its own.
+  - While a release waits, `GET /update` has `available: false` and `waiting`, and the menu bar shows nothing. Both
+    `status` and `doctor` say when it will be offered: "0.12.4 is out: offered in 21h 0m (new releases wait 24 h)". A
+    waiting menu bar zip is `menubarHeld` with `reason: "waiting"` and `until`.
+  - Run by hand, `workmesh update` installs the newest release at once and says it is younger than the waiting time.
+- **Signed releases.** The menu bar app has no Apple Developer ID (its zip is sealed ad hoc). Whoever can publish a
+  GitHub release controls both the zip and the digest GitHub reports for it. So a maintainer signs a list of the
+  release's files, with a key that is never on GitHub (CONTRIBUTING.md, "Releasing").
+  - A release carries two more assets. The list is `workmesh-release.json`: `{version, createdAt, files: [{name,
+    sha256, size}]}`. Its signature is `workmesh-release.json.sig`: the base64 of an Ed25519 signature over the exact
+    bytes of the list.
+  - The relay pins the maintainers' public keys, each the base64 of the raw 32 bytes (`lib/release-keys.ts`).
+  - With a key pinned, the daemon offers the zip only when four things hold. Both assets are there. The signature is
+    a pinned key's, checked before the list is parsed. The list's `version` equals the release's tag. The list names
+    the zip.
+  - The zip's `menubar.sha256` and `size` then come from the signed list (`menubar.signed: true`), never from GitHub's
+    digest. The app checks its download against them.
+  - Any other release offers nothing, the app of an earlier release included. The reason is in `menubarHeld:
+    {version?, reason, detail}`. It is one of `unsigned`, `bad-signature`, `bad-list`, `wrong-version` and
+    `hash-mismatch`. A signature by a key that isn't pinned is `bad-signature`. A zip whose digest on GitHub is not
+    the signed one is `hash-mismatch`. For such a release, `status` prints the reason and `doctor` warns in its
+    `release signing` check (macOS). A release whose tag is not a version offers nothing and has no `menubarHeld`,
+    as with signing off. Its two small files are not read, and the tag's text goes into no reason.
+  - The two small files are read over https with size limits (64 KB and 1 KB). A read that fails is tried again in 6 h
+    and keeps what was checked before. An offer saved before signing was switched on is dropped and read again.
+  - The pinned list ships empty: the maintainers have not made a key yet. With no key pinned, signing is off
+    (`signing: {on: false}`), the zip's hash is GitHub's digest as before, and `doctor` says signing is not switched on
+    yet.
+  - The CLI itself comes from npm, where a publish needs a maintainer's security key. How it installs is unchanged.
 - **Auto-update** (opt-in: `workmesh update --auto on`, `--minor` to include minor releases, `--auto off`; config
-  `update: {auto, scope}`). The daemon starts `workmesh update --auto-run` at most once a day for a release within the
-  scope (patch: same major.minor; minor: same major; never a major or a prerelease), never again for a version whose
-  update failed, and only for an install it can update. It runs detached in its own session (launchd cleans up only the
-  job's process group), on Linux in its own transient unit (`systemd-run --user`: stopping `workmesh.service` kills its
-  cgroup), with its output in `update.log`.
+  `update: {auto, scope}`). The daemon starts `workmesh update --auto-run --to <version>` at most once a day for a
+  release within the scope (patch: same major.minor; minor: same major; never a major or a prerelease), never again
+  for a version whose update failed, and only for an install it can update. The release must also be older than the
+  waiting time. The daemon names the version it found old enough, so a newer one that came out since is not taken
+  early. The run itself also leaves a version the registry says is younger than the waiting time. It runs detached in
+  its own session (launchd cleans up only the job's process group), on Linux in its own transient unit
+  (`systemd-run --user`: stopping `workmesh.service` kills its cgroup), with its output in `update.log`.
 - **Stale sessions.** A hook sends its version (`x-workmesh-client`) and, at SessionStart, the start's source
   (`x-workmesh-start`: `startup`, `resume`, `clear`, `compact`) and a fingerprint of what a session takes from Workmesh
   at start (`x-workmesh-surface`: the MCP tools' names and input schemas, the hook events). A new process (`startup`,
@@ -1465,8 +1510,8 @@ an upgrade went on without the new tools until someone restarted them. From 0.12
   a new session, and a Codex thread to start a new thread.
 - **Menu bar.** Workmesh.app reads `GET /update`: one "Update available" item that runs `run` in a window with its
   output, and, when the release's menu bar app is newer than itself, downloads the zip, checks its SHA-256 against
-  `menubar.sha256`, clears the quarantine flag, keeps one rollback copy, swaps itself in place and relaunches
-  (apps/menubar/README.md).
+  `menubar.sha256` (the signed list's with signing on; the app never reads GitHub itself), clears the quarantine flag,
+  keeps one rollback copy, swaps itself in place and relaunches (apps/menubar/README.md).
 
 ---
 

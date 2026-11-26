@@ -52,6 +52,7 @@ Written by `workmesh hub connect` (or `init`). Don't copy this section between m
 | `update` | absent | Updates the daemon installs on its own. Absent means off. |
 | `update.auto` | `false` | `workmesh update --auto on\|off`. |
 | `update.scope` | `patch` | `patch` takes 0.12.0 to 0.12.3; `minor` (`--auto on --minor`) takes 0.13.0 too. Never a new major. |
+| `update.waitHours` | `24` | How many hours a release must be out before `doctor`, `status` and the menu bar offer it, and before auto-update installs it. `0` turns the wait off; 720 is the most. `workmesh update` run by hand never waits. No command sets it: edit the file. See [New releases wait a day](../guide/updating-and-uninstalling.md#new-releases-wait-a-day). |
 
 ## Messages
 

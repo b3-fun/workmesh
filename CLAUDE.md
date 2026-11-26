@@ -104,7 +104,7 @@ Any tool (curl) ───┼─────────────────�
 - `POST /pause` — empty body pauses until resumed; `{for: "30m"|"1h"|"tomorrow"}` or `{until}` snoozes, the pusher's sweep tick auto-resumes (`lib/snooze.ts`); `/state.pausedUntil`
 - `POST /sessions/dismiss {key}` — drops a session (`SessionStore.remove`); it returns with its next event
 - `GET /config` — token-free `safeConfig` view · `POST /config` — live-tune `granularity`/`statusPolicy`/`showProject`/`repoPrefix` (validated by `liveConfigPatchSchema`, applied via `pusher.applyConfig()`, persisted). Used by the menu bar app.
-- `GET /update` (0.12, SPEC §41) — `{current, latest, available, source, install: {method, canUpdate, hint}, run, auto, last, menubar}` for the menu bar, `status` and `doctor`; `/health` carries `version`
+- `GET /update` (0.12, SPEC §41) — `{current, latest, available, waiting, waitHours, source, install: {method, canUpdate, hint}, run, auto, last, signing, menubar, menubarHeld}` for the menu bar, `status` and `doctor`; `/health` carries `version`
 - `GET /hub` — hub forwarder status (`{enabled:false}` when not paired) · `POST /hub/reload` — re-read the config's `hub` section and restart the forwarder (used by `workmesh hub connect|disconnect|include|exclude`)
 - `GET /team` (v0.5) — the team from the hub's `/relay/team` (polled by `hub/team.ts`), with `hubUrl`, `boardUrl`, `share`, `connected`, `halted`, `available` (false = older hub, 404); `?open=1` = the menu is open (15 s polling). The menu bar's team section reads only this.
 - New machines (SPEC §46, §47, B3-7237): `GET /team` adds `newDevices` (machines that joined this person's account, heard of in the last 24 h and not dismissed, each with its notice `text`); `POST /new-devices/dismiss {id}` takes one down. `status` and `doctor` print it, the menu bar notifies and shows a row.
@@ -265,6 +265,13 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   `version`. `daemon/session-versions.ts`: hooks send `x-workmesh-client` (and at SessionStart `-start`, `-surface`
   from `lib/surface.ts`); a session on older tools is told once. `WORKMESH_LAUNCHD_LABEL` gives a test HOME its own
   launchd job (`scripts/smoke-update/run.sh`: four packed releases on a local registry, never published).
+- Signed releases and a waiting time (SPEC §41, B3-7242): a release is offered, and auto-installed, only once it is
+  `update.waitHours` old (24; age from npm's `time` or GitHub's `published_at`, else the first sight; `releaseDue` in
+  `daemon/updates.ts`). `workmesh update` by hand installs at once and says so. With a key pinned in
+  `lib/release-keys.ts` (it ships empty: no key exists yet), the daemon offers the menu bar zip only from a release
+  whose `workmesh-release.json` a pinned Ed25519 key signed (`lib/release-signing.ts`, read in `lib/registry.ts`), and
+  the zip's hash comes from that list; anything else is `menubarHeld` with the reason. `scripts/sign-release.mjs`
+  makes a key and signs; the steps are in CONTRIBUTING.md "Releasing". The private key never goes in this repo or CI.
 
 ## The hosted hub (private)
 

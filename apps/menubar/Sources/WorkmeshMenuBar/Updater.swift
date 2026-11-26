@@ -280,9 +280,11 @@ private final class LineReader: @unchecked Sendable {
 
 // MARK: - Replacing the menu bar app
 
-/// Downloads the release's menu bar zip, checks it against the release's
-/// SHA-256, unpacks it, checks it is this app at the promised version, swaps
-/// it in where this app runs (the previous one kept) and relaunches.
+/// Downloads the release's menu bar zip, checks it against the SHA-256 the
+/// daemon gave for it (from the release's signed list once release signing
+/// is on; this app never reads GitHub's own figures), unpacks it, checks it
+/// is this app at the promised version, swaps it in where this app runs (the
+/// previous one kept) and relaunches.
 enum AppSelfUpdate {
     struct Failure: Error {
         let message: String
@@ -363,7 +365,7 @@ enum AppSelfUpdate {
         guard digest == r.sha256 else {
             throw Failure("The download's SHA-256 (\(digest.prefix(12))…) doesn't match the release's (\(r.sha256.prefix(12))…), so it was thrown away. Workmesh.app is unchanged.")
         }
-        log("SHA-256 matches the release: \(digest)")
+        log(r.signed ? "SHA-256 matches the release's signed list: \(digest)" : "SHA-256 matches the release: \(digest)")
 
         let unpacked = staging.appendingPathComponent("unpacked", isDirectory: true)
         try runTool("/usr/bin/ditto", ["-x", "-k", zip.path, unpacked.path], what: "Unpacking the zip")

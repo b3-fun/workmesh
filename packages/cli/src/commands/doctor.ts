@@ -19,11 +19,14 @@ import { hookNodePath } from "../lib/hook-files";
 import { judgeNodePath, stableNodePath } from "../lib/node-path";
 import type { NodeManager, NodePathFs } from "../lib/node-path";
 import { findBin } from "../daemon/handoff-runner";
-import { delegateSettings, hubShareLevel, loadConfig, loadConfigSafe } from "../lib/config";
+import { delegateSettings, hubShareLevel, loadConfig, loadConfigSafe, updateWaitHours } from "../lib/config";
 import type { Config } from "../lib/config";
 import { getHealth, getHubState, getTeamState, getUpdateStatus, sinkConfigured } from "../lib/daemon-client";
 import pkg from "../../package.json";
+import { releaseDue } from "../daemon/updates";
+import { RELEASE_KEYS } from "../lib/release-keys";
 import { readUpdateCheck } from "../lib/update-state";
+import type { MenubarHeld } from "../lib/update-state";
 import { isNewer } from "../lib/versions";
 import { codexHome, configPath, hubForwardStatePath } from "../lib/paths";
 import { serviceKind, serviceStatus } from "../lib/service";
@@ -152,6 +155,8 @@ export async function runDoctor(opts: DoctorOptions): Promise<void> {
 
   // 0.12 (SPEC §41): this version, a newer one when the daemon knows of it, and a daemon left on an older build.
   checks.push(await versionCheck(cfg.port));
+  // The menu bar app is the one thing installed from a GitHub release, and only on macOS.
+  if (process.platform === "darwin") checks.push(signingCheck(await getUpdateStatus(cfg.port).catch(() => undefined)));
 
   // Linux: what systemd does with the daemon (asked once; the service check and the offline causes read it).
   const svc: ServiceStatus | undefined = serviceKind() ? serviceStatus() : undefined;
@@ -507,9 +512,9 @@ export function nodePathChecks(
 
 /**
  * "workmesh 0.12.0", or "0.12.1 available: `workmesh update`" (from the daemon's last check, else its saved one), or
- * the daemon still running an older build than the CLI.
+ * a release that is out but still inside the waiting time, or the daemon still running an older build than the CLI.
  */
-export async function versionCheck(port: number, current = pkg.version): Promise<CheckResult> {
+export async function versionCheck(port: number, current = pkg.version, now = Date.now()): Promise<CheckResult> {
   let daemon: string | undefined;
   try {
     daemon = (await getHealth(port)).version ?? "an older version";
@@ -518,20 +523,46 @@ export async function versionCheck(port: number, current = pkg.version): Promise
   }
   let latest: string | undefined;
   let hint: string | undefined;
+  let waiting: { until: number; hours: number } | undefined;
   try {
     const u = await getUpdateStatus(port);
     latest = u.latest;
     if (!u.install.canUpdate) hint = u.install.hint;
+    if (u.waiting) waiting = { until: u.waiting.until, hours: u.waitHours };
   } catch {
-    latest = readUpdateCheck().latest;
+    // No daemon: its saved check, read with the rule it applies. A check saved without any time for the release
+    // (by a version before the waiting time) counts as old enough.
+    const c = readUpdateCheck();
+    latest = c.latest;
+    const publishedAt = c.published && c.published.version === latest ? c.published.at : undefined;
+    const seenAt = c.seen && c.seen.version === latest ? c.seen.at : undefined;
+    const hours = updateWaitHours(loadConfigSafe());
+    const d = releaseDue({ publishedAt, seenAt, waitMs: hours * 3600_000, now });
+    if (latest && (publishedAt !== undefined || seenAt !== undefined) && !d.due) waiting = { until: d.until, hours };
   }
   if (daemon && daemon !== current) {
     return warn("version", `${current}, but the daemon still runs ${daemon} → \`workmesh update\` (or \`workmesh restart\`)`);
   }
   if (latest && isNewer(latest, current)) {
+    if (waiting) return ok("version", `${current}; ${latest} is out: offered in ${formatDuration(waiting.until - now)} (new releases wait ${waiting.hours} h)`);
     return warn("version", `${current}; ${latest} available: \`workmesh update\`${hint ? ` (${hint})` : ""}`);
   }
   return ok("version", `${current}${latest ? " (latest)" : ""}`);
+}
+
+/**
+ * Release signing (SPEC §41): whether this version pins a maintainer key, and why the menu bar app's release is not
+ * offered when it failed the check. It reads the daemon's `GET /update`, passed as `update`. With the daemon down, or
+ * one older than this CLI (no `signing` in its answer), the CLI's own list of keys answers.
+ */
+export function signingCheck(update: { signing?: { on?: boolean }; menubarHeld?: MenubarHeld } | undefined, pinned: number = RELEASE_KEYS.length): CheckResult {
+  const on = update?.signing?.on ?? pinned > 0;
+  if (!on) {
+    return ok("release signing", "not switched on yet: this version pins no maintainer key, so the menu bar app's download is checked against the SHA-256 GitHub lists");
+  }
+  const held = update?.menubarHeld && update.menubarHeld.reason !== "waiting" ? update.menubarHeld : undefined;
+  if (held) return warn("release signing", `on; the menu bar app${held.version ? ` in release ${held.version}` : ""} is not offered: ${held.detail}`);
+  return ok("release signing", "on: the menu bar app installs only from a release whose file list a maintainer key signed");
 }
 
 /** When the hub last accepted a send from this machine, as the daemon saved it (SPEC §24 state file). */

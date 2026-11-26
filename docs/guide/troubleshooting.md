@@ -57,6 +57,7 @@ Logs: `~/Library/Logs/workmesh-daemon.log` on a Mac (launchd), `journalctl --use
 |---|---|---|
 | `!` `version  0.12.0; 0.12.1 available` | A newer release is out. | `workmesh update` |
 | `!` `version  0.12.1, but the daemon still runs 0.12.0` | The CLI updated, the daemon didn't restart. | `workmesh update`, or `workmesh restart` |
+| `!` `release signing  on; the menu bar app in release … is not offered: …` | The newest release failed the [signing check](updating-and-uninstalling.md#signed-releases): it isn't signed, or not by a key this version trusts. | Nothing on your machine: the app you have keeps running. Tell a maintainer. If it says the signature is not from a key this version trusts, run `workmesh update` first: a newer version may trust it. |
 | ✗ `node  … Workmesh needs node >= 20` | Node is too old. | Install Node 20+, then `npm i -g @b3os/workmesh@latest && workmesh setup --hooks-only` |
 | `!` `config  … missing` | No config file. | `workmesh init https://workmesh.b3os.org` |
 | ✗ `config  …` with an error | `config.json` isn't valid JSON, or a value is out of range. | Fix the value the error names. If you can't, move the file aside and run `init` again (you pair again). |

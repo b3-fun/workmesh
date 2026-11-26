@@ -906,3 +906,6 @@ export * from "./ask.js";
 
 // v3 Memory (SPEC §35): the team's shared knowledge base; sync gains `memory.rev`.
 export * from "./memory.js";
+
+// Review exchange (SPEC §52): agents ask teammates' agents for PR reviews; a review is a read-only handoff.
+export * from "./review.js";

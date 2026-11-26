@@ -9,7 +9,7 @@ import {
   codexTaskTitle,
   readClaudeSubagentMeta,
   readCodexThreadMeta,
-  readCodexUsage,
+  CodexUsageReader,
 } from "../src/hub/agents";
 import { extractGithubLink } from "../src/hub/rules";
 import { parseClaudeLine, parseCodexLine } from "../src/hub/transcript";
@@ -37,9 +37,9 @@ describe("Claude Code subagent usage (v0.6)", () => {
       cl.toolResult("TOOL_OUTPUT"),
     ]);
     const r = new ClaudeUsageReader(f);
-    expect(await r.read()).toEqual({ tokensIn: 1110, tokensOut: 7, model: "claude-opus-5-5", more: false });
+    expect(await r.read()).toMatchObject({ tokensIn: 1110, tokensOut: 7, model: "claude-opus-5-5", more: false });
     fs.appendFileSync(f, `${sl.claudeUsage("msg_2", { input_tokens: 5, output_tokens: 3 }, 2, "claude-haiku-5-5")}\n`);
-    expect(await r.read()).toEqual({ tokensIn: 5, tokensOut: 10, model: "claude-haiku-5-5", more: false });
+    expect(await r.read()).toMatchObject({ tokensIn: 5, tokensOut: 10, model: "claude-haiku-5-5", more: false });
     // A partial line waits for its newline.
     fs.appendFileSync(f, sl.claudeUsage("msg_3", { input_tokens: 1, output_tokens: 1 }).slice(0, 40));
     expect((await r.read())?.tokensOut).toBe(10);
@@ -47,7 +47,7 @@ describe("Claude Code subagent usage (v0.6)", () => {
 
   it("keeps totals when old message ids are evicted, and restarts on a replaced file", async () => {
     const f = write("agent-a2.jsonl", Array.from({ length: 6 }, (_, i) => sl.claudeUsage(`m${i}`, { input_tokens: 1, output_tokens: 2 })));
-    const r = new ClaudeUsageReader(f, 2 * 1024 * 1024, 2);
+    const r = new ClaudeUsageReader(f, { maxIds: 2 });
     expect(await r.read()).toMatchObject({ tokensIn: 1, tokensOut: 12 }); // evicted ids keep their output
     fs.rmSync(f);
     write("agent-a2.jsonl", [sl.claudeUsage("n1", { input_tokens: 4, output_tokens: 4 })]);
@@ -100,7 +100,7 @@ describe("Codex threads (v0.6)", () => {
     expect((await readCodexThreadMeta(top))?.parentThreadId).toBeUndefined();
   });
 
-  it("takes the context and cumulative output of the last token_count, and the model, from the rollout's end", async () => {
+  it("takes the context and cumulative output of the last token_count, and the model", async () => {
     const f = write("rollout-usage.jsonl", [
       cx.sessionMeta("t2"),
       sl.codexTurnContext("gpt-6-codex"),
@@ -108,8 +108,8 @@ describe("Codex threads (v0.6)", () => {
       cx.assistant("ASSISTANT", "m1", 2),
       sl.codexTokenCount(250, 40),
     ]);
-    expect(await readCodexUsage(f)).toEqual({ tokensIn: 250, tokensOut: 40, model: "gpt-6-codex" });
-    expect(await readCodexUsage(write("rollout-none.jsonl", [cx.sessionMeta("t3")]))).toBeUndefined();
+    expect(await new CodexUsageReader(f).read()).toMatchObject({ tokensIn: 250, tokensOut: 40, model: "gpt-6-codex" });
+    expect(await new CodexUsageReader(write("rollout-none.jsonl", [cx.sessionMeta("t3")])).read()).toMatchObject({ tokensIn: 0, tokensOut: 0, model: undefined, full: { models: [] } });
   });
 
   it("turns an agent path into a title", () => {

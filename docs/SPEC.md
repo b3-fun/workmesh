@@ -1346,6 +1346,8 @@ shapes and numbers only):
   `output_tokens` with `reasoning_output_tokens` inside it). The growth between two lines goes to the model of the
   latest `turn_context` before it: `input` = input − cached − cache writes, `cacheRead` = cached, `cacheWrite` = cache
   writes, `output`, `reasoning`. A line that repeats the last totals adds nothing.
-- **Incremental.** Each transcript is read from its start once, in bounded passes off the hook path, and then only the
-  lines appended since; the reader's offset and totals are saved with the forwarder's state (§24), so a daemon restart
-  carries on where it stopped and never reads a file twice. A replaced or truncated file is read again from its start.
+- **Incremental.** Each transcript is read from its start once, in passes of at most 2 MB off the hook path (at most
+  four such catch-up passes a second across sessions), and then only the lines appended since; the reader's offset and
+  totals are saved with the forwarder's state (§24: `usageReaders`), so a daemon restart carries on where it stopped
+  and never reads a file twice. A state file from an older relay has no readers: those transcripts are read once from
+  their start. A replaced or truncated file is read again from its start.

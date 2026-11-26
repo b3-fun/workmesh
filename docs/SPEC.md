@@ -12,7 +12,7 @@ https://workmesh.b3os.org; the hosted hub's code and internals are private (§14
 | Hub | hosted by B3 (private) | Pairs machines, keeps what they share, writes summaries, serves the board. |
 
 If this file and the code disagree, fix one of them in the same change. Section numbers are stable because code cites
-them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22, §25, §27, §28, §32–34, §37) covered the hub's internals, which moved to the
+them (§3.3, §8, §9); the numbers missing here (§4, §5, §7, §11–13, §17–18, §20, §22, §25, §27, §28, §32–34, §37–39, §43, §44) covered the hub's internals, which moved to the
 hosted hub's own docs. Sections 1–13 were written while the hub was Bullpen and the relay was agentblip; where they say
 agentblip, read the Workmesh CLI.
 
@@ -29,7 +29,7 @@ What a hub may learn from a machine, and what it does with it. Each rule points 
 - **Two levels, chosen per machine** (§8). `metadata`: session state, Workmesh's activity label, tool names,
   repo-relative paths, `owner/name` and branch, a program and one allow-listed subcommand, issue ids, PR links; since
   v0.6 also which agents run under which (parent, role, agent type, model, token counts, a status line from the relay's
-  vocabulary), which agent wrote to which, links to Linear issues and to PRs and issues on shared repos, and the
+  vocabulary; since relay 0.12.2 the counts by model and kind, §45), which agent wrote to which, links to Linear issues and to PRs and issues on shared repos, and the
   person's GitHub login (§15). `conversation`: also prompt text, the agent's text messages, a one-line description per
   tool call, and turn durations; since v0.6 a subagent's task description, the text agents send each other, and links
   to Slack messages agents posted or read (§15). A machine that goes back to `metadata` has its stored text deleted
@@ -357,7 +357,7 @@ after such a 400, as it does for `message`/`turn`.
 | `title` | string ≤ 200 | conversation | a subagent's task description, redacted (§9); the hub accepts ≤ 1,000 and cuts |
 | `model` | string ≤ 80 | metadata | the model id the agent's transcript reports |
 | `tokensIn`, `tokensOut` | int ≥ 0 | metadata | as Claude Code counts an agent: `tokensIn` its context now (input, cache reads and cache writes of its latest call), `tokensOut` what it has generated (output summed over its calls); Claude Code's own "tokens" is tokensIn + the latest call's output |
-| `costUsd` | number ≥ 0 | metadata | only when the agent records it; never estimated by the relay (Claude Code and Codex record none per agent today, so the relay sends none) |
+| `costUsd` | number ≥ 0 | metadata | only when the agent records it; never estimated by the relay (Claude Code and Codex record none per agent today, so the relay sends none). Since relay 0.12.2 `usage` (§45) carries every token kind by model, for the hub to price |
 | `statusLine` | string ≤ 120 | metadata | from the relay's fixed vocabulary only: "waiting on 1 shell", "running commands", "editing vm.rs" |
 
 `ActivityEvent` adds:
@@ -1280,3 +1280,72 @@ relays paired with a local hub as two people) found what follows. No wire change
   - An MCP reconnect: a thread keeps the MCP server it started with; a new thread (`/new`) gets the current one.
   - The shell CLI inside the default sandbox (above): the MCP tools stand in.
   - A wake for a thread nobody has open: the message waits for its next turn, as for a closed Claude Code session.
+
+---
+
+# Full token usage (relay 0.12.2, Sean 2026-11-25)
+
+The board's Usage view (B3-7222) could only say what agents cost "at least": relays sent `tokensOut` and a context
+size per agent, no input or cache tokens, and nothing at all for a Claude Code main thread, the biggest session of most
+days. Linear B3-7227. Token counts are metadata: they go at both sharing levels, and never with any text.
+
+## 45. `usage` on a session upsert
+
+`SessionUpsert` adds `usage` (optional; an older hub drops it, an older relay leaves it out):
+
+```jsonc
+"usage": {
+  "models": [                               // ≤ 16, one entry per model the session's own calls ran on
+    { "model": "claude-opus-5-5",           // as the transcript names it, ≤ 80
+      "input": 1872,                        // input read at the full price
+      "cacheRead": 350844547,               // input read from the prompt cache
+      "cacheWrite": 6217315,                // input written to the prompt cache, every lifetime
+      "cacheWrite1h": 5000000,              // opt: of cacheWrite, the one-hour writes
+      "output": 832704,                     // generated, thinking and reasoning included
+      "reasoning": 0,                       // opt: of output, reasoning (Codex)
+      "calls": 1164 }                       // opt: API calls counted
+  ],
+  "at": 1795545602000                       // opt: when the latest call counted was made (epoch ms)
+}
+```
+
+- **Running totals.** Each entry is a sum over every API call the relay counted for that session and model since the
+  session's transcript began: the whole session, also for a session that started outside a shared repo (counts, like
+  §15's, cover the agent, not the moment it was shared; no text, path or command is behind them). The kinds don't
+  overlap except where a field says "of": a call's whole input is `input + cacheRead + cacheWrite`.
+- **Own calls only.** A subagent's, a workflow agent's and a spawned Codex thread's calls are in their own session's
+  `usage`, never in the parent's, so the hub can add sessions up. A workflow session sums its agents' transcripts.
+- **Not counted:** Claude Code's side calls that write no assistant line to the session's transcript (titles, topic
+  checks, compaction summaries), which Claude Code's own `/cost` includes; server tools billed per request (web
+  search).
+- **The hub reads** the growth since the totals it last saw for the session and model, and places it at `at` (else
+  the session's `updatedAt`). A total that went down (the relay read a replaced or truncated transcript again from its
+  start) is a new baseline, never a credit. A session whose upserts carry `usage` is counted in full; one whose
+  upserts carry only `tokensOut` (relays before 0.12.2) is a floor. `tokensIn`/`tokensOut` keep their §15 meaning
+  and are still sent beside `usage`.
+- **Accept reading:** a malformed `usage` reads as absent, an entry the hub can't read is dropped on its own, a model
+  named twice keeps its first entry, missing kinds read as 0, a part larger than its whole reads as the whole.
+
+How a relay counts (`packages/cli`, verified on copies of Claude Code 2.1.331 transcripts and Codex 0.164 rollouts;
+shapes and numbers only):
+- **Claude Code** (a main thread's `transcript_path`, a subagent's `agent-<id>.jsonl`, a workflow's agent
+  transcripts): `assistant` lines' `message.usage`: `input_tokens` → `input`, `cache_read_input_tokens` →
+  `cacheRead`, `cache_creation_input_tokens` → `cacheWrite`, `cache_creation.ephemeral_1h_input_tokens` →
+  `cacheWrite1h`, `output_tokens` → `output` (thinking included), keyed by `message.model`. A message written as
+  several lines (one per content block) repeats its id and usage: it counts once, at its last line's figures. Not
+  counted: `isApiErrorMessage` lines, the `<synthetic>` model, sidechain lines in a main transcript (the subagent's
+  own file counts them). Compaction appends a boundary and a summary (no usage), and a resumed session appends to the
+  same file (a `derived-from` line, `via: "resume"`), so neither repeats a call. Subagent transcripts mark every
+  line `isSidechain`; they count there. Checked against Claude Code's own `/cost` record (its `cost-state` lines, which
+  add up the main thread, its subagents and side calls per model): three real sessions' main and subagent transcripts
+  summed this way came to 88–97% of the cost it counted, the rest being side calls and calls it logs elsewhere; and
+  its token counts at Anthropic's list prices (5-minute cache writes at 1.25x input, one-hour at 2x) reproduce its
+  per-model `costUSD` to the cent.
+- **Codex** (the thread's rollout): `event_msg` `token_count` lines carry the thread's cumulative
+  `info.total_token_usage` (`input_tokens` with `cached_input_tokens` and `cache_write_input_tokens` inside it,
+  `output_tokens` with `reasoning_output_tokens` inside it). The growth between two lines goes to the model of the
+  latest `turn_context` before it: `input` = input − cached − cache writes, `cacheRead` = cached, `cacheWrite` = cache
+  writes, `output`, `reasoning`. A line that repeats the last totals adds nothing.
+- **Incremental.** Each transcript is read from its start once, in bounded passes off the hook path, and then only the
+  lines appended since; the reader's offset and totals are saved with the forwarder's state (§24), so a daemon restart
+  carries on where it stopped and never reads a file twice. A replaced or truncated file is read again from its start.

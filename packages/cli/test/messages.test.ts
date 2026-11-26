@@ -1019,6 +1019,23 @@ describe("a message the hub made from a Linear prompt", () => {
     expect(f.logs).toEqual(["dropped a message from An (via Linear): this machine takes only its person's own (messages.from)"]);
   });
 
+  it("is never the person's own, also when it carries this machine's person's email, as the hub sends it", () => {
+    // The hub puts the Linear author's email on the message when it has one. Linear vouches for it, no paired machine.
+    const me: Partial<HubSyncResponse> = { me: { person: "An", email: "an@example.com" } };
+    const named = linear({ from: { person: "An", email: "an@example.com" } });
+    const own = message({ id: "wm_own", from: { person: "An", email: "an@example.com" } });
+    const x = harness();
+    x.sync({ ...me, inbox: [named, own] });
+    expect(wakes(x)).toEqual(["wm_own"]);
+    const h = started();
+    h.sync({ ...me, inbox: [named, own] });
+    expect(h.gate.heldMessages().map((m) => m.id)).toEqual(["wm_lin"]);
+    expect(h.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual(["wm_own"]);
+    const f = harness({ settings: { from: "self" } });
+    f.sync({ ...me, inbox: [named, own] });
+    expect(f.coord.inboxItems().map((i) => i.id)).toEqual(["wm_own"]);
+  });
+
   it("wakes as a teammate's message does: for a person on the list, or as a reply", () => {
     const listed = harness({ settings: { wake: ["Sam"] } });
     listed.sync({ inbox: [linear()] });

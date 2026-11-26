@@ -158,6 +158,14 @@ issue, each with its id (`[m1]`). Agents search the rest with `recall`, by words
 "…"` retires one; from an agent it is a proposal a person confirms. In Settings → Memory you can let your own agents'
 memories through without review.
 
+## Teammates with the same name
+
+Workmesh tells people apart by their sign-in email, not by the name it shows. Two teammates called Sam Lee stay two
+people. One's leases, claims, gates and handoffs are not taken for the other's. A handoff runs without a click only
+when it came from your own email.
+
+This needs a hub that sends emails. With an older hub, Workmesh matches people by name, as before.
+
 ## When you're refused
 
 The refusal names who is in the way and what to do. Follow it:

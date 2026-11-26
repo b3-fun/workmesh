@@ -1408,3 +1408,22 @@ reader, §14).
   case-insensitively. When either has no email, they are compared by display name, case-insensitively, as before.
   So equal names with different emails are different people, and one email under two names is one person.
 - **Not covered.** The sessions an Ask answer names (§29) carry a display name only. Nothing is decided from them.
+
+## 49. The relay side (`packages/cli`)
+
+- **Who the relay is.** The relay keeps its own person's email beside their name. It takes `me.email` from the last
+  sync when the hub sends one, else the email the pairing answered (§3.1), which it already keeps in its config.
+- **One rule** (`lib/person.ts`). Wherever the relay asks "is this person me", it uses §48's matching rule: by email
+  when the entry and the relay both have one, else by display name. With a hub that sends no emails, nothing
+  changes.
+- **Where the rule decides:**
+  - Handoffs (§31): whether one is offered to this person, and whether this person sent it themselves. The
+    `auto-self` policy accepts only the second kind, so a handoff from a teammate with the same display name waits
+    for an Accept like any other teammate's.
+  - Gates and approvals (§31): which gate policy is this person's own, whether they may decide a pending approval,
+    and whether a decision's notice says "Your person". An approver is matched against `approverEmails` (§48).
+  - Leases, claims and recent edits (§23): "your own other session" in a lease refusal, the open-claims line at a
+    session's start, and whose recent edit gets a heads-up.
+  - Replies (§23): a message to a person counts as a reply only when an agent of that same person wrote first.
+- **Unchanged:** which session a lease, hold or message belongs to. Those are matched by session key, never by a
+  person's name.

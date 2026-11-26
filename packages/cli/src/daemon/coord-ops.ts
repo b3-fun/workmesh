@@ -14,6 +14,8 @@ import type { AgentSession } from "@workmesh/core";
 import { CoordClient } from "../hub/coord";
 import type { CoordResult } from "../hub/coord";
 import { scrubText } from "../hub/redact";
+import { gateOwner, samePerson } from "../lib/person";
+import type { PersonRef } from "../lib/person";
 import { forgetOp, memoriesOp, noteAsMemory, recallOp, rememberOp } from "./memory-ops";
 
 /**
@@ -222,6 +224,8 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
     key ? undefined : fail(`Workmesh can't tell which agent session is asking, and ${what} belongs to one. Run it from inside a Claude Code or Codex session.`);
   const unavailable = view.available === false ? fail("Workmesh coordination isn't on this team's hub yet.") : undefined;
   const ctx = { coord, key, cwd, home, now, classify: deps.classify };
+  /** This machine's person: matched by email when the hub sends emails, else by display name (SPEC §49). */
+  const myself: PersonRef = { person: coord.me() ?? hub.person?.name, email: coord.self().email };
 
   switch (req.op) {
     case "whoami": {
@@ -518,11 +522,10 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       const st = coord.view().state;
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
       if (st.handoffs === undefined) return fail("This team's hub has no handoffs yet (it predates Workmesh v2).");
-      const me = coord.me()?.toLowerCase();
       const running = deps.runningHandoffs?.() ?? new Set<string>();
       if (st.handoffs.length === 0) return { ok: true, text: "No handoffs.", data: { handoffs: [] } };
       const lines = st.handoffs.slice(0, 30).map((h) => {
-        const dir = me !== undefined && h.to.person.toLowerCase() === me ? `from ${h.from.person}` : `to ${h.to.person}`;
+        const dir = coord.isMe(h.to) ? `from ${h.from.person}` : `to ${h.to.person}`;
         const where = [h.repo, h.issue].filter(Boolean).join(", ");
         const here = running.has(h.id) ? " [running here]" : "";
         return `- ${h.id} · ${h.status} · ${dir}${where ? ` · ${where}` : ""}${here}: ${h.task.replace(/\s+/g, " ").slice(0, 160)}${h.note ? ` (${h.note.slice(0, 120)})` : ""}`;
@@ -554,7 +557,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       }
       if (!st) return fail("Workmesh hasn't heard from the hub yet; try again in a few seconds.");
       if (st.gates === undefined) return fail("This team's hub has no approval gates yet (it predates Workmesh v2).");
-      const mine = st.gates.find((g) => me !== undefined && g.owner.toLowerCase() === me.toLowerCase());
+      const mine = st.gates.find((g) => samePerson(myself, gateOwner(g)));
       const others = st.gates.filter((g) => g !== mine && g.actions.length > 0);
       const lines = [
         mine && mine.actions.length > 0

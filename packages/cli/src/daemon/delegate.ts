@@ -8,6 +8,7 @@ import type {
 } from "@workmesh/protocol";
 import { CoordClient, isLocalNotice } from "../hub/coord";
 import type { HubSyncInboxItem } from "../hub/coord";
+import { gateApprovers, gateOwner, samePerson } from "../lib/person";
 import { gateVerb, matchGates } from "./gates";
 import type { GateMatch } from "./gates";
 import { formatInbox } from "./coord-hooks";
@@ -118,8 +119,6 @@ export interface DelegateSummary {
   }>;
 }
 
-const lower = (s: string | undefined): string | undefined => s?.toLowerCase();
-
 export class Delegate {
   private readonly deps: DelegateDeps;
   private readonly now: () => number;
@@ -173,9 +172,8 @@ export class Delegate {
   myGates(coord: CoordClient): { actions: Set<HubGateAction>; approvers: string[] } | undefined {
     const st = coord.view().state;
     if (!st?.gates || coord.view().available !== true || !coord.fresh()) return undefined;
-    const me = lower(this.me(coord));
-    if (!me) return undefined;
-    const policy = st.gates.find((g) => g.owner.toLowerCase() === me);
+    if (!this.me(coord)) return undefined;
+    const policy = st.gates.find((g) => coord.isMe(gateOwner(g)));
     if (!policy || policy.actions.length === 0) return undefined;
     return { actions: new Set(policy.actions), approvers: policy.approvers?.length ? policy.approvers : [policy.owner] };
   }
@@ -366,7 +364,7 @@ export class Delegate {
     this.toldApprovals.add(a.id);
     if (this.toldApprovals.size > 2000) this.toldApprovals.clear();
     const command = this.held.get(`${local}|${gate}|${a.detail}`)?.command ?? this.commandFor(a.id);
-    coord.notify(local, decisionText(a, gate, command, coord.me()), { wake: true, from: a.by ?? "Workmesh" });
+    coord.notify(local, decisionText(a, gate, command, coord.me(), coord.self().email), { wake: true, from: a.by ?? "Workmesh" });
     this.check();
   }
 
@@ -390,7 +388,6 @@ export class Delegate {
   }
 
   private onHandoffs(coord: CoordClient, list: readonly HubHandoffAccepted[]): void {
-    const me = lower(this.me(coord));
     const settings = this.deps.settings();
     const seed = !this.seededHandoffs;
     this.seededHandoffs = true;
@@ -400,7 +397,7 @@ export class Delegate {
       const fromLocal = h.from.sessionKey ? coord.localKey(h.from.sessionKey) : undefined;
       // A handoff a session here sent: tell it how it went (not for what was already so when the daemon started).
       if (fromLocal && !seed && prev !== undefined && prev !== h.status) this.tellSender(coord, h, CoordClient.family(fromLocal));
-      if (!me || h.to.person.toLowerCase() !== me) continue;
+      if (!coord.isMe(h.to)) continue;
       if (h.status === "offered") this.maybeAutoAccept(coord, h, settings.accept, fromLocal !== undefined);
       else if (h.status === "accepted") this.maybeStart(coord, h, settings.accept);
     }
@@ -443,8 +440,8 @@ export class Delegate {
 
   private maybeAutoAccept(coord: CoordClient, h: HubHandoffAccepted, policy: HandoffAcceptPolicy, sentHere: boolean): void {
     if (policy !== "auto-self" || !this.deps.runner) return;
-    const me = lower(this.me(coord));
-    if (!me || h.from.person.toLowerCase() !== me) return;
+    // Only a handoff this device's own person sent: the same email when the hub sends emails, else the same name.
+    if (!coord.isMe(h.from)) return;
     if (this.handoffCalls.has(h.id) || this.deps.runner.cannotRun(h)) return;
     if (!this.deps.runner.hasRoom()) return;
     if (sentHere) {
@@ -621,11 +618,10 @@ export class Delegate {
     const coord = this.deps.coord();
     if (!coord) return undefined;
     const st = coord.view().state;
-    const me = lower(this.me(coord));
     const running = this.deps.runner?.running() ?? new Set<string>();
     const handoffs: DelegateSummary["handoffs"] = [];
     for (const h of st?.handoffs ?? []) {
-      const offeredToMe = me !== undefined && h.to.person.toLowerCase() === me && h.status === "offered";
+      const offeredToMe = coord.isMe(h.to) && h.status === "offered";
       const here = running.has(h.id);
       if (!offeredToMe && !here) continue;
       handoffs.push({
@@ -641,14 +637,13 @@ export class Delegate {
       });
     }
     const approvals: DelegateSummary["approvals"] = [];
-    const myGates = st?.gates?.find((g) => me !== undefined && g.owner.toLowerCase() === me);
+    const myGates = st?.gates?.find((g) => coord.isMe(gateOwner(g)));
     for (const a of st?.approvals ?? []) {
       if (a.status !== "pending") continue;
       const local = coord.localKey(a.sessionKey);
-      const owner = lower(a.owner);
-      const policy = a.owner ? st?.gates?.find((g) => g.owner.toLowerCase() === owner) : myGates;
-      const approvers = (policy?.approvers?.length ? policy.approvers : policy ? [policy.owner] : []).map((p) => p.toLowerCase());
-      const canDecide = me !== undefined && approvers.includes(me);
+      const owner = { person: a.owner, email: a.ownerEmail };
+      const policy = a.owner ? st?.gates?.find((g) => samePerson(gateOwner(g), owner)) : myGates;
+      const canDecide = policy !== undefined && gateApprovers(policy).some((p) => coord.isMe(p));
       if (local === undefined && !canDecide) continue;
       approvals.push({
         id: a.id,
@@ -698,9 +693,15 @@ function quoteCommand(command: string): string {
  * The notice a decision wakes its session with (SPEC §31): who decided, as whom, and the exact command it covers. An
  * approval from the person (or an approver they named) is their go-ahead for that command, once.
  */
-export function decisionText(a: HubApprovalAccepted, gate: HubGateAction, command: string | undefined, me: string | undefined): string {
+export function decisionText(
+  a: HubApprovalAccepted,
+  gate: HubGateAction,
+  command: string | undefined,
+  me: string | undefined,
+  myEmail?: string,
+): string {
   const by = a.by ?? "Your teammate";
-  const mine = me !== undefined && a.by !== undefined && me.toLowerCase() === a.by.toLowerCase();
+  const mine = a.by !== undefined && samePerson({ person: me, email: myEmail }, { person: a.by, email: a.byEmail });
   const who = mine ? `Your person, ${by},` : me ? `${by}, whom your person ${me} named to answer their approvals,` : by;
   const what = command ? `this session's held command ${quoteCommand(command)}` : `${gateVerb(gate)} ${a.detail}`;
   const note = a.note ? ` Their note: ${a.note}` : "";

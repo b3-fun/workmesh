@@ -354,7 +354,15 @@ struct DelegateHandoff: Decodable, Identifiable {
     let id: String
     let from: String
     let fromSession: String?
+    /// The whole task, as the daemon cleaned it for reading (an older daemon
+    /// sends its first 500 characters).
     let task: String
+    /// More from the sender: links, decisions, where to start (absent: none,
+    /// or an older daemon).
+    let context: String?
+    /// What Accept starts on this Mac, in the daemon's words (offered
+    /// handoffs; absent from an older daemon).
+    let onAccept: HandoffStart?
     let repo: String?
     let issue: String?
     /// offered | accepted | started | done | failed | declined (kept as sent).
@@ -368,7 +376,17 @@ struct DelegateHandoff: Decodable, Identifiable {
     /// "from An · b3-fun/b3os-beta · B3-7168".
     var origin: String { ["from \(from)", repo, issue].compactMap { $0 }.joined(separator: " · ") }
 
-    private enum K: String, CodingKey { case id, from, fromSession, task, repo, issue, status, createdAt, runningHere }
+    /// A task this short, on one line, is shown whole in its row.
+    static let rowTaskMax = 80
+
+    /// The row can't show all of the handoff: it has a context, or a task
+    /// that is long or has more than one line. Such a row shows two lines and
+    /// offers "Show all", and Accept opens the whole text before it accepts.
+    var hidesText: Bool {
+        context != nil || task.count > Self.rowTaskMax || task.contains(where: \.isNewline)
+    }
+
+    private enum K: String, CodingKey { case id, from, fromSession, task, context, onAccept, repo, issue, status, createdAt, runningHere }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -377,6 +395,8 @@ struct DelegateHandoff: Decodable, Identifiable {
         }
         self.id = id
         self.task = task
+        context = c.text(.context)
+        onAccept = c.lenient(HandoffStart.self, .onAccept)
         from = c.text(.from) ?? "A teammate"
         fromSession = c.text(.fromSession)
         repo = c.text(.repo)
@@ -384,6 +404,26 @@ struct DelegateHandoff: Decodable, Identifiable {
         status = c.text(.status)
         createdAt = c.lenient(Double.self, .createdAt)
         runningHere = c.lenient(Bool.self, .runningHere) ?? false
+    }
+}
+
+/// What accepting a handoff starts on this Mac. The daemon writes the line;
+/// the app only shows it.
+struct HandoffStart: Decodable {
+    /// claude | codex (kept as sent); nil when this Mac can't run the handoff.
+    let agent: String?
+    /// "Starts a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta."
+    let text: String
+
+    private enum K: String, CodingKey { case agent, text }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        guard let text = c.text(.text) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "start line without text"))
+        }
+        self.text = text
+        agent = c.text(.agent)
     }
 }
 

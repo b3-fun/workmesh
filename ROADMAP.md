@@ -299,9 +299,9 @@ base people trust. Contract: SPEC §35 (wire) and §36 (relay).
 - **Items:** `decision`, `convention`, `gotcha`, `rule`, `fact`; a title, a body up to 2,000 characters, a scope
   (project, a repo, or path globs in it), links (Linear issues, PRs, the sessions it came from), who wrote it (person
   and agent), short ids to cite (`m12`), edit history, and when an agent last used it.
-- **People in the loop:** an agent's `remember` is a proposal until a person accepts it (a person may accept their own
-  agents' memories without review; off by default); only accepted memories reach agents. `forget` proposes retiring
-  one; a newer memory can supersede an older one.
+- **People in the loop:** a `remember` from a machine, an agent's or a terminal's, is a proposal until a person accepts
+  it on the board; only accepted memories reach agents. `forget` proposes retiring one; a newer memory supersedes an
+  older one once a person accepts it. No setting accepts a memory without review (B3-7236, decision log).
 - **Agents:** MCP `remember`, `recall` (search, this repo first) and `forget`, and the CLI's `remember`, `recall`,
   `forget`, `memories`; `note` keeps working as a `fact`. At the start of a shared session the relay puts in the
   accepted memories that matter there: rules and conventions always, decisions, gotchas and facts by repo, path,
@@ -318,8 +318,8 @@ base people trust. Contract: SPEC §35 (wire) and §36 (relay).
   (90%), the two fused 100% (95%, MRR 0.97), which is what ships. The board has a Memory tab (search, In use / Waiting
   / Set aside, kind, repo and person; each memory with where it applies, who wrote and decided it, its links, the
   sessions that used it and its history; write, edit, replace, retire, restore), memory cards under Needs you (Accept,
-  Edit, Reject; Retire, Keep), and Settings → Memory (accept my agents' memories; suggest memories from finished
-  sessions). Ask searches the memory and can propose one on a confirm card. The team's notes became accepted memories.
+  Edit, Reject; Retire, Keep), and Settings → Memory (suggest memories from finished sessions). Ask searches the
+  memory and can propose one on a confirm card. The team's notes became accepted memories.
 - **Proposed from sessions:** when a conversation-level session ends after at least two summarized turns, the hub's
   small model may suggest up to two memories (a decision made, a gotcha solved, a convention stated), which wait for
   the session's person; on by default, off in Settings.
@@ -397,6 +397,12 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
 
 ## Decision log
 
+- 11-25 Memory: every memory a machine writes is a proposal, from an agent or from a terminal, and no setting accepts
+  one without review. A person accepts it on the board. A memory that a newer one supersedes, or that a `forget`
+  names, stays accepted until a person decides there. A machine's token proves a machine, not a person at the keyboard
+  (SPEC §35; B3-7236). Before, a terminal's write was accepted at once, and a setting let a person's own agents'
+  memories through.
+
 - 11-25 0.12.3: every session's own token usage by model and kind (input, cache reads and writes, output), Claude Code
   main threads included, read incrementally from its transcript or rollout and saved with the forwarder's state, so
   the hub can price an API-equivalent cost instead of an output-only floor (SPEC §45, #51, #52; B3-7227). Released
@@ -444,7 +450,8 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
 - 11-25 Memory: agents propose, people accept; only accepted memories reach agents, and a hub's own proposals from
   finished sessions are never accepted without a person. A person may let their own agents' memories through, never
   someone else's (superseding or retiring a teammate's memory is always a proposal). Session start picks from a brief
-  the relay caches (no network call in the hook path), never from other repos.
+  the relay caches (no network call in the hook path), never from other repos. (A person's own agents' memories no
+  longer go through without review: see the B3-7236 entry above.)
 - 11-25 An approval is consent for one exact command: the gate lets the command it was asked for through once, within
   30 minutes, and a rerun asks again. The wake quotes that command and names who decided; a person with gates has
   their agents told at session start that such an approval is their consent. The gate, not the notice, is the check,

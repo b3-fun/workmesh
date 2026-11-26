@@ -450,6 +450,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         claudeSessions: () => readLiveClaudeSessions(claudeDir),
         onAccepted: (h) => delegate.accepted(h),
         runningHandoffs: () => runner.running(),
+        handoffStart: (h, lead) => delegate.onAccept(h, lead),
       }),
     wakeWait: (session, timeoutMs, signal) => delegate.wait(session, timeoutMs, signal),
     reloadHub: () => {

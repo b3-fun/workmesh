@@ -28,7 +28,8 @@ import { firstSentence } from "./memory";
 /**
  * v3 Memory operations for the MCP server and the CLI (docs/SPEC.md §36): `remember`, `recall`, `forget`, `memories`,
  * and `note`/`notes` on a hub with memory. Text (title, body, reason, query) is redacted on the machine (§9) before it
- * is sent. A call with no agent session behind it is the person's own (a terminal): the hub accepts it at once.
+ * is sent. A call with no agent session behind it (a terminal) goes without a `sessionKey`. It is a proposal all the
+ * same (§35): a person accepts it on the board.
  *
  * A memory the hub sends back is its writer's text. Its title, body, author and paths go into an answer through
  * `lib/untrusted.ts`: one line each, and a body as marked lines.
@@ -238,7 +239,7 @@ function tagsOf(v: unknown): string[] {
   return [...new Set((strList(v, 50) ?? []).filter((t) => TAG_RE.test(t)))].slice(0, HUB_MEMORY_MAX_TAGS);
 }
 
-/** The answer to a remember the hub took (SPEC §36): proposed, and who reviews it; or accepted. */
+/** The answer to a remember the hub took (SPEC §36): proposed, and who reviews it; or accepted (an older hub, §35). */
 function rememberAnswer(m: HubMemoryAccepted | undefined, supersedes: string | undefined): CoordOpResult {
   if (!m) return { ok: true, text: "Sent to the team's memory.", data: {} };
   const replaces = supersedes ? ` It replaces ${supersedes} once accepted.` : "";
@@ -338,7 +339,10 @@ export async function noteAsMemory(a: Args, ctx: MemoryOpContext): Promise<Coord
   return rememberAnswer(r.body.memory, undefined);
 }
 
-/** `forget { id, reason? }`: retire an accepted memory (or propose it), or withdraw a proposal of one's own. */
+/**
+ * `forget { id, reason? }`: propose retiring an accepted memory (a person retires it on the board), or withdraw a
+ * proposal of one's own. A `retired` answer, from an older hub, is read too (SPEC §36).
+ */
 export async function forgetOp(a: Args, ctx: MemoryOpContext): Promise<CoordOpResult> {
   const id = memoryId(a.id);
   if (!id) return fail("`forget` needs `id`: the memory's id, like m12 (`recall` and `memories` show them).");

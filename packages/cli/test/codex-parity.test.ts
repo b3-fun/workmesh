@@ -113,10 +113,10 @@ describe("a teammate's message is never read as Workmesh's own notice", () => {
     expect(id.startsWith("wm_")).toBe(false);
   });
 
-  it("the inbox block and the wake text frame it as a colleague's message, naming who wrote", () => {
+  it("the inbox block and the wake text mark it as a teammate's message, naming who wrote", () => {
     const block = formatInbox([hubMsg], 4000)!;
     expect(block.text).toContain("Workmesh delivered a message from a teammate");
-    expect(block.text).toContain("Message from An: what value does app.ts export right now?");
+    expect(block.text).toContain('<workmesh-message from="An">\n│ what value does app.ts export right now?\n</workmesh-message>');
     const wake = wakeText([hubMsg])!;
     expect(wake.text).toMatch(/^Workmesh woke this idle session for what follows\. Your person may be away/);
     expect(wake.text).not.toContain("news about its own earlier work");
@@ -125,8 +125,10 @@ describe("a teammate's message is never read as Workmesh's own notice", () => {
 
 describe("Codex wake through `codex queue`", () => {
   it("wraps the wake so the hook reads it as injected, not as a prompt the person typed", () => {
-    const msg = codexWakeMessage("Workmesh woke this idle session for what follows.\n\nMessage from An: hi");
+    // The wake as the daemon builds it: a teammate's message is a block inside the wake's own block.
+    const msg = codexWakeMessage(wakeText([{ id: "wm_01", to: ME, from: { person: "An", sessionName: undefined, sessionKey: undefined }, text: "hi", ts: T, thread: undefined, wake: true }])!.text);
     expect(msg.startsWith("<workmesh-wake>\n")).toBe(true);
+    expect(msg).toContain('<workmesh-message from="An">\n│ hi\n</workmesh-message>');
     expect(isInjectedPrompt(msg)).toBe(true);
     const e = mapCodexHookInput({ hook_event_name: "UserPromptSubmit", session_id: THREAD, cwd: "/w", prompt: msg, transcript_path: null }, T)!;
     expect(e.detail?.hookEvent).toBe("InjectedPrompt");

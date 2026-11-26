@@ -622,11 +622,13 @@ describe("memory ops (SPEC §36)", () => {
     const [first, second] = r.text.split("\n\n");
     expect(first!.split("\n").slice(0, 2)).toEqual([
       "[m18] gotcha · b3-fun/workmesh: packages/cli/src/lib/service.ts · An, 3 days ago",
-      "launchd bootstrap fails with error 5 when the daemon is re-run",
+      "│ launchd bootstrap fails with error 5 when the daemon is re-run",
     ]);
-    expect(first!.split("\n")[2]).toHaveLength(600);
+    // The body, cut at 600, behind the mark.
+    expect(first!.split("\n")[2]).toMatch(/^│ Boot out the old service first\. x+…$/);
+    expect(first!.split("\n")[2]).toHaveLength(602);
     expect(first!.split("\n")[3]).toBe("Links: B3-7168");
-    expect(second).toBe("[m2] gotcha · project-wide · Sean, 1 min ago\nSecond");
+    expect(second).toBe("[m2] gotcha · project-wide · Sean, 1 min ago\n│ Second");
     expect((await h.op("recall", {})).text).toContain("`recall` needs `query`");
     expect((await h.op("recall", { query: "x", kinds: ["nope"] })).ok).toBe(false);
   });
@@ -764,7 +766,7 @@ describe("memory ops (SPEC §36)", () => {
     const h = await opsHarness({ routes: { "GET /relay/memories": [{ status: 500 }, { status: 500 }] } });
     expect(h.c.memoryAvailable()).toBe(true);
     expect(h.c.brief()).toBeUndefined();
-    expect((await h.op("notes")).text).toMatch(/^- Sean, 48 h ago \[rule\]: Never edit a live checkout$/);
+    expect((await h.op("notes")).text).toBe("- Sean, 48 h ago [rule]:\n│ Never edit a live checkout");
   });
 
   it("a note whose hub turns out to have no memory (404) goes as a v1 note", async () => {

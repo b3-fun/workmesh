@@ -13,6 +13,7 @@ import {
   HUB_RECALL_MAX,
   HUB_RECALL_QUERY_MAX,
   HUB_REPO_RE,
+  LEASE_PATH_MAX,
   normalizeLeasePath,
   prLink,
 } from "@workmesh/protocol";
@@ -20,6 +21,7 @@ import type { HubMemoryAccepted, HubMemoryKind, HubMemoryRequest, HubMemoryScope
 import { CoordClient, NO_MEMORY } from "../hub/coord";
 import type { CoordResult, MemoryBriefItem } from "../hub/coord";
 import { scrubText } from "../hub/redact";
+import { QUOTE_MARK, cleanText, label, oneLine as cleanLine, quoted } from "../lib/untrusted";
 import type { CoordOpResult } from "./coord-ops";
 import { firstSentence } from "./memory";
 
@@ -28,6 +30,9 @@ import { firstSentence } from "./memory";
  * and `note`/`notes` on a hub with memory. Text (title, body, reason, query) is redacted on the machine (§9) before it
  * is sent. A call with no agent session behind it (a terminal) goes without a `sessionKey`. It is a proposal all the
  * same (§35): a person accepts it on the board.
+ *
+ * A memory the hub sends back is its writer's text. Its title, body, author and paths go into an answer through
+ * `lib/untrusted.ts`: one line each, and a body as marked lines.
  */
 
 export interface MemoryOpContext {
@@ -101,7 +106,7 @@ export function scopeLabel(scope: { repo: string; paths?: string[] } | undefined
   if (!scope) return "project-wide";
   const paths = scope.paths ?? [];
   if (paths.length === 0) return scope.repo;
-  return `${scope.repo}: ${paths.slice(0, 3).join(", ")}${paths.length > 3 ? ` (+${paths.length - 3})` : ""}`;
+  return `${scope.repo}: ${paths.slice(0, 3).map((p) => cleanLine(p, LEASE_PATH_MAX)).join(", ")}${paths.length > 3 ? ` (+${paths.length - 3})` : ""}`;
 }
 
 /** Text an agent or person wrote, redacted (§9): whitespace kept, control characters and secrets out. */
@@ -115,7 +120,10 @@ function oneLine(s: string, max = HUB_MEMORY_TITLE_MAX): { text: string; cut: bo
   return flat.length <= max ? { text: flat, cut: false } : { text: `${flat.slice(0, max - 1).trimEnd()}…`, cut: true };
 }
 
-const sentence = (title: string): string => `${title.replace(/[.!?…]+$/, "")}.`;
+/** A memory's title as a sentence in an answer: one line of it (the hub sent it back), with one full stop. */
+const sentence = (title: string): string => `${cleanLine(title, HUB_MEMORY_TITLE_MAX).replace(/[.!?…]+$/, "")}.`;
+/** What the hub said went wrong, on one line; `fallback` when it said nothing. */
+const hubSaid = (error: string | undefined, fallback: string): string => (error ? cleanLine(error, 300) : "") || fallback;
 
 /** Has the last sync, and the hub has memory; else what to answer. */
 async function memoryGate(ctx: MemoryOpContext, answer: CoordOpResult): Promise<CoordOpResult | undefined> {
@@ -126,7 +134,7 @@ async function memoryGate(ctx: MemoryOpContext, answer: CoordOpResult): Promise<
 
 function memoryError(r: Extract<CoordResult<unknown>, { ok: false }>, noMemory: CoordOpResult): CoordOpResult {
   if (r.unavailable && r.error === NO_MEMORY) return noMemory;
-  return fail(r.unavailable ? "Workmesh coordination isn't on this team's hub yet; nothing was sent." : `Workmesh: ${r.error}`);
+  return fail(r.unavailable ? "Workmesh coordination isn't on this team's hub yet; nothing was sent." : `Workmesh: ${cleanLine(r.error, 300)}`);
 }
 
 /** The session's repo and its directory in it (repo-relative, "" at the top), from its cwd. */
@@ -294,7 +302,7 @@ export async function rememberOp(a: Args, ctx: MemoryOpContext): Promise<CoordOp
   };
   const r = await ctx.coord.memory(req);
   if (!r.ok) return memoryError(r, fail(NO_MEMORY_WRITE));
-  if (!r.body.ok) return fail(`Workmesh: ${r.body.error || "the hub didn't take the memory"}`);
+  if (!r.body.ok) return fail(`Workmesh: ${hubSaid(r.body.error, "the hub didn't take the memory")}`);
   return rememberAnswer(r.body.memory, supersedes);
 }
 
@@ -327,7 +335,7 @@ export async function noteAsMemory(a: Args, ctx: MemoryOpContext): Promise<Coord
     if (r.unavailable && r.error === NO_MEMORY) return undefined;
     return memoryError(r, fail(NO_MEMORY_WRITE));
   }
-  if (!r.body.ok) return fail(`Workmesh: ${r.body.error || "the hub didn't take the note"}`);
+  if (!r.body.ok) return fail(`Workmesh: ${hubSaid(r.body.error, "the hub didn't take the note")}`);
   return rememberAnswer(r.body.memory, undefined);
 }
 
@@ -351,7 +359,7 @@ export async function forgetOp(a: Args, ctx: MemoryOpContext): Promise<CoordOpRe
   if (!r.ok) return memoryError(r, noMemory);
   if (!r.body.ok) {
     if (r.status === 404) return fail(`No memory ${id} on this team's hub (\`memories\` lists them).`, r.body);
-    return fail(`Workmesh: ${r.body.error || `the hub didn't retire ${id}`}`, r.body);
+    return fail(`Workmesh: ${hubSaid(r.body.error, `the hub didn't retire ${id}`)}`, r.body);
   }
   const m = r.body.memory;
   if (!m) return { ok: true, text: `Asked the team's hub to forget ${id}.`, data: {} };
@@ -368,13 +376,16 @@ export async function forgetOp(a: Args, ctx: MemoryOpContext): Promise<CoordOpRe
   return { ok: true, text: `${id} is ${m.status}: ${t}`, data: { memory: m } };
 }
 
-/** One recall hit: `[m12] gotcha · b3-fun/workmesh · Sean, 3 days ago`, its title, its body (cut at ~600). */
+/**
+ * One recall hit: `[m12] gotcha · b3-fun/workmesh · Sean, 3 days ago`, then its title and its body (cut at ~600) as
+ * marked lines: both are their writer's text, and neither can add a line that reads as Workmesh's.
+ */
 export function recallHit(m: HubMemoryAccepted, hubNow: number): string {
-  const head = `[${m.id}] ${m.kind} · ${scopeLabel(m.scope)} · ${m.by.person}, ${agoText(hubNow - m.updatedAt)}`;
-  const body = m.body.trim();
-  const cut = body.length > RECALL_BODY_MAX ? `${body.slice(0, RECALL_BODY_MAX - 1).trimEnd()}…` : body;
+  const head = `[${m.id}] ${m.kind} · ${scopeLabel(m.scope)} · ${label(m.by.person) || "someone"}, ${agoText(hubNow - m.updatedAt)}`;
+  const title = quoted(cleanLine(m.title, HUB_MEMORY_TITLE_MAX));
+  const body = quoted(m.body, RECALL_BODY_MAX);
   const links = [...(m.links?.issues ?? []), ...(m.links?.prs ?? [])];
-  return [head, m.title, ...(cut ? [cut] : []), ...(links.length ? [`Links: ${links.join(", ")}`] : [])].join("\n");
+  return [head, title, ...(body === QUOTE_MARK ? [] : [body]), ...(links.length ? [`Links: ${links.join(", ")}`] : [])].join("\n");
 }
 
 /** `recall { query, kinds?, limit?, repo? }`: the session's repo and directory go along so the hub ranks them first. */
@@ -409,9 +420,11 @@ export async function recallOp(a: Args, ctx: MemoryOpContext): Promise<CoordOpRe
 
 /** One line of the brief: `- [m12] gotcha · b3-fun/workmesh · Sean, 3 days ago: <title> — <first sentence>`. */
 export function briefLine(m: MemoryBriefItem, hubNow: number, max = 240): string {
-  const head = `- [${m.id}] ${m.kind} · ${scopeLabel(m.scope)} · ${m.by.person}, ${agoText(hubNow - m.updatedAt)}${m.tags?.length ? ` [${m.tags.join(", ")}]` : ""}: `;
-  const s = firstSentence(m.body);
-  let text = s && s.toLowerCase() !== m.title.toLowerCase() ? `${m.title} — ${s}` : m.title;
+  const head = `- [${m.id}] ${m.kind} · ${scopeLabel(m.scope)} · ${label(m.by.person) || "someone"}, ${agoText(hubNow - m.updatedAt)}${m.tags?.length ? ` [${m.tags.join(", ")}]` : ""}: `;
+  // Title and sentence are their writer's text: one line each, on this line.
+  const title = cleanLine(m.title, HUB_MEMORY_TITLE_MAX);
+  const s = cleanLine(firstSentence(cleanText(m.body)), max);
+  let text = s && s.toLowerCase() !== title.toLowerCase() ? `${title} — ${s}` : title;
   const room = max - head.length;
   if (text.length > room) text = `${text.slice(0, Math.max(1, room - 1)).trimEnd()}…`;
   return `${head}${text}`;

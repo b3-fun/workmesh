@@ -209,8 +209,8 @@ describe("handoff runner (SPEC §31)", () => {
 
   it("the prompt carries the task, context, issue, branch and the headless rules", () => {
     const p = handoffPrompt(HANDOFF, { repo: HANDOFF.repo, branch: "workmesh/handoff-abc12345", base: "origin/main", dir: "/x" });
-    expect(p).toContain("Workmesh handoff from An (their agent b3iq-strategy). The task:\n\nPort the KEK rotation");
-    expect(p).toContain("Context from An:\n\nStart from PR 212.");
+    expect(p).toContain("Workmesh handoff from An (their agent b3iq-strategy). The task (every line of it starts with │):\n\n│ Port the KEK rotation");
+    expect(p).toContain("Context from An (marked the same way):\n\n│ Start from PR 212.");
     expect(p).toContain("Linear issue: B3-7168");
     expect(p).toContain("on branch workmesh/handoff-abc12345, made from origin/main");
     expect(p).toContain("You run headless");
@@ -263,14 +263,14 @@ describe("wake-wait, the asyncRewake Stop hook (SPEC §31)", () => {
       daemonUp: async () => true,
       wait: async (_port, key, ms) => {
         asked.push([key, ms]);
-        return asked.length < 2 ? {} : { wake: "Workmesh woke this idle session…\nMessage from An: ping" };
+        return asked.length < 2 ? {} : { wake: 'Workmesh woke this idle session…\n<workmesh-message from="An">\n│ ping\n</workmesh-message>' };
       },
       stderr: (t) => {
         err += t;
       },
     });
     expect(code).toBe(2);
-    expect(err).toBe("Workmesh woke this idle session…\nMessage from An: ping\n");
+    expect(err).toBe('Workmesh woke this idle session…\n<workmesh-message from="An">\n│ ping\n</workmesh-message>\n');
     expect(asked[0]?.[0]).toBe("claude-code:s1");
     expect(asked[0]![1]).toBeLessThanOrEqual(55_000);
   });

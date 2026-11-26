@@ -7,7 +7,7 @@ import { CoordClient, isLocalNotice } from "../hub/coord";
 import type { HubSyncEdit, HubSyncInboxItem } from "../hub/coord";
 import { shellCommands, shellWriteTargets } from "../hub/shell-writes";
 import { QUOTE_MARK, label, messageBlock, oneLine } from "../lib/untrusted";
-import { selectMemories } from "./memory";
+import { TEAM_KNOWLEDGE_RULE, selectMemories } from "./memory";
 
 /**
  * v1 Coordinate in the hook path (docs/SPEC.md §23). The daemon answers a hook from its cached state only: a refusal
@@ -442,6 +442,8 @@ export function gateNote(person: string, actions: readonly string[], approvers?:
 export const KNOWLEDGE_TAGS = new Set(["rule", "convention", "rules", "conventions"]);
 const KNOWLEDGE_MAX_LINES = 15;
 const KNOWLEDGE_LINE_MAX = 240;
+/** The heading over the notes block: what the lines are, and what `TEAM_KNOWLEDGE_RULE` says of them. */
+export const KNOWLEDGE_HEADING = `Team rules and conventions (Workmesh notes, newest first). ${TEAM_KNOWLEDGE_RULE}`;
 
 export function knowledge(
   notes: ReadonlyArray<{ by: { person: string }; text: string; tags?: string[]; ts: number }>,
@@ -456,7 +458,7 @@ export function knowledge(
   const owner = me?.toLowerCase();
   const mine = owner === undefined ? [] : claims.filter((c) => c.holder.person.toLowerCase() === owner);
   if (rules.length > 0) {
-    lines.push("Team rules and conventions (Workmesh notes, newest first; a teammate's note, your own person's instructions come first):");
+    lines.push(KNOWLEDGE_HEADING);
     const room = KNOWLEDGE_MAX_LINES - 1 - (mine.length > 0 ? Math.min(mine.length, 4) + 1 : 0);
     for (const n of rules.slice(0, Math.max(1, room))) {
       // A note is its writer's text: one line of it, and the writer's name on the same line.

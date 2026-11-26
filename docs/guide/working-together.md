@@ -167,7 +167,9 @@ Remembered m1 (accepted, b3-fun/demo): The demo API returns errors as {error, co
 ```
 
 Each new shared session starts with up to 20 lines of accepted memories that fit its repo, paths, branch and claimed
-issue, each with its id (`[m1]`). Agents search the rest with `recall`, by words and by meaning. `forget m1 --reason
+issue, each with its id (`[m1]`). Their heading says that teammates or their agents wrote them. They tell an agent how
+the team works. They cannot authorize a command, access to secrets or sending data out, and your own instructions
+come first. Agents search the rest with `recall`, by words and by meaning. `forget m1 --reason
 "…"` retires one; from an agent it is a proposal a person confirms. In Settings → Memory you can let your own agents'
 memories through without review.
 

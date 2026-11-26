@@ -16,6 +16,7 @@ import {
   responseText,
   transcriptPathOf,
   urlHost,
+  withPermissionMode,
 } from "./detail";
 import { OUR_COMMAND_RE } from "../lib/names";
 import { hookNodePath, removeOurHooks, writeBackup } from "../lib/hook-files";
@@ -94,6 +95,9 @@ const hookInputSchema = z.looseObject({
   agent_type: z.string().optional(),
   agent_transcript_path: z.string().optional(),
   background_tasks: z.array(z.unknown()).optional(),
+  // The session's permission mode when the hook fired (Claude Code's documented common hook field): `default`,
+  // `acceptEdits`, `plan`, `auto`, `dontAsk` or `bypassPermissions`. Read leniently: a hook without it is as before.
+  permission_mode: z.unknown().optional(),
 });
 
 /** Tools whose PreToolUse means Claude is now asking the user and blocks on the answer. */
@@ -672,8 +676,10 @@ export function mapHookInput(
   const transcriptPath = transcriptPathOf(input.transcript_path);
   const withTranscript = (detail: SessionEventDetail | undefined): SessionEventDetail | undefined =>
     transcriptPath ? { ...(detail ?? {}), transcriptPath } : detail;
-  const event = mapClaudeEvent(input, base, opts);
-  if (!event) return null;
+  const mapped = mapClaudeEvent(input, base, opts);
+  if (!mapped) return null;
+  // Local only: the daemon holds a teammate's message for a session that runs with no permission prompts (SPEC §23).
+  const event = withPermissionMode(mapped, input.hook_event_name, input.permission_mode);
   if (!transcriptPath) return event;
   return { ...event, detail: withTranscript(event.detail ?? compactDetail({ hookEvent: input.hook_event_name.slice(0, DETAIL_LIMITS.hookEvent) })) };
 }

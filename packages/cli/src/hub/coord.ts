@@ -85,6 +85,25 @@ export interface CoordView {
   state?: HubSyncAccepted;
 }
 
+/**
+ * Who may reach this machine's sessions (SPEC §23), decided on this machine (`daemon/messages.ts`). The hub's flags
+ * and a sender's wishes are a request. Without a policy every message is taken as the hub sent it.
+ */
+export interface InboxPolicy {
+  /**
+   * This machine takes a message from this sender at all. Asked for every hub message at each sync. One it does not
+   * take is dropped: never stored, held or delivered, and acked so the hub stops listing it.
+   */
+  accepts(item: HubSyncInboxItem): boolean;
+  /** This message may start a turn in its idle session. Asked for a hub message and for the daemon's own notices. */
+  wakes(item: HubSyncInboxItem, localKey: string): boolean;
+  /**
+   * This message is not to be handed to its session: it waits for the person, who delivers or drops it. Asked each
+   * time a hub message could be handed over, so the answer follows the session's permission mode as it is then.
+   */
+  holds(item: HubSyncInboxItem, localKey: string): boolean;
+}
+
 export interface CoordClientOptions {
   url: string;
   token: string;
@@ -113,6 +132,8 @@ export interface CoordClientOptions {
   onSync?: (next: HubSyncAccepted, previous: HubSyncAccepted | undefined) => void;
   /** v3 (SPEC §36): the brief is fetched at most this often (default 10 s). */
   briefMinMs?: number;
+  /** Who may reach this machine's sessions (SPEC §23). Absent: every message as the hub sent it. */
+  policy?: InboxPolicy;
   /**
    * SPEC §47: the machines a sync names as new on this person's account, with the hub's clock. They go here and
    * nowhere else: the cached state that hooks and agents' calls read never holds them.
@@ -201,6 +222,7 @@ export class CoordClient {
   /** Ids of sync items refused for carrying the daemon's own notice prefix (each is logged once). */
   private readonly refusedIds = new Set<string>();
   private readonly onSync: CoordClientOptions["onSync"];
+  private readonly policy: InboxPolicy | undefined;
   private readonly onNewDevices: CoordClientOptions["onNewDevices"];
   /** v2 endpoints this hub answered 404 to, and until when that is remembered. */
   private readonly v2Absent = new Map<string, number>();
@@ -246,6 +268,7 @@ export class CoordClient {
     this.holdGraceMs = opts.holdGraceMs ?? 30 * 60_000;
     this.staleMs = opts.staleMs ?? 90_000;
     this.onSync = opts.onSync;
+    this.policy = opts.policy;
     this.onNewDevices = opts.onNewDevices;
     this.briefMinMs = opts.briefMinMs ?? 10_000;
   }
@@ -449,12 +472,17 @@ export class CoordClient {
       .sort((a, b) => b.ts - a.ts);
   }
 
-  /** Messages for this session (exactly its key) not yet handed to it, oldest first (the daemon's own notices too). */
+  /**
+   * Messages for this session (exactly its key) that may be handed to it now, oldest first (the daemon's own notices
+   * too). A message this machine's policy holds for the person is not among them.
+   */
   pendingFor(localKey: string): HubSyncInboxItem[] {
     const out: HubSyncInboxItem[] = [];
     for (const { item } of this.inbox.values()) {
       if (this.delivered.has(item.id)) continue;
-      if (this.recipientLocalKey(item) === localKey) out.push(item);
+      if (this.recipientLocalKey(item) !== localKey) continue;
+      if (this.policy?.holds(item, localKey)) continue;
+      out.push(item);
     }
     for (const item of this.local.values()) {
       if (!this.delivered.has(item.id) && item.to === localKey) out.push(item);
@@ -463,25 +491,42 @@ export class CoordClient {
   }
 
   /**
-   * v2 (SPEC §31): whether a message should wake an idle session: the hub's `wake` when it set one, else yes for a
-   * message a person wrote (no sending session) and no for one an agent sent.
+   * v2 (SPEC §31): whether a message asks to wake an idle session: the hub's `wake` when it set one, else yes for a
+   * message a person wrote (no sending session) and no for one an agent sent. A request: this machine's policy has
+   * the last word (`wakeFor`).
    */
   static wakes(item: HubSyncInboxItem): boolean {
     return item.wake ?? item.from.sessionKey === undefined;
   }
 
-  /** Waiting messages that should wake this session if it is idle, oldest first. */
-  wakeFor(localKey: string): HubSyncInboxItem[] {
-    return this.pendingFor(localKey).filter((i) => CoordClient.wakes(i));
+  /**
+   * Whether a message is this device's person's own: one of this device's sessions sent it, or the hub names its
+   * sender as surely this device's person (their other machines, the board, a terminal). An own message may wake a
+   * session, is never held, and passes `messages.from: self`, all without asking the person. So the sender is matched
+   * by the strict check (`surelyMe`, SPEC §49): once a sync carried this person's email, by that email only.
+   *
+   * Never one the hub made from another source (`via`, such as a Linear prompt). That source names the author, and
+   * no paired machine or signed-in member vouches for the name. Such a message follows a teammate's rules.
+   */
+  isOwn(item: HubSyncInboxItem): boolean {
+    if (item.via !== undefined) return false;
+    if (item.from.sessionKey !== undefined && this.localKey(item.from.sessionKey) !== undefined) return true;
+    return this.surelyMe(item.from);
   }
 
-  /** The local sessions (and subagents) with any undelivered message, for the daemon's wake check. */
+  /** Waiting messages that may wake this session if it is idle, oldest first: this machine's policy decides. */
+  wakeFor(localKey: string): HubSyncInboxItem[] {
+    const policy = this.policy;
+    return this.pendingFor(localKey).filter((i) => (policy ? policy.wakes(i, localKey) : CoordClient.wakes(i)));
+  }
+
+  /** The local sessions (and subagents) with a message that may be handed over, for the daemon's wake check. */
   sessionsWithPending(): Set<string> {
     const out = new Set<string>();
     for (const { item } of this.inbox.values()) {
       if (this.delivered.has(item.id)) continue;
       const k = this.recipientLocalKey(item);
-      if (k !== undefined) out.add(k);
+      if (k !== undefined && !this.policy?.holds(item, k)) out.add(k);
     }
     for (const item of this.local.values()) if (!this.delivered.has(item.id)) out.add(item.to);
     return out;
@@ -512,14 +557,37 @@ export class CoordClient {
     return id;
   }
 
-  /** Every message waiting for this device's sessions, delivered or not (the CLI's and menu bar's view). */
-  inboxItems(): Array<HubSyncInboxItem & { delivered: boolean; localKey: string }> {
-    const out: Array<HubSyncInboxItem & { delivered: boolean; localKey: string }> = [];
+  /**
+   * Every message waiting for this device's sessions, delivered or not (the person's view: the CLI at a terminal and
+   * the menu bar). `held` marks one that waits for the person instead of going to its session.
+   */
+  inboxItems(): Array<HubSyncInboxItem & { delivered: boolean; held: boolean; localKey: string }> {
+    const out: Array<HubSyncInboxItem & { delivered: boolean; held: boolean; localKey: string }> = [];
     for (const { item } of this.inbox.values()) {
       const localKey = this.recipientLocalKey(item);
-      if (localKey !== undefined) out.push({ ...item, delivered: this.delivered.has(item.id), localKey });
+      if (localKey === undefined) continue;
+      const delivered = this.delivered.has(item.id);
+      out.push({ ...item, delivered, held: !delivered && this.policy?.holds(item, localKey) === true, localKey });
     }
     return out.sort((a, b) => a.ts - b.ts);
+  }
+
+  /**
+   * These messages will not reach an agent: the person dropped them, or nobody answered in time. They are never
+   * handed over, and they are acked so the hub stops listing them. The hub is not told why.
+   */
+  discard(ids: readonly string[]): void {
+    for (const id of ids) {
+      if (isLocalNotice(id) || this.delivered.has(id)) continue;
+      this.delivered.add(id);
+      this.ackQueue.add(id);
+    }
+    while (this.delivered.size > MAX_DELIVERED) {
+      const first = this.delivered.values().next().value;
+      if (first === undefined) break;
+      this.delivered.delete(first);
+    }
+    void this.flushAcks();
   }
 
   /** The local session key a message is for (a hub that sends a bare local key is read the same way). */
@@ -696,13 +764,33 @@ export class CoordClient {
     return { ...s, inbox };
   }
 
+  /**
+   * A sync without the inbox items this machine's policy does not take (`messages.from`, SPEC §23). Each is dropped
+   * here: forgotten if an earlier sync stored it, and acked so the hub stops listing it.
+   */
+  private withoutRefused(s: HubSyncAccepted): HubSyncAccepted {
+    const policy = this.policy;
+    if (!policy) return s;
+    const inbox = s.inbox.filter((i) => policy.accepts(i));
+    if (inbox.length === s.inbox.length) return s;
+    const taken = new Set(inbox.map((i) => i.id));
+    for (const i of s.inbox) {
+      if (taken.has(i.id)) continue;
+      this.inbox.delete(i.id);
+      this.ackQueue.add(i.id);
+    }
+    return { ...s, inbox };
+  }
+
   /** Takes in a good sync answer (exposed for tests). */
   apply(sync: HubSyncAccepted, now = this.now(), sentAt = now): void {
     // New machines on the person's account (SPEC §47) are for the person, not for agents: the list is handed to
     // `onNewDevices` below and left out of the state kept here, which hooks and agents' calls read.
     const newDevices = sync.newDevices;
-    const s: HubSyncAccepted = { ...this.withoutLocalIds(sync), newDevices: undefined };
     const previous = this.state;
+    // The person's name comes with the sync, and the policy reads it to tell their own messages from a teammate's.
+    this.state = { ...this.withoutLocalIds(sync), newDevices: undefined };
+    const s = this.withoutRefused(this.state);
     this.state = s;
     this.fetchedAt = now;
     this.error = undefined;
@@ -948,7 +1036,7 @@ export class CoordClient {
       this.holds.clear();
       return { ok: false, status: 401, error: "the hub rejected this device's token: run `workmesh hub connect` again" };
     }
-    if (res.status === 429) return { ok: false, status: 429, error: "the hub asked to slow down; try again in a minute" };
+    if (res.status === 429) return slowDown(raw, res.headers.get("retry-after"));
     if (resSchema === null) {
       return res.ok ? { ok: true, status: res.status, body: undefined as Res } : { ok: false, status: res.status, error: `hub responded ${res.status}` };
     }
@@ -1151,6 +1239,30 @@ export class CoordClient {
     if (res.status === 502) return { ok: false, status: 502, error: hubSaid ? `the hub's model failed (${hubSaid})` : "the hub's model failed to answer" };
     return { ok: false, status: res.status, error: hubSaid ?? `hub responded ${res.status}` };
   }
+}
+
+/**
+ * A hub's `429` (SPEC §21) as the caller reads it. The hub's body `{ ok: false, error }` names the limit that was hit,
+ * so the agent or person learns which one. The reason is cleaned to one line, and the wait `Retry-After` gives in
+ * seconds is added in plain words, unless the reason already says when to try again. With no reason, the answer says
+ * the hub asked to slow down.
+ */
+function slowDown(raw: unknown, retryAfter: string | null): Extract<CoordResult<never>, { ok: false }> {
+  const said = (raw as { error?: unknown } | null | undefined)?.error;
+  const reason = typeof said === "string" ? oneLine(said, 200).replace(/[\s.;,]+$/, "") : "";
+  const v = retryAfter?.trim() ?? "";
+  // RFC 9110 delta-seconds; an HTTP date gives no wait to repeat.
+  const secs = /^\d{1,7}$/.test(v) ? Number(v) : undefined;
+  const wait = secs === undefined || /try again/i.test(reason) ? undefined : `try again in ${waitWords(secs)}`;
+  const error = reason ? (wait ? `${reason}; ${wait}` : reason) : `the hub asked to slow down; ${wait ?? "try again in a minute"}`;
+  return { ok: false, status: 429, error, ...(secs === undefined ? {} : { retryAfterMs: secs * 1000 }) };
+}
+
+/** A wait as an answer says it, rounded up so that a caller who waits that long is not early: `40 s`, `2 min`, `3 h`. */
+function waitWords(secs: number): string {
+  if (secs < 60) return `${Math.max(1, secs)} s`;
+  if (secs < 2 * 3600) return `${Math.ceil(secs / 60)} min`;
+  return `${Math.ceil(secs / 3600)} h`;
 }
 
 /** A `Retry-After` in seconds (or an HTTP date) → ms, between 5 s and an hour; absent, a minute. */

@@ -16,6 +16,7 @@ import {
   responseOk,
   responseText,
   transcriptPathOf,
+  withPermissionMode,
 } from "./detail";
 import { OUR_COMMAND_RE } from "../lib/names";
 import { removeOurHooks, writeBackup } from "../lib/hook-files";
@@ -319,6 +320,11 @@ const codexHookInputSchema = z.looseObject({
   transcript_path: z.string().nullish(),
   /** Stop: the turn's final assistant text (verified in the codex 0.164 Stop input schema). */
   last_assistant_message: z.string().nullish(),
+  /**
+   * The session's permission mode, if this Codex sends one (not verified on a live Codex: its rollout's
+   * `turn_context` is what the daemon reads for a Codex thread, hub/mirror.ts). Read leniently.
+   */
+  permission_mode: z.unknown().optional(),
 });
 
 /** Codex's names for a shell call: docs say "matched as Bash"; the rest are wire names seen across versions. */
@@ -501,7 +507,8 @@ export function mapCodexHookInput(json: unknown, fallbackNow = Date.now()): Sess
     cwd: input.cwd && input.cwd.length <= 1024 ? input.cwd : undefined,
     ts: fallbackNow,
   };
-  const mapped = mapCodexEvent(input, base);
+  const plain = mapCodexEvent(input, base);
+  const mapped = plain ? withPermissionMode(plain, input.hook_event_name, input.permission_mode) : plain;
   const transcriptPath = transcriptPathOf(input.transcript_path);
   if (!mapped || !transcriptPath) return mapped;
   // Local only: lets the hub forwarder tail the rollout once the session is shared.

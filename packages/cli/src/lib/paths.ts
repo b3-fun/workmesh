@@ -133,6 +133,11 @@ export function sessionVersionsPath(): string {
   return path.join(stateDir(), "session-versions.json");
 }
 
+/** Who each session wrote to, and the messages held for the person (SPEC §23), 0600. */
+export function messagesStatePath(): string {
+  return path.join(stateDir(), "messages.json");
+}
+
 /** SPEC §47: the new machines on this person's account that the daemon already told them about (0600). */
 export function newDevicesPath(): string {
   return path.join(stateDir(), "new-devices.json");

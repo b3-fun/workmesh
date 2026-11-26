@@ -104,6 +104,23 @@ Messages land after the recipient's next tool call, or with its next prompt. An 
 with the wake hook (Claude Code 2.1.330 or later, `workmesh wake` on). A Codex thread closed more than a minute ago has
 ended: the message waits until it's resumed. `workmesh inbox` shows what is still waiting.
 
+The recipient's machine also decides, and the sender is not told:
+
+- **It did not wake the session.** By default only the recipient's own messages and replies wake an idle session. An
+  unasked message waits for the session's next turn. The recipient can run `workmesh wake team` to let any teammate's
+  message wake their sessions.
+- **It is held.** A session that runs with permission prompts skipped does not get a teammate's message until its
+  person delivers it. On the recipient's machine, `workmesh inbox --held` and the menu bar list it. It is dropped
+  after 60 minutes with no answer.
+- **It was dropped.** `messages.from` on the recipient's machine can limit whose messages it takes
+  ([config](../reference/config.md#messages)).
+
+## The hub said to slow down
+
+The hub has limits, such as how many messages one person may send another in a minute. Over a limit, `send` and
+`handoff` fail with the hub's reason, and with the wait when the hub gives one: "Workmesh: …; try again in 40 s".
+Wait that long, then send again.
+
 ## An update went wrong
 
 `workmesh update` checks the new version (the daemon must come back on it; hooks and the MCP server must be in place)

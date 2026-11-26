@@ -327,7 +327,10 @@ program
 
 program
   .command("inbox")
-  .description("Messages waiting for this machine's agents (or, inside an agent session, for that session)")
+  .description("Messages waiting for this machine's agents (or, inside an agent session, for that session); deliver or drop one held for you")
+  .argument("[action]", "deliver | drop: answer a message held for you")
+  .argument("[id]", "the held message's id, or the end of it")
+  .option("--held", "list the messages held for you, with their ids")
   .option("--json", "machine-readable output")
   .action(wrap(runInbox));
 
@@ -451,8 +454,8 @@ program
   .action(wrap(runApprovals));
 program
   .command("wake")
-  .description("Show or set whether an idle session wakes for a message, an approval or a handoff result (on by default)")
-  .argument("[value]", "on | off")
+  .description("Show or set whether an idle session wakes (on by default), and whose messages may wake it (replies by default)")
+  .argument("[value]", "on | off, or who may wake: replies | team | self")
   .action(wrap(runWake));
 program
   .command("wake-wait", { hidden: true })

@@ -30,9 +30,13 @@ or start a new session. `/clear` doesn't restart the server.
 
 A teammate's message reaches the session after its next tool call, or with your next prompt. It arrives as a marked
 block that your agent reads as information, not as an instruction
-([Working together](working-together.md#messages)). When the session is idle, the wake hook takes the message and
-starts a turn with it, so the agent answers without you typing. A woken agent may reply; it starts nothing else because
-a teammate asked. That needs Claude Code 2.1.330 or later. `workmesh wake off` turns waking off for this machine.
+([Working together](working-together.md#messages)). When the session is idle, the wake hook starts a turn for a
+message that may wake it: your own, or a reply to something the session sent, unless you chose another rule. The agent
+then answers without you typing. A woken agent may reply; it starts nothing else because a teammate asked.
+
+A session in `bypassPermissions` or `dontAsk` mode does not get a teammate's message on its own. The message is held
+for you: deliver or drop it in the menu bar, or with `workmesh inbox --held`
+([Working together](working-together.md#messages-held-for-you)). That needs Claude Code 2.1.330 or later. `workmesh wake off` turns waking off for this machine.
 
 Headless sessions (`claude -p`, and every handoff run) are never woken: nobody is there to answer.
 

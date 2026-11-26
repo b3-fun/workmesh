@@ -85,8 +85,17 @@ export function runClaims(opts: CoordCliOptions): Promise<void> {
   return runOp("claims", {}, opts);
 }
 
-export function runInbox(opts: CoordCliOptions): Promise<void> {
-  return runOp("inbox", {}, opts);
+/**
+ * `workmesh inbox`: the messages waiting for this machine's agents. `--held` lists the ones held for the person, and
+ * `inbox deliver <id>` or `inbox drop <id>` answers one (SPEC §23). Inside an agent session only the plain list works.
+ */
+export function runInbox(action: string | undefined, id: string | undefined, opts: CoordCliOptions & { held?: boolean }): Promise<void> {
+  return runOp("inbox", inboxArgs(action, id, opts.held), opts);
+}
+
+/** What `workmesh inbox [deliver|drop <id>] [--held]` asks the daemon for. */
+export function inboxArgs(action: string | undefined, id: string | undefined, held: boolean | undefined): Record<string, unknown> {
+  return { ...(action ? { action } : {}), ...(id ? { id } : {}), ...(held ? { held: true } : {}) };
 }
 
 export function runSend(to: string, words: string[], opts: CoordCliOptions & { kind?: string; thread?: string }): Promise<void> {

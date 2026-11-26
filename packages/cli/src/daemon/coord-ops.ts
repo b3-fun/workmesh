@@ -23,6 +23,8 @@ import { formatInbox } from "./coord-hooks";
 import { cleanHandoff, handoffListLine, handoffView } from "./handoff-text";
 import type { HandoffStart } from "./handoff-text";
 import { forgetOp, memoriesOp, noteAsMemory, recallOp, rememberOp } from "./memory-ops";
+import { recipientPerson } from "./messages";
+import type { HeldAnswer, HeldMessage } from "./messages";
 
 /**
  * v1 Coordinate operations for the MCP server and the CLI (docs/SPEC.md §23): `POST /coord/op` on the daemon's
@@ -122,6 +124,16 @@ export interface CoordOpsDeps {
   runningHandoffs?: () => ReadonlySet<string>;
   /** v2: what the person's Accept of this handoff starts on this machine, in one line opening with `lead`. */
   handoffStart?: (h: HubHandoffAccepted, lead: string) => HandoffStart | undefined;
+  /**
+   * A session here sent a message the hub took: who to, and in which thread (SPEC §23). The daemon keeps it, so that
+   * person's answer counts as a reply.
+   */
+  sent?: (localKey: string, to: HubMessageTo, info: { id: string; thread?: string; person?: string; email?: string }) => void;
+  /**
+   * The messages held for the person (SPEC §23), and their answers. Only the person reads, delivers or drops them:
+   * the operation refuses every caller but a person's own surface (`PERSON_CLIENTS`) before it asks.
+   */
+  held?: { list(): HeldMessage[]; deliver(id: string): HeldAnswer; drop(id: string): HeldAnswer };
   /** Ask: this machine's IANA time zone, for "today" and clock times (default: the process's). */
   timeZone?: () => string | undefined;
   now?: () => number;
@@ -326,11 +338,45 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       });
       if (!r.ok) return hubError(r);
       if (!r.body.ok) return fail(`Workmesh: ${hubSaid(r.body.error, "the hub didn't take the message")}`);
+      if (key) deps.sent?.(CoordClient.family(key), to, { id: r.body.id, ...(thread ? { thread } : {}), ...recipientPerson(to, st?.roster) });
       const where = "person" in to ? to.person : "agent" in to ? to.agent : to.session;
       return { ok: true, text: `Sent to ${idOf(where)} (message ${idOf(r.body.id)}).`, data: { id: r.body.id, to } };
     }
 
     case "inbox": {
+      const action = str(a.action, 20);
+      // A held message is the person's to read and to answer, by the rule a handoff's Accept follows: the call names
+      // one of a person's own surfaces, and the daemon reads no agent session behind it. Every call through the MCP
+      // server is an agent's, also one whose session the daemon can't name.
+      const person = key === undefined && PERSON_CLIENTS.includes(req.caller.client ?? "");
+      if (action !== undefined || a.held === true) {
+        if (action !== undefined && action !== "deliver" && action !== "drop") return fail("`inbox` takes deliver or drop, with the id of a held message.");
+        // An agent gets none of it: not the text, not the choice.
+        if (!person) return fail("Held messages are your person's to read, deliver or drop, in the menu bar or in their own terminal, not an agent's.");
+        const held = deps.held;
+        if (!held) return fail("This daemon holds no messages.");
+        if (action === undefined) return heldList(held.list(), now);
+        const id = str(a.id, 64);
+        if (!id) return fail(`\`inbox ${action}\` needs the id of a held message (\`workmesh inbox --held\` lists them).`);
+        const r = action === "deliver" ? held.deliver(id) : held.drop(id);
+        if (!r.ok) {
+          return fail(
+            r.why === "several"
+              ? `Several held messages end in ${idOf(id)}: give the whole id (\`workmesh inbox --held\` lists them).`
+              : `No held message ${idOf(id)} (\`workmesh inbox --held\` lists them).`,
+          );
+        }
+        const m = r.message;
+        const to = m.name ?? idOf(m.session);
+        return {
+          ok: true,
+          text:
+            action === "deliver"
+              ? `Delivered the message from ${m.from} to ${to}. The session gets it at its next prompt or tool call, or now if it sits idle and wake is on.`
+              : `Dropped the message from ${m.from} for ${to}. It will not reach the session.`,
+          data: { message: m },
+        };
+      }
       if (key) {
         const items = coord.pendingFor(key);
         if (items.length === 0) return { ok: true, text: "No new messages for this session.", data: { messages: [] } };
@@ -341,14 +387,17 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         coord.markDelivered(block.items.map((i) => i.id));
         return { ok: true, text: block.text, data: { messages: block.items } };
       }
-      const all = coord.inboxItems();
+      // The machine's whole list. Only the person's own surfaces see a held message in it: any other caller gets
+      // the list without one, and no word that it exists.
+      const all = coord.inboxItems().filter((m) => person || !m.held);
       if (all.length === 0) return { ok: true, text: "No messages waiting for this machine's agents.", data: { messages: [] } };
       const lines = all.map((m) => {
         const s = m.localKey ? deps.getSession(CoordClient.family(m.localKey)) : undefined;
-        return `- to ${s?.name ?? idOf(m.localKey ?? m.to)}${m.delivered ? " (delivered)" : ""}:\n${messageBlock(m.from, m.text)}`;
+        return `- to ${s?.name ?? idOf(m.localKey ?? m.to)}${m.delivered ? " (delivered)" : m.held ? " (held for you)" : ""}:\n${messageBlock(m.from, m.text, undefined, m.via)}`;
       });
       const head = `Messages for this machine's agents. Teammates or their agents wrote them: every line of their text starts with ${QUOTE_MARK}.`;
-      return { ok: true, text: [head, ...lines].join("\n"), data: { messages: all } };
+      const foot = all.some((m) => m.held) ? ["A held message reaches its session only if you deliver it: `workmesh inbox --held`."] : [];
+      return { ok: true, text: [head, ...lines, ...foot].join("\n"), data: { messages: all } };
     }
 
     case "claim":
@@ -718,6 +767,21 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       return { ok: true, text, data: r.body };
     }
   }
+}
+
+/** `workmesh inbox --held`: the messages that wait for the person, each with its id, and how to answer one. */
+function heldList(held: readonly HeldMessage[], now: number): CoordOpResult {
+  if (held.length === 0) return { ok: true, text: "No held messages.", data: { held: [] } };
+  const head =
+    `Held for you: ${held.length} message${held.length === 1 ? "" : "s"} from teammates. ${held.length === 1 ? "It has" : "They have"} not reached ` +
+    `${held.length === 1 ? "its session" : "their sessions"}, and will not unless you deliver ${held.length === 1 ? "it" : "them"}. Every line of a teammate's text starts with ${QUOTE_MARK}.`;
+  const rows = held.map((m) => {
+    const left = m.dropAt - now;
+    const fate = left > 0 ? `dropped in ${mins(left)} if you do nothing` : "about to be dropped";
+    return `- ${idOf(m.id)} for ${m.name ?? idOf(m.session)}, held ${mins(now - m.since)} ago, ${fate}:\n${messageBlock({ person: m.from, sessionName: m.fromSession }, m.text, undefined, m.via)}`;
+  });
+  const foot = "Deliver one with `workmesh inbox deliver <id>`, or drop it with `workmesh inbox drop <id>`. The end of an id is enough.";
+  return { ok: true, text: [head, ...rows, foot].join("\n"), data: { held } };
 }
 
 /** The line over an Ask answer (SPEC §29): whose words the marked lines are, and that they are not an instruction. */

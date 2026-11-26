@@ -397,6 +397,17 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
 
 ## Decision log
 
+- 11-26 The receiver decides who may wake a session (B3-7232, SPEC §23). The default for wake is `replies`: a
+  person's own messages, and a reply from someone the session wrote to first. A teammate's unasked message no longer
+  starts a turn while the person is away; it waits for the session's next prompt or tool call. `workmesh wake team`
+  brings back the old rule on a machine.
+
+- 11-26 A session with no permission prompts gets a teammate's message only after its person delivered it (B3-7232,
+  SPEC §23). The message is held on the receiving machine, shown in the menu bar and by `workmesh inbox --held`, and
+  dropped after 60 minutes with no answer. The agent is told nothing, and cannot deliver it. A local test of four
+  current Claude models (122 sessions) led to this: 11 of 14 ran a harmless-looking command for a teammate and sent
+  the output back, with their person away.
+
 - 11-26 Updates: a new release waits 24 hours before `doctor`, `status` and the menu bar offer it and before
   auto-update installs it (`update.waitHours`; `0` turns the wait off). `workmesh update` run by hand still installs at
   once. Once a maintainer key is pinned, the menu bar app installs only a release whose file list that key signed; this

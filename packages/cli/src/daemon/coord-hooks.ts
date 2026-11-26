@@ -516,7 +516,7 @@ const MESSAGE_MIN_BODY = 80;
 
 /** One teammate's message as a block of at most `room` characters: whole, or cut so that the block still closes. */
 function blockWithin(m: HubSyncInboxItem, room: number): string | undefined {
-  const whole = messageBlock(m.from, m.text);
+  const whole = messageBlock(m.from, m.text, undefined, m.via);
   if (whole.length <= room) return whole;
   // The longest text whose block fits. More text never makes a shorter block, so a binary search finds it.
   let lo = MESSAGE_MIN_BODY;
@@ -524,7 +524,7 @@ function blockWithin(m: HubSyncInboxItem, room: number): string | undefined {
   let best: string | undefined;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    const block = messageBlock(m.from, m.text, mid);
+    const block = messageBlock(m.from, m.text, mid, m.via);
     if (block.length <= room) {
       best = block;
       lo = mid + 1;

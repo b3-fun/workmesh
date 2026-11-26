@@ -46,13 +46,26 @@ Written by `workmesh hub connect` (or `init`). Don't copy this section between m
 | `handoffs.env` | `[]` | Environment variables a handoff's agent gets although their names look like secrets, for example `["GH_TOKEN"]`. The agent starts without such variables, except what its own tool signs in with. The run's log names what was left out. |
 | `handoffs.model` | the agent's default | The model a handoff runs on, e.g. `sonnet`. |
 | `handoffs.maxMinutes` | `120` | How long a handoff run may take (5 to 1440). |
-| `wake` | `true` | Wake an idle session when a message, approval or handoff result arrives for it (`workmesh wake on\|off`). |
+| `wake` | `true` | Wake an idle session when a message that may wake it, an approval or a handoff result arrives (`workmesh wake on\|off`). Whose messages may wake is `messages.wake`. |
 | `gates` | absent | Your own patterns for the `custom` approval gate. The gates themselves live on the hub (`workmesh gates set …`). |
 | `gates.custom` | `[]` | Case-insensitive regexes over a shell command, up to 50. |
 | `update` | absent | Updates the daemon installs on its own. Absent means off. |
 | `update.auto` | `false` | `workmesh update --auto on\|off`. |
 | `update.scope` | `patch` | `patch` takes 0.12.0 to 0.12.3; `minor` (`--auto on --minor`) takes 0.13.0 too. Never a new major. |
 | `update.waitHours` | `24` | How many hours a release must be out before `doctor`, `status` and the menu bar offer it, and before auto-update installs it. `0` turns the wait off; 720 is the most. `workmesh update` run by hand never waits. No command sets it: edit the file. See [New releases wait a day](../guide/updating-and-uninstalling.md#new-releases-wait-a-day). |
+
+## Messages
+
+Who may reach this machine's sessions. Your machine decides: a sender, or the hub, can only ask. The daemon reads
+these keys again within a few seconds of a change, so a hand edit needs no restart.
+
+| Key | Default | What it is |
+|---|---|---|
+| `messages` | absent | Rules for teammates' messages on this machine. Absent means the defaults below. |
+| `messages.wake` | `replies` | Whose message may start a turn in an idle session, while `wake` is on. `replies`: your own messages, and a reply from a person (or their agent) that the session wrote to in the last 7 days. When Workmesh knows that person's email, a reply must come from it. `team`: any teammate's. `self`: only your own. Or a list of people, by email or by the name the board shows: `["sam.lee@example.org", "Bo"]`. An email matches that person only. A name stands for the one person on the team with that name. The team here is the people the hub lists, which can leave out someone with no paired machine: write their email instead. When Workmesh knows that person's email, a message must carry it, so a message made from a Linear prompt does not pass on the name alone. When two or more people share it, it matches none of them, and the daemon log says once to write the email instead. GitHub logins don't match. Set the first three with `workmesh wake replies\|team\|self`. A message that may not wake still reaches the session at its next prompt or tool call. |
+| `messages.hold` | `bypass` | Which sessions get a teammate's message only after you said so. `bypass`: a session that runs with permission prompts skipped (Claude Code's `bypassPermissions` or `dontAsk` mode, a Codex thread with no sandbox). `unattended`: also `auto` mode. `always`: every session. `never`: none. A held message shows in the menu bar and in `workmesh inbox --held`, and your agent never sees it unless you deliver it. Your own messages are never held. |
+| `messages.holdMinutes` | `60` | How long a held message waits for you before it is dropped, in minutes (1 to 10080). |
+| `messages.from` | `team` | Whose messages this machine takes at all. `team`: anyone on the team. `self`: only your own. Or a list of people, by email or by name, read as for `messages.wake`. A message from anyone else is dropped on this machine, never delivered, and named in the daemon log once an hour per sender. |
 
 ## Daemon and agents
 
@@ -141,6 +154,7 @@ Set by Workmesh itself, useful when you debug:
 | `~/.local/state/workmesh/daemon.secret` | The bearer secret for the daemon's loopback API (`0600`). |
 | `~/.local/state/workmesh/daemon.log` | The daemon's log when it runs without a service. Under launchd it logs to `~/Library/Logs/workmesh-daemon.log`; under systemd, to the journal (`journalctl --user -u workmesh`). |
 | `~/.local/state/workmesh/hub-forward.json` | Shared sessions and unsent events, so a restart loses nothing (`0600`). |
+| `~/.local/state/workmesh/messages.json` | Who each session wrote to in the last 7 days, so their answer counts as a reply, and the messages held for you (`0600`). |
 | `~/.local/state/workmesh/new-devices.json` | The machines that joined your account and that this machine already told you about, so each is told once (`0600`). |
 | `~/.local/state/workmesh/update.log`, `update/previous/` | The last `workmesh update` run and the copy it rolls back to. |
 | `~/.local/state/workmesh/handoffs/` | Handoff runs on this machine. |

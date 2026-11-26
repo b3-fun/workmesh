@@ -54,12 +54,12 @@ const session = (over: Partial<AgentSession>): AgentSession => ({
   ...over,
 });
 
-function harness(replies: Array<{ status: number; body?: unknown }> = []) {
+function harness(replies: Array<{ status: number; body?: unknown; headers?: Record<string, string> }> = []) {
   const calls: Array<{ url: string; body?: unknown }> = [];
   const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
     calls.push({ url: String(url), body: init?.body ? (JSON.parse(String(init.body)) as unknown) : undefined });
     const r = replies.shift() ?? { status: 200, body: { ok: true, id: "x1" } };
-    return new Response(JSON.stringify(r.body ?? {}), { status: r.status });
+    return new Response(JSON.stringify(r.body ?? {}), { status: r.status, headers: r.headers });
   }) as typeof fetch;
   const coord = new CoordClient({ url: "https://hub.test", token: TOKEN, deviceId: DEV, person: "Sean", fetchImpl, now: () => T });
   coord.apply(hubSyncAcceptSchema.parse(SYNC), T);
@@ -253,6 +253,35 @@ describe("coordination ops (POST /coord/op)", () => {
     down.apply(hubSyncAcceptSchema.parse(SYNC), T);
     const s = await runCoordOp({ op: "send", args: { to: "An", text: "hi" }, caller: { ppid: 4242 } }, { ...h.deps, coord: () => down });
     expect(s).toMatchObject({ ok: false, text: expect.stringContaining("hub unreachable") });
+  });
+
+  it("a 429: the hub's reason and its wait reach the send and handoff answers, and the MCP tool's", async () => {
+    const limit = (error: string) => ({ status: 429, body: { ok: false, error }, headers: { "retry-after": "40" } });
+    const toPerson = "at most 60 messages a minute to one person";
+    const h = harness([limit(toPerson), limit("at most 20 open handoffs from one person"), limit(toPerson), { status: 429 }]);
+    // The CLI prints this text as it is; the MCP tool answers with it.
+    expect(await h.op("send", { to: "An", text: "hi" })).toMatchObject({ ok: false, text: `Workmesh: ${toPerson}; try again in 40 s` });
+    expect(await h.op("handoff", { to: "An", task: "fix the typo in the README" })).toMatchObject({
+      ok: false,
+      text: "Workmesh: at most 20 open handoffs from one person; try again in 40 s",
+    });
+    const viaDaemon = {
+      version: "0.12.3",
+      caller: () => ({ ppid: 4242, cwd: ROOT }),
+      call: (op: CoordOpRequest["op"], args: Record<string, unknown>, c: CoordOpRequest["caller"]) => runCoordOp({ op, args, caller: c }, h.deps),
+    };
+    const session: { client?: string } = {};
+    await handleMcpMessage({ jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "claude-code" } } }, viaDaemon, session);
+    const tool = (await handleMcpMessage({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "send", arguments: { to: "An", text: "hi" } } }, viaDaemon, session)) as { result: unknown };
+    expect(tool.result).toEqual({ content: [{ type: "text", text: `Workmesh: ${toPerson}; try again in 40 s` }], isError: true });
+    // A 429 that says nothing: the plain answer.
+    expect(await h.op("send", { to: "An", text: "hi" })).toMatchObject({ ok: false, text: "Workmesh: the hub asked to slow down; try again in a minute" });
+    expect(h.calls.map((c) => c.url)).toEqual([
+      "https://hub.test/relay/messages",
+      "https://hub.test/relay/handoffs",
+      "https://hub.test/relay/messages",
+      "https://hub.test/relay/messages",
+    ]);
   });
 });
 

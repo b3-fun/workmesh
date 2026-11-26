@@ -219,6 +219,48 @@ describe("CoordClient state for hooks", () => {
     expect(bad).toMatchObject({ ok: false });
     expect(x.hub.calls).toHaveLength(2);
   });
+
+  it("a 429 says the hub's reason on one line and the wait it gives; with no reason, that the hub asked to slow down", async () => {
+    const x = client({
+      replies: [
+        { status: 429, body: { ok: false, error: "at most 60 messages a minute to one person" }, headers: { "retry-after": "40" } },
+        { status: 429, body: "" },
+        { status: 429, body: { ok: false, error: "at most 20 open\r\nhandoffs\u001b[31m from\u0007 one\u202e person\u2028" }, headers: { "retry-after": "600" } },
+        { status: 429, body: "<html>Too Many Requests</html>", headers: { "retry-after": "90" } },
+        { status: 429, body: { ok: false, error: "at most 30 holds an hour." }, headers: { "retry-after": "Wed, 26 Nov 2026 12:00:00 GMT" } },
+      ],
+    });
+    const send = () => x.c.message({ from: "claude-code:s1", to: { person: "An" }, text: "hi" });
+    expect(await send()).toEqual({ ok: false, status: 429, error: "at most 60 messages a minute to one person; try again in 40 s", retryAfterMs: 40_000 });
+    expect(await send()).toEqual({ ok: false, status: 429, error: "the hub asked to slow down; try again in a minute" });
+    // Line breaks, escape sequences, control and invisible characters: gone, one line left.
+    expect(await send()).toEqual({ ok: false, status: 429, error: "at most 20 open handoffs from one person; try again in 10 min", retryAfterMs: 600_000 });
+    // Not JSON (a proxy's page): no reason, and the wait the header gives.
+    expect(await send()).toEqual({ ok: false, status: 429, error: "the hub asked to slow down; try again in 2 min", retryAfterMs: 90_000 });
+    // A date, not a number of seconds: the reason alone.
+    expect(await send()).toEqual({ ok: false, status: 429, error: "at most 30 holds an hour" });
+    expect(x.hub.calls).toHaveLength(5);
+  });
+
+  it("a 429 whose reason already says when to try again gets no second wait", async () => {
+    const x = client({
+      replies: [
+        { status: 429, body: { ok: false, error: "at most 20 messages a minute to one person; try again in 40 s" }, headers: { "retry-after": "40" } },
+        { status: 429, body: { ok: false, error: "at most 10 holds an hour per person; try again later" }, headers: { "retry-after": "3600" } },
+        { status: 429, body: { ok: false, error: "too many requests; Try Again shortly" }, headers: { "retry-after": "40" } },
+        { status: 429, body: { ok: false, error: "at most 50 leases per machine; release some" }, headers: { "retry-after": "40" } },
+      ],
+    });
+    const send = () => x.c.message({ from: "claude-code:s1", to: { person: "An" }, text: "hi" });
+    const first = await send();
+    expect(first).toEqual({ ok: false, status: 429, error: "at most 20 messages a minute to one person; try again in 40 s", retryAfterMs: 40_000 });
+    expect(JSON.stringify(first).match(/try again/gi)).toHaveLength(1);
+    expect(await send()).toEqual({ ok: false, status: 429, error: "at most 10 holds an hour per person; try again later", retryAfterMs: 3_600_000 });
+    // Any case.
+    expect(await send()).toMatchObject({ error: "too many requests; Try Again shortly" });
+    // A reason that says what to do, but not when: the wait is added.
+    expect(await send()).toMatchObject({ error: "at most 50 leases per machine; release some; try again in 40 s" });
+  });
 });
 
 // ------------------------------------------------------------------ hook decisions

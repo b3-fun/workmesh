@@ -39,6 +39,11 @@ terminal, can use the CLI as usual.
 
 Every Workmesh tool is marked read-only or non-destructive, so Codex's default approval runs them without asking.
 
+A thread with no sandbox (`danger-full-access`) does not get a teammate's message on its own. The message is held for
+you: deliver or drop it in the menu bar, or with `workmesh inbox --held`
+([Working together](working-together.md#messages-held-for-you)). Workmesh reads the thread's mode from its hooks and
+from its rollout file.
+
 ## After an update, start a new thread
 
 A Codex thread keeps the MCP server and hooks it started with, and Codex can't reconnect an MCP server. After

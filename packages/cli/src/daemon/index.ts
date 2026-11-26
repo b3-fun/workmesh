@@ -9,6 +9,7 @@ import type { WorkflowWatcher } from "../adapters/workflow";
 import {
   autoUpdateSettings,
   delegateSettings,
+  messageSettings,
   formatOptionsFromConfig,
   hubShareLevel,
   hubStickyShare,
@@ -25,6 +26,7 @@ import { CoordClient } from "../hub/coord";
 import { CoordHooks } from "./coord-hooks";
 import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
+import { MessageGate } from "./messages";
 import { AcceptedHere } from "./accepted-here";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
 import { NewDeviceNotices } from "./new-devices";
@@ -40,6 +42,7 @@ import {
   checkoutsPath,
   handoffsDir,
   hubForwardStatePath,
+  messagesStatePath,
   newDevicesPath,
   sessionVersionsPath,
   stateDir,
@@ -134,12 +137,25 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   let liveClaude: Map<string, ClaudeProcess> | undefined = claudeOn ? readLiveClaudeSessions(claudeDir) : undefined;
   // v2 Delegate (SPEC §31): the settings are read from disk (at most every 2 s), so `workmesh roots|wake|handoffs`
   // apply without a restart.
-  let settingsCache: { at: number; v: ReturnType<typeof delegateSettings> } | undefined;
-  const settings = (): ReturnType<typeof delegateSettings> => {
+  let settingsCache: { at: number; v: ReturnType<typeof delegateSettings>; messages: ReturnType<typeof messageSettings> } | undefined;
+  const readSettings = (): NonNullable<typeof settingsCache> => {
     const now = Date.now();
-    if (!settingsCache || now - settingsCache.at > 2000) settingsCache = { at: now, v: delegateSettings(loadConfigSafe()) };
-    return settingsCache.v;
+    if (!settingsCache || now - settingsCache.at > 2000) {
+      const onDisk = loadConfigSafe();
+      settingsCache = { at: now, v: delegateSettings(onDisk), messages: messageSettings(onDisk) };
+    }
+    return settingsCache;
   };
+  const settings = (): ReturnType<typeof delegateSettings> => readSettings().v;
+  // Who may reach this machine's sessions (SPEC §23): its own rules, and the record of who each session wrote to.
+  const messages = new MessageGate({
+    coord: () => coord,
+    settings: () => readSettings().messages,
+    // A session's mode as its transcript last said it (SPEC §26), read beside what its last hook said.
+    mirrorMode: (key) => forwarder?.modeOf(key),
+    file: messagesStatePath(),
+    log,
+  });
   const checkouts = new CheckoutIndex(checkoutsPath());
   const runner = new HandoffRunner({
     coord: () => coord,
@@ -227,7 +243,16 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       personEmail: hub.person?.email,
       active: () => fwd.hasLiveShared(),
       log,
-      onSync: (next, previous) => delegate.onSync(next, previous),
+      onSync: (next, previous) => {
+        // Held messages first (what waited too long is dropped), then wakes and handoffs.
+        try {
+          messages.sweep();
+        } catch {
+          // Fail open: held messages are looked at again at the next sync.
+        }
+        delegate.onSync(next, previous);
+      },
+      policy: messages,
       onNewDevices: (list, hubNow) => {
         newDevices.observe(list, { board: hub.url, self: hub.deviceId, hubNow });
       },
@@ -312,6 +337,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     return sessionVersions.note(key, event.source, startedAt);
   };
   const applyHookEvent = (event: SessionEvent, hook: string, meta?: HookMeta) => {
+    // The hook names the session's permission mode: known before any message is handed to it (SPEC §23).
+    messages.observe(event);
     let deny: string | undefined;
     try {
       deny = coordHooks.refuse(event, hook);
@@ -359,18 +386,25 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     }
     const unread = coord
       .inboxItems()
-      .filter((m) => !m.delivered)
+      .filter((m) => !m.delivered && !m.held)
       .map((m) => ({
         id: m.id,
         session: m.localKey,
         name: nameOf(m.localKey),
         from: m.from.person,
         fromSession: m.from.sessionName,
+        // Where the hub made it from, when no paired machine sent it (a Linear prompt).
+        ...(m.via ? { via: m.via } : {}),
         text: m.text.slice(0, 500),
         ts: m.ts,
         delivered: m.delivered,
       }));
-    return { available: view.available, holds, unread };
+    // Held for the person: at most 50 rows, each with the start of its cleaned text.
+    const held = messages
+      .heldMessages(nameOf)
+      .slice(0, 50)
+      .map((m) => ({ ...m, text: m.text.slice(0, 1000) }));
+    return { available: view.available, holds, unread, held };
   };
 
   // 0.12 (SPEC §41): what's newer, from the hub or npm; the menu bar's release; opt-in auto-update.
@@ -477,6 +511,17 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         onRunHere: (h, by) => delegate.runHere(h, by),
         runningHandoffs: () => runner.running(),
         handoffStart: (h, lead) => delegate.onAccept(h, lead),
+        sent: (key, to, info) => messages.sent(key, to, info),
+        held: {
+          list: () => messages.heldMessages((local) => store.get(local)?.name),
+          deliver: (id) => {
+            const r = messages.deliver(id);
+            // An idle session with a waiter gets it now.
+            if (r.ok) delegate.check();
+            return r;
+          },
+          drop: (id) => messages.drop(id),
+        },
       }),
     wakeWait: (session, timeoutMs, signal) => delegate.wait(session, timeoutMs, signal),
     dismissNewDevice: (id) => {
@@ -501,9 +546,10 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         ...liveConfig,
         ...patch,
         hub: hubOnDisk === "unreadable" ? liveConfig.hub : hubOnDisk,
-        // v2 sections the CLI writes while the daemon runs (roots, wake, gates).
+        // v2 sections the CLI writes while the daemon runs (roots, wake, gates, who may reach a session).
         handoffs: onDisk.handoffs,
         wake: onDisk.wake,
+        messages: onDisk.messages,
         gates: onDisk.gates,
         update: onDisk.update,
       };
@@ -594,6 +640,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         if (livenessTimer) clearInterval(livenessTimer);
         updates.stop();
         sessionVersions.flush();
+        messages.flush();
         if (codexDirTimer) clearInterval(codexDirTimer);
         codexEnds.stop();
         server.close();

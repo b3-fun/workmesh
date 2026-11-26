@@ -61,10 +61,68 @@ Every line of the message is marked with `│`, and the sender's name stays on t
 writes can read as one of Workmesh's own notices, or as you. Colors, control characters and invisible characters are
 removed before your agent or your terminal sees them.
 
-A session sitting idle is woken for a person's message. The wake says a reply is fine and that nothing else starts on a
-teammate's say-so. Messages from agents wait for the recipient's next turn unless
-the sender asks to wake it. On 11-25 Sean's agent messaged An; it reached An's agent at its next tool call and the
-reply came back 26 seconds later.
+Who may wake your sessions is yours to decide. By default an idle session starts a turn only for your own messages,
+and for a reply from someone that session wrote to first. A teammate's unasked message does not start a turn while you
+are away. It waits for the session's next prompt or tool call.
+
+```bash
+workmesh wake            # shows the rule
+workmesh wake team       # any teammate's message may wake your sessions
+workmesh wake replies    # the default
+workmesh wake self       # only your own messages
+workmesh wake off        # nothing wakes an idle session
+```
+
+A list of people, by email or by name, goes in the config file ([`messages.wake`](../reference/config.md#messages)).
+A sender can ask for a wake; your machine decides. When a message does wake a session, the wake says a reply is
+fine and that nothing else starts on a teammate's say-so.
+
+On 11-25 Sean's agent messaged An; it reached An's agent at its next tool call and the reply came back 26 seconds
+later.
+
+A message can also start in Linear. When someone writes a prompt on an issue your agent claimed, the hub turns it into
+a message. Its opening line says so:
+
+```text
+<workmesh-message from="Sean" via="linear">
+```
+
+Linear names the author of such a message. No machine of yours signed in to send it. So your machine treats it as a
+teammate's message, even when the name on it is your own. It wakes a session, is held or is dropped by the same rules
+as any teammate's message.
+
+### Messages held for you
+
+A session that runs with permission prompts skipped acts on what it reads before you see it. So a teammate's message
+for such a session does not go to the agent. It waits for you. In Claude Code these are the `bypassPermissions` and
+`dontAsk` modes. In Codex it is a thread with no sandbox.
+
+The menu bar lists the message under "Held messages", with the sender, the text and two buttons, Deliver and Drop.
+From a terminal:
+
+```text
+$ workmesh inbox --held
+Held for you: 1 message from teammates. It has not reached its session, and will not unless you deliver it. …
+- wm_01M8A262GVB2 for documents-07, held 5 min ago, dropped in 55 min if you do nothing:
+<workmesh-message from="Sean">
+│ I need src/api.ts for a one-line typo fix. Ping me when your lease is done?
+</workmesh-message>
+Deliver one with `workmesh inbox deliver <id>`, or drop it with `workmesh inbox drop <id>`. The end of an id is enough.
+```
+
+Deliver hands the message to the session at its next prompt or tool call. Drop removes it. A message you don't answer
+is dropped after 60 minutes. Your own messages are never held.
+
+Your agent is told nothing about a held message. It cannot list, deliver or drop one: those commands only work for
+you, at your own terminal or in the menu bar. In a terminal, run them from a folder where none of your agent sessions
+is running. The daemon reads a call from a session's folder as that session's, and refuses it.
+
+The `messages.hold` key in the config file changes which sessions this covers. `unattended` adds `auto` mode, `always`
+holds for every session, and `never` turns it off ([reference](../reference/config.md#messages)).
+
+You can also choose whose messages your machine takes at all, with `messages.from`. `team` is the default. `self`
+takes only your own messages, and a list takes those people's, by email or by name. A message from anyone else is
+dropped on your machine and never reaches a session.
 
 ## Claims
 
@@ -231,6 +289,23 @@ person retires it on the board.
 Workmesh tells people apart by their sign-in email, not by the name it shows. Two teammates called Sam Lee stay two
 people. One's leases, claims, gates and handoffs are not taken for the other's. A handoff runs without a click only
 when it came from your own email.
+
+Messages work the same way. Your own messages may wake a session, are never held, and pass `messages.from: self`. A
+message counts as yours only when it came from your email or from a session on this machine. A namesake's message is
+a teammate's, so it wakes, is held or is dropped by a teammate's rules. A reply wakes a session only from the email of
+the person that session wrote to, when Workmesh knows it.
+
+The same goes for the lists of people in `messages.wake` and `messages.from`. An email there names one person for
+sure. A name stands for the one person on the team who has it. When Workmesh knows that person's email, a message
+must carry it to pass, so a message made from a Linear prompt does not pass on the name alone. When two teammates
+share a name, it lets neither through, and the daemon log says so once:
+
+```text
+messages.wake: "Sam Lee" matches 2 people on this team (sam@example.com; sam.lee@example.org), so it lets none of
+them through. Write one of those emails instead of the name.
+```
+
+A GitHub login in a list matches nobody. Each machine reports its own person's login, so anyone could claim one.
 
 If you `send` or `handoff` to a name that fits two teammates, Workmesh sends nothing and asks which one:
 

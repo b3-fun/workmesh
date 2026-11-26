@@ -42,7 +42,11 @@ export const DETAIL_LIMITS = {
   slackId: 40,
   slackLink: 300,
   slackName: 120,
+  permissionMode: 40,
 } as const;
+
+/** A permission mode as an agent tool names it: one word (`default`, `bypassPermissions`, `full-access`). */
+export const PERMISSION_MODE_RE = /^[A-Za-z][\w-]*$/;
 
 /**
  * A Slack message an MCP Slack tool touched (local only, like all of detail):
@@ -125,6 +129,12 @@ export const sessionEventDetailSchema = z.object({
   messageText: z.string().max(DETAIL_LIMITS.messageText).optional(),
   /** Slack messages an MCP Slack tool call touched. */
   slack: z.array(slackRefSchema).max(5).optional(),
+  /**
+   * The session's permission mode when the hook fired, as the agent tool reports it (Claude Code's `permission_mode`:
+   * `default`, `acceptEdits`, `plan`, `auto`, `dontAsk`, `bypassPermissions`). The daemon reads it to decide whether a
+   * teammate's message may go into this session's context while nobody is asked.
+   */
+  permissionMode: z.string().max(DETAIL_LIMITS.permissionMode).regex(PERMISSION_MODE_RE).optional(),
 });
 export type SessionEventDetail = z.infer<typeof sessionEventDetailSchema>;
 

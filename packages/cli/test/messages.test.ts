@@ -280,8 +280,8 @@ describe("who may wake an idle session", () => {
     expect(wakes(x)).toEqual([]);
   });
 
-  it("a list of people wakes for them, by name or by GitHub login, and for nobody else", () => {
-    const x = harness({ settings: { wake: ["sam-dev"] } });
+  it("a list of people wakes for them, by name, and for nobody else", () => {
+    const x = harness({ settings: { wake: ["Sam"] } });
     x.gate.sent(LOCAL, { person: "Bo" });
     x.sync({ inbox: [message(), message({ id: "wm_bo", from: { person: "Bo" } })] });
     expect(wakes(x)).toEqual(["wm_01"]);
@@ -737,8 +737,8 @@ describe("who may message this machine's sessions at all", () => {
     expect(x.coord.pendingFor(LOCAL)).toEqual([]);
   });
 
-  it("a list takes those people's messages, by name or GitHub login, and my own", () => {
-    const x = harness({ settings: { from: ["sam-dev"] } });
+  it("a list takes those people's messages, by name, and my own", () => {
+    const x = harness({ settings: { from: ["Sam"] } });
     x.sync({ inbox: [message(), message({ id: "wm_bo", from: { person: "Bo" } }), message({ id: "wm_mine", from: { person: "Someone", sessionKey: `${DEV}:codex:t1` } })] });
     expect(x.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual(["wm_01", "wm_mine"]);
     expect(x.logs).toEqual(["dropped a message from Bo: this machine takes only its person's own and those of the people listed (messages.from)"]);
@@ -762,6 +762,102 @@ describe("who may message this machine's sessions at all", () => {
     const id = x.coord.notify(LOCAL, "Workmesh: your handoff to Sam is done.");
     expect(x.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual([id]);
     expect(wakes(x)).toEqual([id]);
+  });
+});
+
+describe("a list of people in `messages.wake` or `messages.from`, on a hub that sends emails (SPEC §49)", () => {
+  const SAM_LEE = "dev_01JDSAMLEESAMLEESAMLEE0000:claude-code:s7";
+  /** The roster as a hub that sends emails lists it, with any more people. */
+  const roster = (...more: HubSyncResponse["roster"]): HubSyncResponse["roster"] => [
+    { person: "Sam Lee", email: "sam@example.com", github: "sam-dev", sessions: [{ hubKey: SAM_LEE, name: "auth-refactor", state: "working" }] },
+    { person: "Bo", email: "bo@example.com", sessions: [] },
+    ...more,
+  ];
+  /** A message from a session of a person called Sam Lee, with the email the hub sent (none: null). */
+  const fromSam = (id: string, email: string | null = "sam@example.com"): Message =>
+    message({ id, from: { person: "Sam Lee", ...(email ? { email } : {}), sessionName: "auth-refactor", sessionKey: SAM_LEE } });
+  /**
+   * The ids a list lets through after one sync: for `messages.wake`, the messages that wake a session; for
+   * `messages.from`, the messages this machine takes. Also what the daemon log said about the list.
+   */
+  const through = (key: "wake" | "from", list: string[], sync: Partial<HubSyncResponse>) => {
+    const x = harness({ settings: key === "wake" ? { wake: list } : { from: list } });
+    const ids = () => (key === "wake" ? wakes(x) : x.coord.inboxItems().map((i) => i.id));
+    x.sync(sync);
+    const first = ids();
+    return { ids: first, again: ids, said: () => x.logs.filter((l) => l.startsWith("messages.")), x };
+  };
+  const KEYS = ["wake", "from"] as const;
+
+  it("an email matches the sender's email only, in any case", () => {
+    for (const key of KEYS) {
+      const inbox = [
+        fromSam("wm_email"),
+        // The same name with another email, or with none: not the person the email names.
+        fromSam("wm_other", "sam.lee@example.org"),
+        fromSam("wm_none", null),
+        // A display name that looks like the email is a name, not that email.
+        message({ id: "wm_lookalike", from: { person: "sam@example.com" } }),
+      ];
+      expect(through(key, [" SAM@Example.com "], { roster: roster(), inbox }).ids, key).toEqual(["wm_email"]);
+    }
+  });
+
+  it("a name stands for the one person the roster lists under it, and their email decides", () => {
+    for (const key of KEYS) {
+      const inbox = [fromSam("wm_sam"), fromSam("wm_namesake", "sam.lee@example.org"), message({ id: "wm_bo", from: { person: "Bo", email: "bo@example.com" } })];
+      const r = through(key, ["sam lee"], { roster: roster(), inbox });
+      expect(r.ids, key).toEqual(["wm_sam"]);
+      expect(r.said(), key).toEqual([]);
+      // A sender the hub sent with no email: the names decide, as with a hub that sends none.
+      expect(through(key, ["Sam Lee"], { roster: roster(), inbox: [fromSam("wm_none", null)] }).ids, key).toEqual(["wm_none"]);
+      // A name the roster does not list stands for nobody.
+      const kim = message({ id: "wm_kim", from: { person: "Kim", email: "kim@example.com" } });
+      expect(through(key, ["Kim"], { roster: roster(), inbox: [kim] }).ids, key).toEqual([]);
+    }
+  });
+
+  it("a name two people share matches none of them, and the daemon log says once to write the email", () => {
+    const two = roster({ person: "sam lee", email: "sam.lee@example.org", sessions: [] });
+    for (const key of KEYS) {
+      const r = through(key, ["Sam Lee"], { roster: two, inbox: [fromSam("wm_sam"), fromSam("wm_namesake", "sam.lee@example.org")] });
+      expect(r.ids, key).toEqual([]);
+      const said = `messages.${key}: "Sam Lee" matches 2 people on this team (sam@example.com; sam.lee@example.org), so it lets none of them through. Write one of those emails instead of the name.`;
+      expect(r.said(), key).toEqual([said]);
+      // Later messages: still none, and the log stays as it is.
+      r.x.tick(2 * 60 * 60_000);
+      r.x.sync({ roster: two, inbox: [fromSam("wm_later")] });
+      expect(r.again(), key).toEqual([]);
+      expect(r.said(), key).toEqual([said]);
+      // The email of the one meant lets them through.
+      const y = through(key, ["Sam Lee", "sam.lee@example.org"], { roster: two, inbox: [fromSam("wm_sam"), fromSam("wm_namesake", "sam.lee@example.org")] });
+      expect(y.ids, key).toEqual(["wm_namesake"]);
+    }
+  });
+
+  it("this machine's own person counts among the people a name may stand for, also when the roster leaves them out", () => {
+    const sync = { me: { person: "An", email: "an@example.com" }, roster: roster({ person: "An", email: "an@example.org", sessions: [] }) };
+    const r = through("wake", ["An"], { ...sync, inbox: [message({ id: "wm_namesake", from: { person: "An", email: "an@example.org" } })] });
+    expect(r.ids).toEqual([]);
+    expect(r.said()).toEqual([
+      'messages.wake: "An" matches 2 people on this team (an@example.org; an@example.com), so it lets none of them through. Write one of those emails instead of the name.',
+    ]);
+  });
+
+  it("a GitHub login lets nobody through: a machine reports its own person's login, so anyone can claim one", () => {
+    for (const key of KEYS) expect(through(key, ["sam-dev"], { roster: roster(), inbox: [fromSam("wm_sam")] }).ids, key).toEqual([]);
+  });
+
+  it("on a hub that sends no emails, a name matches by name, as before, also when the roster lists it twice", () => {
+    for (const key of KEYS) {
+      const inbox = [message(), message({ id: "wm_bo", from: { person: "Bo" } })];
+      const r = through(key, ["Sam"], { inbox });
+      expect(r.ids, key).toEqual(["wm_01"]);
+      // With no emails, nothing tells two entries apart, and no email could be written instead.
+      const twice = through(key, ["Sam"], { roster: [...BASE.roster, { person: "sam", sessions: [] }], inbox });
+      expect(twice.ids, key).toEqual(["wm_01"]);
+      expect([...r.said(), ...twice.said()], key).toEqual([]);
+    }
   });
 });
 
@@ -864,7 +960,7 @@ describe("a message the hub made from a Linear prompt", () => {
   });
 
   it("wakes as a teammate's message does: for a person on the list, or as a reply", () => {
-    const listed = harness({ settings: { wake: ["sam-dev"] } });
+    const listed = harness({ settings: { wake: ["Sam"] } });
     listed.sync({ inbox: [linear()] });
     expect(wakes(listed)).toEqual(["wm_lin"]);
     const x = harness();

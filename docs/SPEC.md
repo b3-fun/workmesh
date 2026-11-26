@@ -689,9 +689,10 @@ read and drops the rest one by one):
   message to any session, and the sender chooses whether it asks to wake an idle one. The receiving machine has the
   last word. It decides from its own config (`messages`). The hub's flags are a request.
   - **Who may message at all** (`messages.from`). `team` (the default) takes a message from anyone on the team.
-    `self` takes only the person's own. A list takes those people's messages and the person's own. A message from
-    anyone else is dropped on this machine at each sync that lists it. It is never stored, held or delivered, and it
-    is acked so the hub stops listing it. The daemon log names its sender at most once an hour.
+    `self` takes only the person's own. A list takes those people's messages (**Lists of people**, below) and the
+    person's own. A message from anyone else is dropped on this machine at each sync that lists it. It is never
+    stored, held or delivered, and it is acked so the hub stops listing it. The daemon log names its sender at most
+    once an hour.
   - **Who may wake** (`messages.wake`, while `wake` is on). A message must first ask to wake: its `wake` flag says
     so, or it has none and a person wrote it (§30). Then the receiving machine's rule must allow its sender. The rule
     is `replies` (the default), `team`, `self`, or a list of people.
@@ -708,7 +709,7 @@ read and drops the rest one by one):
       last 7 days, or one of that person's sessions or agents. It is also a reply when it is in a thread the session
       wrote in: its `thread` is the id of a message the session sent, or the thread that message carried.
     - `team` lets anyone on the team pass, as every relay did before this rule. `self` lets nobody else pass. A list
-      lets those people pass, by the name the hub shows or by their GitHub login in the roster.
+      lets those people pass (**Lists of people**, below).
     - The relay keeps the record this needs. For each message a local session sends, it notes the session, the
       hub's id for the message, its thread, and who it went to: the person named, or the person whose session or
       agent was named, read from the roster. The record is in the state dir (`messages.json`, 0600). It holds at most
@@ -716,6 +717,18 @@ read and drops the rest one by one):
       so it is not recorded.
     - The daemon's own notices (§31) wake as before. A message that may not wake is not lost, and its session is
       told nothing about the wait. It reaches the session at its next prompt or tool call, as marked text.
+  - **Lists of people** (`messages.wake` and `messages.from`). Each entry is an email or a display name, read
+    case-insensitively. A display name alone can't tell two people apart (§48), so:
+    - An entry with an `@` is an email. It matches the sender's email only. A display name that looks like an email
+      never passes for it, and a sender the hub sent with no email never matches it.
+    - Any other entry is a display name. It stands for the one person the last sync's roster lists under that name.
+      This device's own person counts too, also when the roster leaves them out. The sender is then matched against
+      that person by §49's rule: by email when both have one, else by display name. A name the roster does not list
+      stands for nobody.
+    - A name that two or more people share, told apart by email, stands for nobody. The daemon log says so once per
+      list and name. It names their emails, so the person can write one of them instead. Entries with no email are
+      not told apart from each other, as with a hub that sends none, so there the name decides, as before.
+    - A GitHub login matches nobody. A machine reports its own person's login, so anyone can claim one.
   - **Held for the person** (`messages.hold`). A session that runs with no permission prompts acts on what it reads
     before anyone sees it. So a teammate's message for such a session is not added to its context. It waits for the
     person.
@@ -1738,6 +1751,8 @@ reader, §14).
   - Leases, claims and recent edits (§23): "your own other session" in a lease refusal, the open-claims line at a
     session's start, and whose recent edit gets a heads-up.
   - Replies (§23): whether the person a message goes to is the one whose agent wrote first.
+  - Lists of people (§23): whether a message's sender is the one person a display name in `messages.wake` or
+    `messages.from` stands for.
 - **What the relay does without asking** (`surelyMe`). The `auto-self` policy accepts, with no click, only a handoff
   this person sent themselves. It decides that by a stricter check:
   - Once the last sync carried `me.email`, an entry with no email is someone else. One with an email is this person

@@ -5,6 +5,8 @@ import { CoordClient, isLocalNotice } from "../hub/coord";
 import type { HubSyncInboxItem, InboxPolicy } from "../hub/coord";
 import { readStateFile, writeStateFile } from "../hub/persist";
 import type { MessageHoldRule, MessageSettings } from "../lib/config";
+import { emailKey, samePerson } from "../lib/person";
+import type { PersonRef } from "../lib/person";
 import { cleanText, label } from "../lib/untrusted";
 
 /**
@@ -166,6 +168,8 @@ export class MessageGate implements InboxPolicy {
   private readonly modes = new Map<string, string>();
   /** Senders whose messages were refused: name → when the daemon log last said so. */
   private readonly refusedAt = new Map<string, number>();
+  /** Names in a list of people that fit several people (`<key> <name>`): the daemon log said so once. */
+  private readonly warned = new Set<string>();
   private dirty = false;
   private saveTimer: NodeJS.Timeout | undefined;
 
@@ -265,7 +269,7 @@ export class MessageGate implements InboxPolicy {
     if (coord?.isOwn(item)) return true;
     const rule = this.deps.settings().from;
     if (rule === "team") return true;
-    if (rule !== "self" && namesPerson(rule, item.from.person, coord)) return true;
+    if (rule !== "self" && this.listNames("from", rule, item)) return true;
     const who = item.from.person.toLowerCase();
     const now = this.now();
     const last = this.refusedAt.get(who);
@@ -293,8 +297,24 @@ export class MessageGate implements InboxPolicy {
     const rule = this.deps.settings().wake;
     if (rule === "team") return true;
     if (rule === "self") return false;
-    if (Array.isArray(rule)) return namesPerson(rule, item.from.person, coord);
+    if (Array.isArray(rule)) return this.listNames("wake", rule, item);
     return this.isReply(item, localKey);
+  }
+
+  /**
+   * Whether a list of people in this machine's config (`messages.<key>`) names a message's sender. A name in it that
+   * fits several people lets none of them through, and the daemon log says so once, with their emails.
+   */
+  private listNames(key: "wake" | "from", list: readonly string[], item: HubSyncInboxItem): boolean {
+    const coord = this.deps.coord();
+    return namesPerson(list, item.from, coord?.view().state, coord?.self(), (name, emails) => {
+      const once = `${key} ${name.toLowerCase()}`;
+      if (this.warned.has(once)) return;
+      this.warned.add(once);
+      this.log(
+        `messages.${key}: "${label(name)}" matches ${emails.length} people on this team (${emails.slice(0, 8).join("; ")}), so it lets none of them through. Write one of those emails instead of the name.`,
+      );
+    });
   }
 
   /**
@@ -489,15 +509,61 @@ function sender(person: string, via: "linear" | "other" | undefined): string {
 }
 
 /**
- * Whether a list of people names this sender: by the name the hub shows, or by a GitHub login the roster gives that
- * person. Case does not matter.
+ * Whether a list of people in this machine's config names a message's sender (`messages.wake`, `messages.from`; SPEC
+ * §23). Case does not matter.
+ *
+ * - An entry with an `@` is an email. It matches the sender's email only, so a display name that looks like an email
+ *   never passes for it, and a sender the hub sent with no email never matches one.
+ * - Any other entry is a display name. It stands for the one person the last sync's roster lists under that name,
+ *   this machine's own person included, and that person is matched with `samePerson`. A name the roster does not
+ *   list stands for nobody. A name two people share stands for nobody either, and `ambiguous` hears of it with
+ *   their emails, so the person can write the email instead.
+ *
+ * GitHub logins are not read: a machine reports its own person's login, so anyone can claim one.
  */
-export function namesPerson(list: readonly string[], person: string, coord: CoordClient | undefined): boolean {
-  const who = person.toLowerCase();
-  const wanted = new Set(list.map((p) => p.trim().toLowerCase()).filter(Boolean));
-  if (wanted.has(who)) return true;
-  const login = coord?.view().state?.roster.find((p) => p.person.toLowerCase() === who)?.github?.toLowerCase();
-  return login !== undefined && wanted.has(login);
+export function namesPerson(
+  list: readonly string[],
+  sender: PersonRef,
+  st: { roster: ReadonlyArray<{ person: string; email?: string }> } | undefined,
+  me: PersonRef | undefined,
+  ambiguous: (name: string, emails: string[]) => void = () => {},
+): boolean {
+  const from = emailKey(sender.email);
+  for (const raw of list) {
+    const entry = raw.trim();
+    if (!entry) continue;
+    if (entry.includes("@")) {
+      if (from !== undefined && emailKey(entry) === from) return true;
+      continue;
+    }
+    const one = onePerson(entry, st?.roster, me, ambiguous);
+    if (one && samePerson(one, sender)) return true;
+  }
+  return false;
+}
+
+/**
+ * The one person a display name stands for, from the roster's people and this machine's own person, told apart by
+ * email. Entries with no email are not told apart from each other, as with a hub that sends none: the name decides
+ * then, as it always did. Undefined when nobody has the name, or when two people do.
+ */
+function onePerson(
+  name: string,
+  roster: ReadonlyArray<{ person: string; email?: string }> | undefined,
+  me: PersonRef | undefined,
+  ambiguous: (name: string, emails: string[]) => void,
+): PersonRef | undefined {
+  const low = name.toLowerCase();
+  const people: PersonRef[] = [...(roster ?? [])];
+  // This machine's own person counts even when the roster leaves them out: their name must not stand for a namesake.
+  if (me?.person && !people.some((p) => samePerson(p, me))) people.push(me);
+  const byEmail = new Map<string | undefined, PersonRef>();
+  for (const p of people) if (p.person?.toLowerCase() === low && !byEmail.has(emailKey(p.email))) byEmail.set(emailKey(p.email), p);
+  if (byEmail.size > 1) {
+    ambiguous(name, [...byEmail.keys()].map((e) => e ?? "one with no email"));
+    return undefined;
+  }
+  return byEmail.values().next().value;
 }
 
 /**

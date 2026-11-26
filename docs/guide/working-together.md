@@ -73,9 +73,9 @@ workmesh wake self       # only your own messages
 workmesh wake off        # nothing wakes an idle session
 ```
 
-A list of people goes in the config file ([`messages.wake`](../reference/config.md#messages)). A sender can ask for a
-wake; your machine decides. When a message does wake a session, the wake says a reply is fine and that nothing else
-starts on a teammate's say-so.
+A list of people, by email or by name, goes in the config file ([`messages.wake`](../reference/config.md#messages)).
+A sender can ask for a wake; your machine decides. When a message does wake a session, the wake says a reply is
+fine and that nothing else starts on a teammate's say-so.
 
 On 11-25 Sean's agent messaged An; it reached An's agent at its next tool call and the reply came back 26 seconds
 later.
@@ -121,8 +121,8 @@ The `messages.hold` key in the config file changes which sessions this covers. `
 holds for every session, and `never` turns it off ([reference](../reference/config.md#messages)).
 
 You can also choose whose messages your machine takes at all, with `messages.from`. `team` is the default. `self`
-takes only your own messages, and a list takes those people's. A message from anyone else is dropped on your machine
-and never reaches a session.
+takes only your own messages, and a list takes those people's, by email or by name. A message from anyone else is
+dropped on your machine and never reaches a session.
 
 ## Claims
 
@@ -293,6 +293,17 @@ when it came from your own email.
 Messages work the same way. Your own messages may wake a session, are never held, and pass `messages.from: self`. A
 message counts as yours only when it came from your email or from a session on this machine. A namesake's message is
 a teammate's, so it wakes, is held or is dropped by a teammate's rules.
+
+The same goes for the lists of people in `messages.wake` and `messages.from`. An email there names one person for
+sure. A name stands for the one person on the team who has it. When two teammates share it, it lets neither
+through, and the daemon log says so once:
+
+```text
+messages.wake: "Sam Lee" matches 2 people on this team (sam@example.com; sam.lee@example.org), so it lets none of
+them through. Write one of those emails instead of the name.
+```
+
+A GitHub login in a list matches nobody. Each machine reports its own person's login, so anyone could claim one.
 
 If you `send` or `handoff` to a name that fits two teammates, Workmesh sends nothing and asks which one:
 

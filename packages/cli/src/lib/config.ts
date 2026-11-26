@@ -168,7 +168,8 @@ export const configSchema = z.object({
       /**
        * Whose message may start a turn in an idle session, while `wake` is on. `replies` (default): your own messages,
        * and a reply from a person (or their agent) that the session wrote to first. `team`: anyone on the team.
-       * `self`: only your own. A list of people: those people, and your own.
+       * `self`: only your own. A list of people: those people, and your own. An entry is an email, or a display
+       * name that stands for the one person on the team with it (SPEC §23).
        */
       wake: z
         .union([z.enum(["replies", "team", "self"]), z.array(z.string().min(1).max(200)).max(100)])
@@ -184,7 +185,8 @@ export const configSchema = z.object({
       holdMinutes: z.number().int().min(1).max(7 * 24 * 60).optional().catch(undefined),
       /**
        * Whose messages this machine takes at all. `team` (default): anyone on the team. `self`: only your own. A
-       * list of people: those people, and your own. A message from anyone else is dropped here and never delivered.
+       * list of people, read as for `wake`: those people, and your own. A message from anyone else is dropped here
+       * and never delivered.
        */
       from: z
         .union([z.enum(["team", "self"]), z.array(z.string().min(1).max(200)).max(100)])

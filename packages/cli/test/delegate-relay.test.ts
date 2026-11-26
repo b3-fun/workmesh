@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hubSyncAcceptSchema } from "@workmesh/protocol";
 import type { HubHandoffAccepted, HubSyncResponse } from "@workmesh/protocol";
 import { CoordClient } from "../src/hub/coord";
-import { CheckoutIndex, HandoffRunner, codexThreadFromLog, handoffPrompt, resultText } from "../src/daemon/handoff-runner";
+import { CheckoutIndex, HandoffRunner, codexThreadFromLog, handoffPrompt, handoffSessionName, resultText } from "../src/daemon/handoff-runner";
 import { secretEnvName } from "../src/daemon/handoff-env";
 import type { RunnerSettings } from "../src/daemon/handoff-runner";
 import { runCoordOp } from "../src/daemon/coord-ops";
@@ -414,6 +414,15 @@ describe("handoff runner (SPEC §31)", () => {
     expect(p).toContain("Linear issue: B3-7168");
     expect(p).toContain("on branch workmesh/handoff-abc12345, made from origin/main");
     expect(p).toContain("You run headless");
+  });
+
+  it("the session's name has the issue or the short id and the sender as a label, and no task text", () => {
+    expect(handoffSessionName(HANDOFF)).toBe("handoff B3-7168 from An");
+    expect(handoffSessionName({ ...HANDOFF, issue: undefined })).toBe("handoff abc12345 from An");
+    // A sender's name can't break the argument's quoting, open a tag or add a line.
+    const odd = { ...HANDOFF, from: { ...HANDOFF.from, person: 'Sam "the <b>second</b>"\nLee' } };
+    expect(handoffSessionName(odd)).toBe("handoff B3-7168 from Sam the bsecond/b Lee");
+    expect(handoffSessionName(HANDOFF)).not.toContain("KEK");
   });
 
   it("reads a codex thread id from exec --json's first event", () => {

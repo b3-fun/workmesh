@@ -10,7 +10,7 @@ import { GitResolver } from "../hub/git";
 import { scrubText } from "../hub/redact";
 import type { HandoffRunnerLike } from "./delegate";
 import { droppedEnvLine, handoffEnv } from "./handoff-env";
-import { oneLine } from "../lib/untrusted";
+import { label } from "../lib/untrusted";
 import type { HandoffPlan } from "./handoff-text";
 
 /**
@@ -290,6 +290,14 @@ export function handoffPrompt(
   return lines.join("\n");
 }
 
+/**
+ * The name of a handoff's session. It is on the agent's command line, where any process can read it, so it carries
+ * no task text: the issue or the handoff's short id, and the sender as a label.
+ */
+export function handoffSessionName(h: Pick<HubHandoffAccepted, "id" | "issue" | "from">): string {
+  return `handoff ${h.issue ?? shortId(h.id)} from ${label(h.from.person, 60)}`;
+}
+
 function shortId(id: string): string {
   return id.replace(/[^A-Za-z0-9]/g, "").slice(-8).toLowerCase() || "handoff";
 }
@@ -499,8 +507,7 @@ export class HandoffRunner implements HandoffRunnerLike {
     } catch {
       // fine
     }
-    // The session's name is on the command line too, so it carries no task text: the issue or the id, and the sender.
-    const name = `handoff ${h.issue ?? shortId(h.id)} from ${oneLine(h.from.person, 60)}`;
+    const name = handoffSessionName(h);
     // `claude -p` with no prompt argument reads the prompt from standard input.
     const argv =
       picked.agent === "claude"

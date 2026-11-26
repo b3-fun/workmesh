@@ -213,10 +213,10 @@ describe("approval gates (SPEC §31)", () => {
     expect(x.d.gateRefusal(bash("npx wrangler deploy"), "PreToolUse")).toMatch(/^Waiting for An's approval to deploy/);
     x.sync({ gates, approvals: [{ ...ap, status: "denied", by: "An", via: "board", note: "deploy freeze until 5pm", decidedAt: T }] });
     expect(x.d.gateRefusal(bash("npx wrangler deploy"), "PreToolUse")).toBe(
-      "Workmesh: An denied this deploy (wrangler deploy in b3-fun/b3os-beta): deploy freeze until 5pm Don't run it or work around it. If it should go ahead after all, ask An (`workmesh send An \"…\"` or the workmesh `send` tool).",
+      "Workmesh: An denied this deploy (wrangler deploy in b3-fun/b3os-beta). Don't run it or work around it. If it should go ahead after all, ask An (`workmesh send An \"…\"` or the workmesh `send` tool).",
     );
     expect(x.coord.wakeFor(LOCAL)[0]?.text).toBe(
-      "Workmesh: An, whom your person Sean named to answer their approvals, denied this session's held command `npx wrangler deploy` on the team board (deploy: wrangler deploy in b3-fun/b3os-beta). Their note: deploy freeze until 5pm Don't run it; ask An if it should go ahead after all.",
+      "Workmesh: An, whom your person Sean named to answer their approvals, denied this session's held command `npx wrangler deploy` on the team board (deploy: wrangler deploy in b3-fun/b3os-beta). Don't run it; ask An if it should go ahead after all.",
     );
   });
 
@@ -271,7 +271,7 @@ describe("wake (SPEC §31)", () => {
       ],
     });
     const answer = await x.d.wait(LOCAL, 5000);
-    expect(answer.wake).toContain("woke this idle session for what follows");
+    expect(answer.wake).toContain("woke this idle session to read a message");
     expect(answer.wake).toContain('<workmesh-message from="An">\n│ can you look at PR 212?\n</workmesh-message>');
     expect(answer.wake).not.toContain("FYI only");
     // Delivered once: acked to the hub, never handed over again.
@@ -695,7 +695,7 @@ describe("handoffs (SPEC §31)", () => {
     const texts = x.coord.pendingFor(LOCAL).map((i) => i.text);
     expect(texts).toEqual([
       'Workmesh: An\'s machine started an agent for your handoff "Port the KEK rotation to the new runner".',
-      'Workmesh: your handoff to An is done ("Port the KEK rotation to the new runner"): PR 214 is up',
+      'Workmesh: your handoff to An is done ("Port the KEK rotation to the new runner").',
     ]);
     expect(x.coord.wakeFor(LOCAL).map((i) => i.text)).toEqual([texts[1]]); // only the outcome wakes
   });

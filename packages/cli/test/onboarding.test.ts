@@ -234,24 +234,12 @@ describe("doctor: why a paired machine shows offline", () => {
 describe("one hub, two addresses (An's ans-macbook-pro, 11-25)", () => {
   const TOKEN = `bp_${"a".repeat(64)}`;
 
-  it("B3's two hosts are the same hub without asking anyone", async () => {
-    const check = vi.fn(async () => "rejected" as const);
+  it("keeps known aliases and the same loopback service; other hosts pair separately", () => {
     expect(HUB_ALIASES[0]).toEqual(["https://workmesh.b3os.org", "https://bullpen.b3os.org"]);
-    expect(await sameHub({ url: "https://bullpen.b3os.org", deviceToken: TOKEN }, "https://workmesh.b3os.org", check)).toBe(true);
-    expect(check).not.toHaveBeenCalled();
-  });
-
-  it("a sibling host counts when it accepts this machine's token; a token never goes to another domain", async () => {
-    const check = vi.fn(async (h: { url: string }) => (h.url === "https://b.example.org" ? ("ok" as const) : ("rejected" as const)));
-    expect(await sameHub({ url: "https://a.example.org", deviceToken: TOKEN }, "https://b.example.org", check)).toBe(true);
-    expect(await sameHub({ url: "https://a.example.org", deviceToken: TOKEN }, "https://c.example.org", check)).toBe(false);
-    check.mockClear();
-    expect(await sameHub({ url: "https://a.example.org", deviceToken: TOKEN }, "https://hub.elsewhere.net", check)).toBe(false);
-    expect(await sameHub({ url: "https://example.org", deviceToken: TOKEN }, "https://hub.org", check)).toBe(false);
-    expect(check).not.toHaveBeenCalled();
-    // A dev hub on this machine under two names.
-    expect(await sameHub({ url: "http://localhost:8787", deviceToken: TOKEN }, "http://127.0.0.1:8787", async () => "ok")).toBe(true);
-    expect(await sameHub({ url: "http://localhost:8787", deviceToken: TOKEN }, "http://127.0.0.1:9999", async () => "ok")).toBe(false);
+    expect(sameHub("https://bullpen.b3os.org", "https://workmesh.b3os.org")).toBe(true);
+    expect(sameHub("https://a.example.org", "https://b.example.org")).toBe(false);
+    expect(sameHub("http://localhost:8787", "http://127.0.0.1:8787")).toBe(true);
+    expect(sameHub("http://localhost:8787", "http://127.0.0.1:9999")).toBe(false);
   });
 
   it("init keeps a pairing made at the other address and forwards to the new one", async () => {

@@ -140,11 +140,7 @@ token answers every `/relay/*` call with `401 { "error": "superseded: <machine> 
 says so; the relay that paired again sends its open sessions under the new device. Two machines with the same name
 need their own names (`workmesh init <hub> --machine <name>`).
 
-**One hub, several addresses** (0.11.1). `workmesh init <url>` keeps an existing pairing when `<url>` is the hub it
-already paired with under another address: B3's two hosts (§1) always; another host under the same parent domain (or
-both on this machine) when it accepts the machine's device token (`GET /relay/team` answers anything but `401`/`403`).
-The relay never shows a token to a host outside that domain. The pairing is kept and the relay forwards to `<url>`
-from then on.
+**One hub, several addresses** (0.13). `workmesh init <url>` keeps an existing pairing for B3's two known hostnames (§1) and for the same loopback service. A different remote hostname requires its own pairing. The relay sends credentials only to a paired hub.
 
 ### 3.2 Ingest
 
@@ -1922,3 +1918,19 @@ ready", off by default); `autoRepos` are the repos where every ready PR gets one
 
 What the hub does with a round is the hub's own (the board, a person's turn after the last round): the hosted hub's
 docs say how.
+
+## Message delivery and device credentials (0.13)
+
+The hub takes the sender identity from the authenticated device, board session or verified Linear event. It resolves the recipient before storing a message. Cross-person messages wait for the recipient's decision on the board. A person's own sessions and structured outcomes of their requests go automatically. Free-form notes attached to outcomes enter the message queue separately. A recipient may trust a sender in advance, mute their requests or block them.
+
+A released inbox item on `GET /relay/sync` carries an optional `release` field with one of `own`, `requested`, `accepted` or `trusted`. An older hub may omit it. The relay holds a cross-person item with absent or unrecognized provenance for a local decision. It recognizes ownership by device session key or verified email. Local sender and wake settings still apply. Sync may also carry `waitingMessages`, up to 50 records containing only an id and sender label. The menu bar opens the selected message in the signed-in browser for review. Account-wide mute, block and trust decisions use the recipient's board identity.
+
+Hook delivery, an explicit session inbox read and an idle wake use bounded, line-quoted message bodies. The relay asks the agent to obtain its user's authorization before taking action and to identify who requested it. After delivery, the next tool call in that turn produces a user-visible hook notice. The notice records sequence. Only the user and agent know whether a message motivated the call.
+
+### Device authentication
+
+The first completed pairing poll returns a 15-minute `deviceToken` and a separate `refreshToken`. Only the access token authenticates ordinary relay requests. The daemon sends `POST /relay/device/refresh` with its refresh credential as a bearer and JSON fields `deviceId` and `next` (a fresh 256-bit, hex-encoded credential with the prefix `wr_`). The hub rotates both credentials and returns `deviceToken` and `expiresInSec`. Concurrent requests can finish using the immediately preceding access token until its original expiry. Every check includes revocation and idle expiry.
+
+The daemon saves its successor before sending the exchange and can repeat that same predecessor/successor pair if the response is lost. The hub stores credential hashes. The daemon prefers the macOS login Keychain and otherwise writes an atomic mode-0600 file in the Workmesh config directory. `POST /relay/device/status` checks a refresh credential for its device without rotating it. Revoking a device from Settings immediately disables its access and refresh credentials, including pending retries.
+
+At hub upgrade, an existing pairing gets 15 minutes of ordinary access and up to 30 days for a single migration exchange, subject to the existing idle and revocation limits. Upgrade the daemon before the access window ends for continuous service. An older relay cannot renew access. An upgraded daemon paired to an older hub probes for refresh support periodically.

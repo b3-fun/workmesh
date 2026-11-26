@@ -68,6 +68,7 @@ export interface CoordSummary {
   available: boolean | null;
   holds: Array<{ session: string; name?: string; by: string; reason?: string; since: number }>;
   /** `via`: where the hub made the message from, when no paired machine sent it (`linear`: a Linear prompt). */
+  waitingMessages?: Array<{ id: string; sender: string }>;
   unread: Array<{
     id: string;
     session?: string;

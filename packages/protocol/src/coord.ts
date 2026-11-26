@@ -399,6 +399,9 @@ const viaAccept = z
   .transform((v): HubInboxVia | undefined => (v === undefined || v === null ? undefined : v === HUB_INBOX_VIA_LINEAR ? HUB_INBOX_VIA_LINEAR : "other"))
   .optional();
 
+const waitingMessage = z.object({ id: z.string().regex(/^wm_[0-9A-Z]{26}$/), sender: z.string().min(1).max(200) });
+const inboxRelease = z.enum(["own", "trusted", "accepted", "requested"]);
+
 /** A message waiting for one of this device's sessions. */
 export const hubInboxItemSchema = z.object({
   id: recordId,
@@ -419,6 +422,7 @@ export const hubInboxItemSchema = z.object({
    * message a relay or the board sent.
    */
   via: z.literal(HUB_INBOX_VIA_LINEAR).optional(),
+  release: inboxRelease.optional(),
 });
 export type HubInboxItem = z.infer<typeof hubInboxItemSchema>;
 
@@ -493,6 +497,7 @@ export const hubSyncResponseSchema = z.object({
   /** Files sessions edited in the last 10 minutes (one row per session and path, newest). */
   edits: z.array(hubRecentEditSchema).max(2000).optional(),
   /** Machines added to this person's account in the last 24 hours, other than this one (§46). Absent from an older hub. */
+  waitingMessages: z.array(waitingMessage).max(50).optional(),
   newDevices: z.array(hubNewDeviceSchema).max(HUB_SYNC_MAX_NEW_DEVICES).optional(),
 })
   .extend(hubSyncDelegateSchema.shape)
@@ -536,6 +541,7 @@ export const hubSyncAcceptSchema = z.object({
       thread: soft(thread),
       wake: soft(z.boolean()),
       via: viaAccept,
+      release: inboxRelease.optional().catch(undefined),
     }),
     500,
   ),
@@ -571,6 +577,7 @@ export const hubSyncAcceptSchema = z.object({
     2000,
   ),
   /** Absent stays absent (an older hub); a present list keeps the items it can read. */
+  waitingMessages: keepValid(waitingMessage, 50).optional(),
   newDevices: soft(keepValid(newDeviceAccept, HUB_SYNC_MAX_NEW_DEVICES)),
 })
   .extend(hubSyncDelegateAcceptSchema.shape)

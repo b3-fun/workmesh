@@ -23,6 +23,7 @@ import type { Config, HubConfig } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
 import { TeamPoller } from "../hub/team";
 import { CoordClient } from "../hub/coord";
+import { deviceFetch } from "../hub/device-auth";
 import { CoordHooks } from "./coord-hooks";
 import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
@@ -183,6 +184,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   // away from agents: this store is the only place the sync's list goes.
   const newDevices = new NewDeviceNotices({ file: newDevicesPath(), log });
 
+  let auth: { url: string; bootstrap: string; fetch: typeof fetch } | undefined;
   const startForwarder = (hub: HubConfig | undefined): void => {
     const previous = forwarder;
     forwarder = undefined;
@@ -195,13 +197,18 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     coord?.stop();
     coord = undefined;
     if (!hub) {
+      auth = undefined;
       // Disconnected: nothing to carry on with.
       removeStateFile(hubForwardStatePath());
       return;
     }
+    if (!auth || auth.url !== hub.url || auth.bootstrap !== hub.deviceToken) {
+      auth = { url: hub.url, bootstrap: hub.deviceToken, fetch: deviceFetch(hub) };
+    }
     const fwd = new HubForwarder({
       url: hub.url,
       token: hub.deviceToken,
+      fetchImpl: auth.fetch,
       rule: hub.project,
       // Handoffs with no repo run in Workmesh's own scratch dirs, shared so they show on the board (SPEC §31).
       includeDirs: [...hub.includeDirs, handoffsDir()],
@@ -227,6 +234,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     teamPoller = new TeamPoller({
       url: hub.url,
       token: hub.deviceToken,
+      fetchImpl: auth.fetch,
       log,
       // A hub that serves the team view reads v0.6 structure: subagents go as their own sessions.
       onAvailability: (available) => {
@@ -238,6 +246,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     coord = new CoordClient({
       url: hub.url,
       token: hub.deviceToken,
+      fetchImpl: auth.fetch,
       deviceId: hub.deviceId,
       person: hub.person?.name,
       personEmail: hub.person?.email,
@@ -404,7 +413,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       .heldMessages(nameOf)
       .slice(0, 50)
       .map((m) => ({ ...m, text: m.text.slice(0, 1000) }));
-    return { available: view.available, holds, unread, held };
+    return { available: view.available, holds, unread, held, waitingMessages: coord.waitingMessages };
   };
 
   // 0.12 (SPEC §41): what's newer, from the hub or npm; the menu bar's release; opt-in auto-update.

@@ -154,6 +154,7 @@ struct MenuContent: View {
 
         let newMachines = model.newDevices
         let holds = model.team?.coord?.holds ?? []
+        let waiting = model.team?.coord?.waitingMessages ?? []
         let allHeld = model.team?.coord?.held ?? []
         let held = Array(allHeld.prefix(Self.maxMessages))
         let unread = Array((model.team?.coord?.unread ?? []).prefix(Self.maxMessages))
@@ -167,6 +168,7 @@ struct MenuContent: View {
         var rowCount = needs.count + holds.count + unread.count + 2 * (handoffs.count + approvals.count)
             + 6 * handoffs.filter { model.openHandoffs.contains($0.id) }.count
             + 3 * newMachines.count
+            + min(waiting.count, Self.maxMessages)
             + 3 * held.count
             + groups.reduce(0) { n, g in n + (g.0 == .idle && !idleExpanded ? 0 : g.1.count) }
         switch area {
@@ -196,6 +198,14 @@ struct MenuContent: View {
             if !holds.isEmpty {
                 sectionHeader("On hold", count: holds.count > 1 ? "\(holds.count)" : nil, urgent: true)
                 ForEach(holds) { holdRow($0, hubNow: hubNow) }
+            }
+            if !waiting.isEmpty, let board = model.team?.boardLink {
+                sectionHeader("Messages to review", count: "\(waiting.count)", urgent: true)
+                ForEach(waiting.prefix(Self.maxMessages)) { message in
+                    Link("Review message from \(message.sender)", destination: board
+                        .appendingPathComponent("messages/review").appendingPathComponent(message.id))
+                        .padding(.horizontal, 8)
+                }
             }
             if !held.isEmpty {
                 sectionHeader("Held messages", count: "\(allHeld.count)", urgent: true)

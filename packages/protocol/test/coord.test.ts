@@ -302,6 +302,12 @@ describe("where the hub made an inbox item from (SPEC §23)", () => {
 
   it("is optional: a message a person or an agent sent carries none", () => {
     expect(hubSyncResponseSchema.parse(sync).inbox[0]?.via).toBeUndefined();
+    const item = { ...sync.inbox[0]!, release: "accepted" };
+    const waiting = [{ id: "wm_" + "A".repeat(26), sender: "Sam" }];
+    const current = hubSyncResponseSchema.parse({ ...sync, inbox: [item], waitingMessages: waiting });
+    expect(hubSyncAcceptSchema.parse(current).waitingMessages).toEqual(waiting);
+    expect(hubSyncAcceptSchema.parse(current).inbox[0]?.release).toBe("accepted");
+    expect(hubSyncAcceptSchema.parse({ ...sync, inbox: [{ ...item, release: "future" }] }).inbox[0]?.release).toBeUndefined();
     expect(hubSyncAcceptSchema.parse(sync).inbox[0]?.via).toBeUndefined();
     expect(hubSyncAcceptSchema.parse(withVia(null)).inbox[0]?.via).toBeUndefined();
   });

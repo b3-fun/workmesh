@@ -119,7 +119,7 @@ describe("a teammate's message is never read as Workmesh's own notice", () => {
     expect(block.text).toContain("Workmesh delivered a message from a teammate");
     expect(block.text).toContain('<workmesh-message from="An">\n│ what value does app.ts export right now?\n</workmesh-message>');
     const wake = wakeText([hubMsg])!;
-    expect(wake.text).toMatch(/^Workmesh woke this idle session for what follows\. Your person may be away/);
+    expect(wake.text).toMatch(/^Workmesh woke this idle session to read a message/);
     expect(wake.text).not.toContain("news about its own earlier work");
   });
 });

@@ -262,6 +262,17 @@ final class AppModel: ObservableObject {
         delegateCall("handoffs", "decline", id: id, done: "Declined")
     }
 
+    /// "Run here" for a handoff accepted somewhere else. It starts an agent
+    /// like Accept does, so it takes the same two steps: the first call opens
+    /// text the row can't show, the call after that confirms.
+    func runHandoffHere(_ h: DelegateHandoff) {
+        guard !h.hidesText || openHandoffs.contains(h.id) else {
+            openHandoffs.insert(h.id)
+            return
+        }
+        delegateCall("handoffs", "run", id: h.id, done: "Starting")
+    }
+
     /// "Show all" and "Show less" on a handoff row.
     func toggleHandoffText(_ id: String) {
         if openHandoffs.contains(id) {
@@ -335,7 +346,7 @@ final class AppModel: ObservableObject {
         guard !delegateAnswered.isEmpty else { return }
         let d = team?.delegate
         var open = Set<String>()
-        open.formUnion(d?.handoffs.filter(\.isOffered).map(\.id) ?? [])
+        open.formUnion(d?.handoffs.filter { $0.isOffered || $0.waitsToRun }.map(\.id) ?? [])
         open.formUnion(d?.approvals.filter(\.isPending).map(\.id) ?? [])
         // A held message stays marked while the daemon still lists it.
         open.formUnion(team?.coord?.held.map(\.id) ?? [])

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { HUB_DELEGATE_NOTE_MAX } from "@workmesh/protocol";
 import type { HubHandoffAccepted } from "@workmesh/protocol";
 import { QUOTE_MARK, cleanText, oneLine } from "../lib/untrusted";
@@ -67,6 +68,35 @@ export function handoffStart(
   };
 }
 
+/**
+ * What a person's accept covers: the task and context they read, and the repo and issue it is for. The hash is of the
+ * text as the hub sent it, before any cleaning, so a change nobody could see counts too.
+ */
+export function handoffHash(h: Pick<HubHandoffAccepted, "task" | "context" | "repo" | "issue">): string {
+  return createHash("sha256")
+    .update(JSON.stringify([h.task, h.context ?? null, h.repo ?? null, h.issue ?? null]))
+    .digest("hex");
+}
+
+/**
+ * Why an accepted handoff waits for this person's "run it here" on this machine. `board`: it was accepted on the
+ * board. `no-record`: the hub says it was accepted on this machine, and this machine has no record of that.
+ * `changed`: it was accepted here, and the hub now lists it with other text.
+ */
+export type RunHereWhy = "board" | "no-record" | "changed";
+
+const RUN_HERE: Record<RunHereWhy, string> = {
+  board: "accepted on the board: run it here?",
+  "no-record": "accepted, but this machine has no record of your accept: run it here?",
+  changed: "accepted, but its text changed after your accept: run it here?",
+};
+
+/** What the list and the menu bar say about a handoff that waits for "run it here". */
+export function runHereQuestion(why: RunHereWhy, capital = false): string {
+  const text = RUN_HERE[why];
+  return capital ? `${text[0]!.toUpperCase()}${text.slice(1)}` : text;
+}
+
 /** A task or context for a person to read: cleaned, or undefined when nothing visible is left. */
 export function readable(text: string | undefined): string | undefined {
   const clean = text === undefined ? "" : cleanText(text).trim();
@@ -94,8 +124,14 @@ export function cleanHandoff(h: HubHandoffAccepted): HubHandoffAccepted {
   };
 }
 
-/** One handoff as one line of the list. */
-export function handoffListLine(h: HubHandoffAccepted, o: { me?: string | undefined; runningHere: boolean }): string {
+/**
+ * One handoff as one line of the list. `runHere` is set for one that waits for this person's "run it here": the
+ * line says so where the status would be, and names the command.
+ */
+export function handoffListLine(
+  h: HubHandoffAccepted,
+  o: { me?: string | undefined; runningHere: boolean; runHere?: string | undefined },
+): string {
   const toMe = o.me !== undefined && h.to.person.toLowerCase() === o.me.toLowerCase();
   const who = toMe ? `from ${oneLine(h.from.person, 120)}` : `to ${oneLine(h.to.person, 120)}`;
   const where = [h.repo, h.issue].filter(Boolean).join(", ");
@@ -103,7 +139,8 @@ export function handoffListLine(h: HubHandoffAccepted, o: { me?: string | undefi
   const task = oneLine(h.task, LIST_TASK_MAX) || NOTHING_VISIBLE;
   const note = h.note ? ` (${oneLine(h.note, 120)})` : "";
   const more = hasMoreText(h) ? ` [more: workmesh handoffs show ${h.id}]` : "";
-  return `- ${h.id} · ${h.status} · ${who}${where ? ` · ${where}` : ""}${here}: ${task}${note}${more}`;
+  const run = o.runHere ? ` [workmesh handoffs run ${h.id}]` : "";
+  return `- ${h.id} · ${o.runHere ?? h.status} · ${who}${where ? ` · ${where}` : ""}${here}: ${task}${note}${more}${run}`;
 }
 
 /** Someone else's text in full: cleaned, every line behind the quote mark, long runs of blank lines made one. */
@@ -117,15 +154,16 @@ function marked(text: string | undefined): string {
 
 /**
  * One handoff in full: who it is from, repo, issue and status, then the whole task and the whole context. `start` is
- * the last line, for a handoff this person can accept.
+ * the last line, for a handoff this person can accept or run here. `runHere` stands where the status would be, for
+ * one that waits for this person's "run it here".
  */
 export function handoffView(
   h: HubHandoffAccepted,
-  o: { runningHere: boolean; ago?: string | undefined; start?: HandoffStart | undefined },
+  o: { runningHere: boolean; ago?: string | undefined; start?: HandoffStart | undefined; runHere?: string | undefined },
 ): string {
   const from = oneLine(h.from.person, 120);
   const agent = h.from.sessionName ? oneLine(h.from.sessionName, 120) : "";
-  const head = [`Handoff ${h.id}`, `${h.status}${o.runningHere ? ", running here" : ""}`, ...(o.ago ? [`sent ${o.ago} ago`] : [])];
+  const head = [`Handoff ${h.id}`, o.runHere ?? `${h.status}${o.runningHere ? ", running here" : ""}`, ...(o.ago ? [`sent ${o.ago} ago`] : [])];
   const lines = [
     head.join(" · "),
     `From:  ${from}${h.from.sessionKey ? ` (${agent ? `their agent ${agent}` : "one of their agents"})` : ""}`,

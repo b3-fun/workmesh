@@ -156,14 +156,16 @@ describe("Codex wake through `codex queue`", () => {
 
 describe("codex exec for a handoff", () => {
   it("runs under Codex's automatic reviewer (commits and pushes escalate) with network, else as before", () => {
-    const argv = codexExecArgs("/opt/codex", { dir: "/r/x-handoff-1", resultFile: "/s/result.txt", prompt: "do it", model: "gpt-6-luna", approveForMe: true });
+    // The prompt is not an argument: `-` tells codex exec to read it from standard input.
+    const argv = codexExecArgs("/opt/codex", { dir: "/r/x-handoff-1", resultFile: "/s/result.txt", model: "gpt-6-luna", approveForMe: true });
     expect(argv).toEqual([
       "/opt/codex", "exec", "--json", "-C", "/r/x-handoff-1", "--approve-for-me", "--skip-git-repo-check", "-o", "/s/result.txt",
       "-c", "sandbox_workspace_write.network_access=true",
       "-m", "gpt-6-luna",
-      "do it",
+      "-",
     ]);
-    const old = codexExecArgs("/opt/codex", { dir: "/s/work", resultFile: "/s/r", prompt: "p" });
+    const old = codexExecArgs("/opt/codex", { dir: "/s/work", resultFile: "/s/r" });
+    expect(old.at(-1)).toBe("-");
     expect(old).toContain("workspace-write");
     expect(old).not.toContain("--approve-for-me");
   });

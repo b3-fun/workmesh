@@ -102,7 +102,7 @@ function harness(opts: { settings?: Partial<MessageSettings>; file?: string } = 
     getSession: (k) => sessions.get(k),
     isShared: () => true,
     repoOf: () => undefined,
-    settings: () => ({ wake: true, accept: "never", customGates: [] }),
+    settings: () => ({ wake: true, accept: "never", runAccepted: "confirm", customGates: [] }),
     now: () => now,
   });
   const c = coord;

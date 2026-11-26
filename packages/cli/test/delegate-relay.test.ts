@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hubSyncAcceptSchema } from "@workmesh/protocol";
 import type { HubHandoffAccepted, HubSyncResponse } from "@workmesh/protocol";
 import { CoordClient } from "../src/hub/coord";
-import { CheckoutIndex, HandoffRunner, codexThreadFromLog, handoffPrompt, resultText } from "../src/daemon/handoff-runner";
+import { CheckoutIndex, HandoffRunner, codexThreadFromLog, handoffPrompt, handoffSessionName, resultText } from "../src/daemon/handoff-runner";
+import { secretEnvName } from "../src/daemon/handoff-env";
 import type { RunnerSettings } from "../src/daemon/handoff-runner";
 import { runCoordOp } from "../src/daemon/coord-ops";
 import type { CoordOpsDeps } from "../src/daemon/coord-ops";
@@ -173,6 +175,7 @@ describe("handoff runner (SPEC §31)", () => {
     expect(args[args.indexOf("--session-id") + 1]).toBe(start.sessionKey.slice("claude-code:".length));
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("auto");
     expect(args[args.indexOf("--model") + 1]).toBe("haiku");
+    expect(args[args.indexOf("--name") + 1]).toBe("handoff B3-7168 from An");
     expect(args).toContain(fs.realpathSync(wt));
     expect(args).toContain(`WORKMESH_HANDOFF=${HANDOFF.id}`);
     runner.poll();
@@ -184,6 +187,180 @@ describe("handoff runner (SPEC §31)", () => {
       note: "Ported it; PR 214 is up. Token [redacted] redacted.",
     });
     expect(runner.running().size).toBe(0);
+  });
+
+  it("the agent starts without the variables whose names look like secrets, except its own sign-in and handoffs.env", async () => {
+    fakeRepo(path.join(home, "code", "b3os-beta"), "git@github.com:b3-fun/b3os-beta.git");
+    const bin = path.join(home, "bin");
+    fs.mkdirSync(bin);
+    const envFile = path.join(home, "claude-env.txt");
+    // A stand-in `claude` that writes down the environment it was started with.
+    fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nenv > "${envFile}"\necho '{"type":"result","subtype":"success","result":"ok"}'\n`, { mode: 0o755 });
+    const hub = fakeHub([
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "started" } } },
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "done" } } },
+    ]);
+    // The daemon's own environment, as a daemon started from a shell would have it. Every value is made up.
+    const passes = { HOME: home, LANG: "en_US.UTF-8", NVM_DIR: "/home/sam/.nvm", JAVA_HOME: "/opt/jdk-21", SSH_AUTH_SOCK: "/tmp/ssh-agent.sock", AWS_PROFILE: "dev" };
+    const signIn = { ANTHROPIC_API_KEY: "value-anthropic-key", CLAUDE_CODE_OAUTH_TOKEN: "value-oauth" };
+    const listed = { MY_SERVICE_TOKEN: "value-listed" };
+    const secrets = {
+      GITHUB_TOKEN: "value-github",
+      NPM_TOKEN: "value-npm",
+      AWS_SECRET_ACCESS_KEY: "value-aws",
+      OPENAI_API_KEY: "value-openai",
+      PGPASSWORD: "value-pg",
+      STRIPE_KEY: "value-stripe",
+      WORKMESH_TOKEN: "value-workmesh",
+    };
+    const runner = new HandoffRunner({
+      coord: () => hub.coord,
+      settings: () => settings({ roots: [path.join(home, "code")], env: ["MY_SERVICE_TOKEN", "NOT_SET_ANYWHERE"] }),
+      checkouts: new CheckoutIndex(path.join(home, "checkouts.json")),
+      dir: path.join(home, "handoffs"),
+      which: (b) => (b === "claude" ? path.join(bin, "claude") : undefined),
+      pathEnv: async () => process.env.PATH ?? "/usr/bin:/bin",
+      env: () => ({ ...passes, ...signIn, ...listed, ...secrets, PATH: "/daemon/path", CLAUDE_CODE_SESSION_ID: "the-daemon-shell's" }),
+      git: async (args) => {
+        if (args[0] === "symbolic-ref") return { ok: true, stdout: "origin/main\n", stderr: "" };
+        if (args[0] === "worktree") fs.mkdirSync(args[4]!, { recursive: true });
+        return { ok: true, stdout: "", stderr: "" };
+      },
+    });
+    runner.run(HANDOFF);
+    await until(() => runner.list().length === 1);
+    const rec = runner.list()[0]!;
+    await until(() => fs.existsSync(rec.exitFile) && fs.readFileSync(rec.exitFile, "utf8").trim() !== "");
+    const child = Object.fromEntries(
+      fs
+        .readFileSync(envFile, "utf8")
+        .split("\n")
+        .filter((l) => l.includes("="))
+        .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+    ) as Record<string, string>;
+    // The tool chain, the agent tool's own sign-in and the listed name pass, with their values.
+    expect(child).toMatchObject({ ...passes, ...signIn, ...listed, WORKMESH_HANDOFF: HANDOFF.id });
+    expect(child.PATH).toBe(process.env.PATH ?? "/usr/bin:/bin");
+    // Nothing else whose name looks like a secret got through, nor the outer session's id.
+    for (const name of Object.keys(secrets)) expect(name in child, name).toBe(false);
+    expect(Object.keys(child).filter(secretEnvName).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "MY_SERVICE_TOKEN"]);
+    expect("CLAUDE_CODE_SESSION_ID" in child).toBe(false);
+    // The run's log opens with the names that were dropped, and holds none of their values.
+    const log = fs.readFileSync(rec.logFile, "utf8");
+    expect(log.split("\n")[0]).toBe(
+      "workmesh: 7 environment variables were not passed to the agent, because the name looks like a secret: " +
+        "AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, NPM_TOKEN, OPENAI_API_KEY, PGPASSWORD, STRIPE_KEY, WORKMESH_TOKEN. " +
+        "To pass one, add its name to handoffs.env in the Workmesh config.",
+    );
+    for (const value of Object.values(secrets)) expect(log.includes(value), value).toBe(false);
+    expect(fs.statSync(rec.logFile).mode & 0o777).toBe(0o600);
+    // The line doesn't get in the way of the run's result.
+    expect(resultText({ agent: "claude", logFile: rec.logFile })).toBe("ok");
+    runner.poll();
+    await until(() => hub.calls.length === 2);
+    expect(hub.calls[1]!.body).toMatchObject({ action: "done", id: HANDOFF.id, note: "ok" });
+  });
+
+  it("the prompt goes in on standard input, from a 0600 file: the command line holds none of the task", async () => {
+    const checkout = fakeRepo(path.join(home, "code", "b3os-beta"), "git@github.com:b3-fun/b3os-beta.git");
+    const bin = path.join(home, "bin");
+    fs.mkdirSync(bin);
+    const argvFile = path.join(home, "argv.txt");
+    const stdinFile = path.join(home, "stdin.txt");
+    // Stand-ins that write down their arguments and what they read on standard input. The codex one answers the
+    // runner's `exec --help` question first.
+    fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvFile}"\ncat > "${stdinFile}"\necho '{"type":"result","result":"ok"}'\n`, { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "codex"),
+      `#!/bin/sh\nif [ "$2" = "--help" ]; then echo "  --approve-for-me"; exit 0; fi\nprintf '%s\\n' "$@" > "${argvFile}"\ncat > "${stdinFile}"\n`,
+      { mode: 0o755 },
+    );
+    const task = "Port the KEK rotation to the new runner.\nKeep last week's records readable.";
+    const context = "Start from PR 212.";
+    const h = { ...HANDOFF, issue: undefined, task, context };
+    for (const agent of ["claude", "codex"] as const) {
+      fs.rmSync(argvFile, { force: true });
+      fs.rmSync(stdinFile, { force: true });
+      fs.rmSync(path.join(home, "handoffs"), { recursive: true, force: true });
+      const hub = fakeHub([{ status: 200, body: { ok: true, handoff: { ...h, status: "started" } } }]);
+      const spawned: string[][] = [];
+      const runner = new HandoffRunner({
+        coord: () => hub.coord,
+        settings: () => settings({ roots: [path.join(home, "code")], agent }),
+        checkouts: new CheckoutIndex(path.join(home, "checkouts.json")),
+        dir: path.join(home, "handoffs"),
+        which: (b) => path.join(bin, b),
+        pathEnv: async () => process.env.PATH ?? "/usr/bin:/bin",
+        env: () => ({ HOME: home }),
+        spawnImpl: ((cmd: string, args: string[], opts: object) => {
+          spawned.push([cmd, ...args]);
+          return spawn(cmd, args, opts);
+        }) as never,
+        git: async (args) => {
+          if (args[0] === "symbolic-ref") return { ok: true, stdout: "origin/main\n", stderr: "" };
+          if (args[0] === "worktree") fs.mkdirSync(args[4]!, { recursive: true });
+          return { ok: true, stdout: "", stderr: "" };
+        },
+      });
+      runner.run(h);
+      await until(() => runner.list().length === 1);
+      const rec = runner.list()[0]!;
+      await until(() => fs.existsSync(rec.exitFile) && fs.readFileSync(rec.exitFile, "utf8").trim() !== "");
+      const wt = `${checkout}-handoff-abc12345`;
+      const prompt = handoffPrompt(h, { repo: h.repo, branch: "workmesh/handoff-abc12345", base: "origin/main", dir: wt }, agent);
+      // The prompt keeps the task and context fenced: every line of the sender's text behind the quote mark.
+      expect(prompt).toContain("│ Port the KEK rotation to the new runner.\n│ Keep last week's records readable.");
+      expect(prompt).toContain("│ Start from PR 212.");
+      // The agent read the whole prompt on standard input.
+      expect(fs.readFileSync(stdinFile, "utf8"), agent).toBe(prompt);
+      // It came from a file in the run's own directory that only this user can read.
+      const promptFile = path.join(path.dirname(rec.logFile), "prompt.txt");
+      expect(fs.readFileSync(promptFile, "utf8"), agent).toBe(prompt);
+      expect(fs.statSync(promptFile).mode & 0o777, agent).toBe(0o600);
+      expect(fs.statSync(path.dirname(promptFile)).mode & 0o777, agent).toBe(0o700);
+      // Nothing of the task, the context or the prompt is in the process's arguments, as started and as received.
+      const argv = fs.readFileSync(argvFile, "utf8").trimEnd().split("\n");
+      for (const args of [spawned.flat(), argv]) {
+        const line = args.join("\n");
+        for (const text of ["KEK", "rotation", "records", "PR 212", "Workmesh handoff", "headless"]) expect(line.includes(text), `${agent}: ${text}`).toBe(false);
+      }
+      expect(spawned).toHaveLength(1);
+      if (agent === "claude") {
+        // No prompt argument after -p. The session's name has the id and the sender, since the handoff names no issue.
+        expect(argv.slice(0, 2)).toEqual(["-p", "--session-id"]);
+        expect(argv.slice(3)).toEqual(["--output-format", "json", "--permission-mode", "auto", "--name", "handoff abc12345 from An"]);
+      } else {
+        // `-` stands where the prompt was: codex exec reads it from standard input.
+        expect(argv).toEqual(["exec", "--json", "-C", wt, "--approve-for-me", "--skip-git-repo-check", "-o", path.join(path.dirname(rec.logFile), "result.txt"), "-c", "sandbox_workspace_write.network_access=true", "-"]);
+      }
+    }
+  });
+
+  it("a prompt file that can't be written fails the handoff on the hub, and nothing is started", async () => {
+    const hub = fakeHub([
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "started" } } },
+      { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "failed" } } },
+    ]);
+    // A directory stands where the prompt file would go.
+    fs.mkdirSync(path.join(home, "handoffs", "abc12345", "prompt.txt"), { recursive: true });
+    const runner = new HandoffRunner({
+      coord: () => hub.coord,
+      settings: () => settings(),
+      checkouts: new CheckoutIndex(path.join(home, "c.json")),
+      dir: path.join(home, "handoffs"),
+      which: () => "/bin/true",
+      spawnImpl: (() => {
+        throw new Error("must not spawn");
+      }) as never,
+    });
+    runner.run({ ...HANDOFF, repo: undefined });
+    await until(() => hub.calls.length === 2);
+    expect(hub.calls.map((c) => c.body)).toEqual([
+      { action: "start", id: HANDOFF.id, sessionKey: expect.stringMatching(/^claude-code:/) },
+      { action: "fail", id: HANDOFF.id, note: "couldn't write the prompt file on this machine" },
+    ]);
+    await until(() => runner.running().size === 0);
+    expect(runner.list()).toEqual([]);
   });
 
   it("doesn't run when another device won the start; at metadata the note says only how it ended", async () => {
@@ -239,6 +416,15 @@ describe("handoff runner (SPEC §31)", () => {
     expect(p).toContain("Linear issue: B3-7168");
     expect(p).toContain("on branch workmesh/handoff-abc12345, made from origin/main");
     expect(p).toContain("You run headless");
+  });
+
+  it("the session's name has the issue or the short id and the sender as a label, and no task text", () => {
+    expect(handoffSessionName(HANDOFF)).toBe("handoff B3-7168 from An");
+    expect(handoffSessionName({ ...HANDOFF, issue: undefined })).toBe("handoff abc12345 from An");
+    // A sender's name can't break the argument's quoting, open a tag or add a line.
+    const odd = { ...HANDOFF, from: { ...HANDOFF.from, person: 'Sam "the <b>second</b>"\nLee' } };
+    expect(handoffSessionName(odd)).toBe("handoff B3-7168 from Sam the bsecond/b Lee");
+    expect(handoffSessionName(HANDOFF)).not.toContain("KEK");
   });
 
   it("reads a codex thread id from exec --json's first event", () => {
@@ -487,11 +673,31 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
       "- h_abc12345 · offered · from An · b3-fun/b3os-beta, B3-7168: Port the KEK rotation to the new runner [more: workmesh handoffs show h_abc12345]",
     );
     const accepted: string[] = [];
-    const r = await runCoordOp({ op: "handoffs", args: { action: "accept", id: "h_abc12345" }, caller: PERSON }, deps(hub.coord, { onAccepted: (h) => accepted.push(h.id) }));
+    const r = await runCoordOp(
+      { op: "handoffs", args: { action: "accept", id: "h_abc12345" }, caller: PERSON },
+      // The hub's answer (accepted) and the handoff as this machine listed it (offered): the text the person read.
+      deps(hub.coord, { onAccepted: (h, by, seen) => accepted.push(`${h.id} ${h.status} by ${by}, listed as ${seen.status}`) }),
+    );
     expect(r.text).toBe("Accepted h_abc12345: this machine starts an agent for it.");
-    expect(accepted).toEqual(["h_abc12345"]);
+    expect(accepted).toEqual(["h_abc12345 accepted by cli, listed as offered"]);
     // The person's answer names no agent session.
     expect(hub.calls).toEqual([{ url: "https://hub.test/relay/handoffs", body: { action: "accept", id: "h_abc12345" } }]);
+  });
+
+  it("an accept covers what this machine listed: a handoff it doesn't list can't be accepted here", async () => {
+    const hub = fakeHub([{ status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "declined" } } }]);
+    sync(hub.coord, { handoffs: [{ ...HANDOFF, status: "offered" }] as never });
+    const accepted: string[] = [];
+    const d = deps(hub.coord, { now: () => T, onAccepted: (h) => accepted.push(h.id) });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "accept", id: "h_unlisted" }, caller: PERSON }, d)).toMatchObject({
+      ok: false,
+      text: "No handoff h_unlisted for you or from you in the hub's list (`handoffs` lists them).",
+    });
+    expect(hub.calls).toEqual([]);
+    expect(accepted).toEqual([]);
+    // Declining needs no reading first.
+    expect(await runCoordOp({ op: "handoffs", args: { action: "decline", id: "h_unlisted" }, caller: PERSON }, d)).toMatchObject({ ok: true, text: "Declined h_unlisted." });
+    expect(hub.calls.map((c) => c.body)).toEqual([{ action: "decline", id: "h_unlisted" }]);
   });
 
   it("a handoff is accepted or declined by a person: an agent caller is refused, and the hub hears nothing", async () => {
@@ -504,6 +710,8 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     const live = [{ key: "claude-code:s7", source: "claude-code", sessionId: "s7", cwd: "/w/b3os-beta", updatedAt: T }];
     const d = deps(hub.coord, {
       onAccepted: (h) => accepted.push(h.id),
+      runHereQuestion: () => "accepted on the board: run it here?",
+      onRunHere: (h) => accepted.push(`run ${h.id}`),
       listSessions: () => live as never,
       getSession: (k) => live.find((s) => s.key === k) as never,
       claudeSessions: () => new Map([["s7", { pid: 4242, sessionId: "s7" }]]),
@@ -518,7 +726,7 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
       ["a caller that names no surface", {}],
     ];
     for (const [what, caller] of agents) {
-      for (const action of ["accept", "decline"]) {
+      for (const action of ["accept", "decline", "run"]) {
         const r = await runCoordOp({ op: "handoffs", args: { action, id: "h_abc12345", note: "x" }, caller }, d);
         expect(r, `${action} from ${what}`).toEqual({
           ok: false,
@@ -596,6 +804,66 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     expect(hub.calls).toEqual([]);
   });
 
+  it("handoffs run: the person's \"run it here\" for a handoff accepted somewhere else, listed and shown as waiting", async () => {
+    const hub = fakeHub();
+    sync(hub.coord, {
+      handoffs: [
+        { ...HANDOFF, id: "h_board", status: "accepted", device: undefined },
+        { ...HANDOFF, id: "h_here", status: "accepted" },
+        { ...HANDOFF, id: "h_new", status: "offered" },
+      ] as never,
+    });
+    const ran: string[] = [];
+    const leads: string[] = [];
+    let agent: "claude" | undefined = "claude";
+    const d = deps(hub.coord, {
+      now: () => T,
+      // Stands in for the daemon's record: only h_board waits.
+      runHereQuestion: (h) => (h.id === "h_board" ? "accepted on the board: run it here?" : undefined),
+      onRunHere: (h, by) => ran.push(`${h.id} by ${by}`),
+      handoffStart: (_h, lead) => {
+        leads.push(lead);
+        return agent ? { agent, permissionMode: "auto", text: `${lead} a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta.` } : { text: "This Mac can't run it: no checkout of b3-fun/b3os-beta here." };
+      },
+    });
+    // The list says so where the status would be, and names the command.
+    const list = await runCoordOp({ op: "handoffs", args: {}, caller: PERSON }, d);
+    expect(list.text.split("\n")).toEqual([
+      "- h_board · accepted on the board: run it here? · from An · b3-fun/b3os-beta, B3-7168: Port the KEK rotation to the new runner [more: workmesh handoffs show h_board] [workmesh handoffs run h_board]",
+      "- h_here · accepted · from An · b3-fun/b3os-beta, B3-7168: Port the KEK rotation to the new runner [more: workmesh handoffs show h_here]",
+      "- h_new · offered · from An · b3-fun/b3os-beta, B3-7168: Port the KEK rotation to the new runner [more: workmesh handoffs show h_new]",
+    ]);
+    // The full view says it too, and what a yes starts.
+    const view = await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_board" }, caller: PERSON }, d);
+    const lines = view.text.split("\n");
+    expect(lines[0]).toBe("Handoff h_board · accepted on the board: run it here? · sent under a minute ago");
+    expect(lines.at(-1)).toBe("Running it here starts a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta.");
+    expect(view.data).toMatchObject({ canAccept: false, canRun: true });
+    expect((await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_here" }, caller: PERSON }, d)).data).toMatchObject({ canAccept: false, canRun: false });
+    expect((await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_new" }, caller: PERSON }, d)).data).toMatchObject({ canAccept: true, canRun: false });
+    // The yes: from the CLI and from the menu bar. No hub call is the op's own (the runner claims the start).
+    expect(await runCoordOp({ op: "handoffs", args: { action: "run", id: "h_board" }, caller: PERSON }, d)).toMatchObject({
+      ok: true,
+      text: "Running h_board here: this machine starts an agent for it.",
+    });
+    await runCoordOp({ op: "handoffs", args: { action: "run", id: "h_board" }, caller: { client: "menubar" } }, d);
+    expect(ran).toEqual(["h_board by cli", "h_board by menubar"]);
+    expect(hub.calls).toEqual([]);
+    // One that doesn't wait here, one the hub doesn't list, a call with no id, and a machine that can't run it.
+    expect(await runCoordOp({ op: "handoffs", args: { action: "run", id: "h_new" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "Workmesh: h_new isn't waiting to run on this machine." });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "run", id: "h_nope" }, caller: PERSON }, d)).toMatchObject({
+      ok: false,
+      text: "No handoff h_nope for you or from you in the hub's list (`handoffs` lists them).",
+    });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "run" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "`handoffs` run needs `id` (`handoffs` lists them)." });
+    agent = undefined;
+    expect(await runCoordOp({ op: "handoffs", args: { action: "run", id: "h_board" }, caller: PERSON }, d)).toMatchObject({
+      ok: false,
+      text: "This Mac can't run it: no checkout of b3-fun/b3os-beta here.",
+    });
+    expect(ran).toHaveLength(2);
+  });
+
   it("handoffs show: no start line for one this person can't accept; an id the hub didn't list is said plainly", async () => {
     const hub = fakeHub();
     sync(hub.coord, {
@@ -617,7 +885,7 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
       text: "No handoff h_nope for you or from you in the hub's list (`handoffs` lists them).",
     });
     expect(await runCoordOp({ op: "handoffs", args: { action: "show" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "`handoffs` show needs `id` (`handoffs` lists them)." });
-    expect(await runCoordOp({ op: "handoffs", args: { action: "take" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "`handoffs` takes action list, show, accept or decline." });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "take" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "`handoffs` takes action list, show, accept, decline or run." });
   });
 
   it("a sync older than 5 s is refreshed first (a person at the terminal while no shared session is live)", async () => {

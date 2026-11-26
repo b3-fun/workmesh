@@ -442,10 +442,11 @@ struct DelegateState: Decodable {
         approvals = c.lossy(DelegateApproval.self, .approvals)
     }
 
-    /// Offered to me (oldest first), then the ones running on this Mac.
+    /// Offered to me (oldest first), then the ones accepted somewhere else
+    /// that wait for "Run here", then the ones running on this Mac.
     var shownHandoffs: [DelegateHandoff] {
         let offered = handoffs.filter(\.isOffered).sorted { ($0.createdAt ?? 0) < ($1.createdAt ?? 0) }
-        return offered + handoffs.filter(\.runningHere)
+        return offered + handoffs.filter(\.waitsToRun) + handoffs.filter(\.runningHere)
     }
 
     /// Pending ones I may decide or this Mac's agents asked, oldest first.
@@ -464,9 +465,13 @@ struct DelegateHandoff: Decodable, Identifiable {
     /// More from the sender: links, decisions, where to start (absent: none,
     /// or an older daemon).
     let context: String?
-    /// What Accept starts on this Mac, in the daemon's words (offered
-    /// handoffs; absent from an older daemon).
+    /// What Accept (or "Run here") starts on this Mac, in the daemon's words
+    /// (absent from an older daemon).
     let onAccept: HandoffStart?
+    /// Set for a handoff that was accepted somewhere else, such as on the
+    /// board: the daemon's question ("Accepted on the board: run it here?").
+    /// This Mac starts it only after the person's "Run here".
+    let runHere: String?
     let repo: String?
     let issue: String?
     /// offered | accepted | started | done | failed | declined (kept as sent).
@@ -476,6 +481,9 @@ struct DelegateHandoff: Decodable, Identifiable {
 
     /// Waiting for my Accept or Decline.
     var isOffered: Bool { status == "offered" && !runningHere }
+
+    /// Accepted somewhere else, and waiting for my "Run here" on this Mac.
+    var waitsToRun: Bool { status == "accepted" && !runningHere && runHere != nil }
 
     /// "from An · b3-fun/b3os-beta · B3-7168".
     var origin: String { ["from \(from)", repo, issue].compactMap { $0 }.joined(separator: " · ") }
@@ -490,7 +498,7 @@ struct DelegateHandoff: Decodable, Identifiable {
         context != nil || task.count > Self.rowTaskMax || task.contains(where: \.isNewline)
     }
 
-    private enum K: String, CodingKey { case id, from, fromSession, task, context, onAccept, repo, issue, status, createdAt, runningHere }
+    private enum K: String, CodingKey { case id, from, fromSession, task, context, onAccept, runHere, repo, issue, status, createdAt, runningHere }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -501,6 +509,7 @@ struct DelegateHandoff: Decodable, Identifiable {
         self.task = task
         context = c.text(.context)
         onAccept = c.lenient(HandoffStart.self, .onAccept)
+        runHere = c.text(.runHere)
         from = c.text(.from) ?? "A teammate"
         fromSession = c.text(.fromSession)
         repo = c.text(.repo)

@@ -97,7 +97,7 @@ All relay endpoints live under `/relay/*`, JSON bodies, max 256 KB per request.
 → `{ "code": "ABCD-1234", "deviceId": "dev_<ulid>", "pollSecret": "<32 hex>", "verifyUrl": "https://workmesh.b3os.org/pair?code=ABCD-1234", "expiresInSec": 600 }`
 
 The person opens `verifyUrl` (Access login), sees "Connect *seans-mac-studio* to B3 as *Sean*?", and approves:
-`POST /api/pair/approve { "code": "ABCD-1234" }` (Access-authenticated).
+`POST /api/pair/approve { "code": "ABCD-1234", "confirmRemote"?: true }` (Access-authenticated).
 
 **The relay opens only the hub's own link** (B3-7237). The link is text from the hub's answer, and opening it hands
 it to the system's `open` command. So the relay checks it first (`workmesh hub connect`, `checkPairLink`):
@@ -111,6 +111,18 @@ it to the system's `open` command. So the relay checks it first (`workmesh hub c
 
 Under every code the relay prints one line: approve only a code you see in your own terminal.
 
+**The hub compares the two networks** (B3-7237). A pairing can be started by anyone, so a link with a code in it may
+come from someone else. The hub remembers the network a pairing started on and compares it with the approver's:
+
+- `GET /api/pair/:code` adds `sameNetwork: boolean` and `where: string | null`, a short place and network name for
+  the request. The address itself is never sent.
+- On the same network the page approves in one step, as before.
+- On another network the page says so, shows `where`, drops a code that came in the link and asks the person to type
+  the code from their own terminal and to confirm they started it themselves. `POST /api/pair/approve` then needs
+  `confirmRemote: true` beside the code. Without it the hub answers `403 { error, reason: "other_network", where }`.
+- A person's own request can read as another network (a VPN, or IPv4 in the terminal and IPv6 in the browser). They
+  get the longer flow; nothing is refused.
+
 `POST /relay/pair/poll` `{ "deviceId", "pollSecret" }`
 → `{ "status": "pending" | "complete" | "expired", "deviceToken"?: "bp_…", "person"?: { "email", "name" }, "project"?: { "id": "b3", "name": "B3", "include": {…}, "issueKeys": [...] } }`
 `deviceToken` is returned exactly once, on the first `complete` poll. Codes expire after 10 minutes. Rate limit pair
@@ -119,7 +131,7 @@ starts to 10 per IP per hour (`429` with `Retry-After`).
 Errors: poll with an unknown `deviceId` or a wrong `pollSecret` → `401`. Approve: unknown code `404`, already approved
 by someone else `409`, expired `410`. A code approved in time delivers its token on the next poll. The approve page
 reads the pairing with `GET /api/pair/:code` → `{ code, machine, client, status: "pending" | "approved" | "expired",
-expiresAt, approvedBy }`.
+expiresAt, approvedBy, sameNetwork, where }`.
 
 **A machine paired again retires its older pairing** (0.11.1). When a person completes a pairing for a machine name
 they already have a device for, the hub revokes that older device: its open sessions end, it leaves the board, and its
@@ -1053,8 +1065,8 @@ command run; a waiter that can't reach the daemon ends.
   for them. (A cooperative guard rail, not a sandbox: anything running as the person can call the hub.)
 - **Handoffs** (`daemon/delegate.ts`, `daemon/handoff-runner.ts`, `daemon/handoff-text.ts`). MCP `handoff { to, task,
   repo?, issue?, context? }` (repo: the calling session's, by default; `to: "me"` is the person themselves) and
-  `handoffs` (the list only); CLI `workmesh handoff`, `handoffs [list | show <id> | accept <id> | decline <id>]`,
-  `handoffs policy`, `roots`. Task and context are redacted (§9).
+  `handoffs` (the list only); CLI `workmesh handoff`, `handoffs [list | show <id> | accept <id> | decline <id> | run
+  <id>]`, `handoffs policy`, `roots`. Task and context are redacted (§9).
   - **Only a person accepts or declines** (B3-7234). Accepting starts an agent on their machine, so the answer is
     not an agent's to give. The daemon takes an accept or a decline only from a person's own surfaces: the CLI and
     the menu bar app (`caller.client` is `cli` or `menubar`). It must also read no agent session behind the call
@@ -1080,18 +1092,62 @@ command run; a waiter that can't reach the daemon ends.
   - The list keeps one line per handoff, with 160 characters of the task. A line ends with `[more: workmesh handoffs
     show <id>]` when the handoff has a longer task or a context.
 
-  The policy `handoffs.accept` in config: `auto-self` (absent = this): a handoff the person sent
-  themselves is accepted by a machine of theirs at once (the sending machine waits 20 s so another of their machines
-  may take it first), anyone else's waits for the person; `ask`: every handoff waits; `never`: this machine runs
-  none. Accepted for this device (`device`), or accepted on the board with no device, the runner `start`s it (the
-  hub's first-start-wins decides between the person's machines) and runs it: it finds a main checkout of `repo` (the
+  The policy `handoffs.accept` in config: `ask` (absent = this, since B3-7235): every handoff waits for the person,
+  their own too. `auto-self`: a handoff the person sent themselves is accepted by a machine of theirs at once (the
+  sending machine waits 20 s so another of their machines may take it first), anyone else's waits for the person.
+  It trusts every machine and token of the person: each of them, and any agent running there, can start an agent on
+  this machine with no click. `never`: this machine runs none.
+  - **This machine starts only what was accepted on it** (B3-7235). The hub listing a handoff as accepted is not
+    enough: the hub can be wrong, and a board session can be used by someone else. The relay keeps a record of the
+    handoff ids that were accepted here: by the person at this machine's terminal or in its menu bar, or by their
+    `auto-self` policy here. It starts a handoff only when its id is in that record.
+  - The record is a file in the state dir (`handoffs-accepted.json`, 0600). It holds each id with when and where it
+    was accepted, never a handoff's text. It keeps 500 ids and survives a daemon restart. An id goes when the hub
+    stops listing its handoff.
+  - An accept covers the text that was read. Beside each id the record keeps a SHA-256 hash of the task, the
+    context, the repo and the issue, as this machine listed them when the handoff was accepted. The relay starts a
+    handoff only when the one the hub lists still has that hash. One listed with other text waits again, as
+    "accepted, but its text changed after your accept: run it here?", and the daemon's log says so. An entry without
+    a hash, from a record written before hashes were kept, matches whatever is listed under its id.
+  - So the daemon takes an accept only for a handoff it lists. For one it doesn't list, it answers "No handoff <id>
+    for you or from you in the hub's list" and makes no hub call.
+  - A handoff accepted somewhere else is not started. That is one accepted on the board, or one the hub lists as
+    accepted for this machine while the record has no such id. The list and the menu bar show it as "accepted on the
+    board: run it here?". The person confirms at a terminal (`workmesh handoffs run <id>`): the whole handoff, the
+    line about what starts, then "Run it here and start an agent? [y/N]". No option skips the question, and no
+    terminal means no start. The menu bar confirms with the same two steps as Accept. A confirm puts the id in the
+    record. An agent can't confirm: the daemon answers it with the same refusal as for an accept.
+  - One accepted on another of the person's machines (`device` is that machine) is that machine's to run. It is not
+    offered here.
+  - The config key `handoffs.runAccepted` is `confirm` when absent. With `auto`, this machine starts any handoff the
+    hub lists as accepted for its person, as before B3-7235. That trusts the hub's word.
+  - **The agent starts with fewer secrets** (B3-7235). It gets the daemon's environment without the variables whose
+    name says the value is a secret. The redaction rules' reading of a name decides (§9): the last word counts, so
+    `GITHUB_TOKEN` and `AWS_SECRET_ACCESS_KEY` go, and `PATH`, `NVM_DIR` and `SSH_AUTH_SOCK` stay.
+  - What the agent tool signs in with is kept. For Claude Code that is `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
+    and `CLAUDE_CODE_OAUTH_TOKEN`. It is also the AWS or Google credentials when `CLAUDE_CODE_USE_BEDROCK` or
+    `CLAUDE_CODE_USE_VERTEX` is set, and `ANTHROPIC_FOUNDRY_API_KEY` when `CLAUDE_CODE_USE_FOUNDRY` is set. For
+    Codex it is `OPENAI_API_KEY`. Every name in the config key `handoffs.env` is kept too.
+  - The run's log (`agent.log`) opens with the names that were dropped, never their values.
+  - The permission mode default stays `auto` (`handoffs.permissionMode`). `acceptEdits` can't commit in a headless
+    run, and the person reads the whole handoff and sees the mode before they accept.
+
+  For a handoff in the record, accepted for this device (`device`) or on the board with no device, the runner
+  `start`s it (the hub's first-start-wins decides between the person's machines) and runs it: it finds a main
+  checkout of `repo` (the
   shared repos this machine's sessions worked in, remembered in `checkouts.json`, and repos up to two levels under
   `handoffs.roots`), makes `git worktree add -b workmesh/handoff-<id> <checkout>-handoff-<id> <origin's default
   branch>` (`handoffs.worktree: false` runs in the checkout), and starts the agent detached, wrapped in `sh` so its
-  exit code lands in a file: `claude -p <prompt> --session-id <uuid chosen before start> --output-format json
-  --permission-mode <handoffs.permissionMode, default auto> --name "handoff: …"`, or `codex exec --json -C <dir> --approve-for-me -o <file> <prompt>`
-  (§42) (its thread id, read from the first event, goes to the hub as a second
-  `start`), each with `--model` / `-m <handoffs.model>` when the person set one (e.g. `haiku`). A handoff with no repo runs in a scratch dir under the state dir, which is shared (it is Workmesh's own
+  exit code lands in a file: `claude -p --session-id <uuid chosen before start> --output-format json
+  --permission-mode <handoffs.permissionMode, default auto> --name "handoff <issue or id> from <person>"`, or
+  `codex exec --json -C <dir> --approve-for-me -o <file> -` (§42) (its thread id, read from the first event, goes to
+  the hub as a second `start`), each with `--model` / `-m <handoffs.model>` when the person set one (e.g. `haiku`).
+  The prompt, with the sender's task and context as marked lines (§23), is not on the command line, where any
+  process on the machine could read it in the process list (B3-7235). The runner writes it to `prompt.txt` in the
+  run's own directory (0600) and the agent reads it on
+  standard input: `claude -p` does so when it has no prompt argument, and `codex exec` when the argument is `-`. The
+  session's name carries no task text either.
+  A handoff with no repo runs in a scratch dir under the state dir, which is shared (it is Workmesh's own
   and holds nothing else). At exit the runner sends `done` (exit 0) or `fail`, with the agent's last words as the
   note at the conversation level (redacted, ≤ 500) and only how it ended at `metadata`. Runs survive a daemon
   restart (`handoffs/running.json`, 0600), at most `handoffs.maxRunning` (2) at once, stopped after
@@ -1148,11 +1204,16 @@ command run; a waiter that can't reach the daemon ends.
   - A handoff offered to the person also says what Accept starts: `onAccept: { agent?: "claude" | "codex",
     permissionMode?, text }`. The line to show is `text`. Example: "Starts a Claude Code agent on this Mac in auto
     mode, in a new worktree of b3-fun/b3os-beta." The `agent` is absent when this machine can't run the handoff.
-  - These fields are additive: an older app shows two lines of `task` as before.
+  - A handoff that waits for "run it here" is listed too, with `status: "accepted"`, the question as `runHere`
+    ("Accepted on the board: run it here?") and the same `onAccept` line (B3-7235).
+  - These fields are additive: an older app shows two lines of `task` as before, and does not show a handoff that
+    waits for "run it here".
   - Workmesh.app shows a task of up to 80 characters whole, with the `onAccept` line under it. A longer task, or a
     handoff with a context, shows two lines and "Show all". That opens the whole task and context in a box that
     scrolls and whose text can be selected. On such a row the first click on Accept opens the box and accepts
     nothing. The button then reads "Accept and run", and the next click accepts.
+  - A handoff that waits for "run it here" shows the `runHere` question and one button, "Run here" (B3-7235). It
+    takes the same two steps: while the row can't show the whole text the button reads "Run here…" and opens it.
 - **`workmesh init <hub-url>`.** Hooks and MCP (as `setup --hooks-only`), the daemon (the service when it can,
   restarted on this build; else in the background), and `hub connect` unless this machine is paired with that hub and
   the hub still accepts its token (`--repair` pairs again; `--share` sets the level either way).
@@ -1440,7 +1501,8 @@ relays paired with a local hub as two people) found what follows. No wire change
   Codex unloaded (its TUI closed a minute ago) has ended: the message waits in the inbox and is delivered when the
   person resumes the thread (`codex resume <id>` fires `SessionStart`, the daemon queues it, the thread answers).
 - **Handoff runs.** `codex exec --json -C <dir> --approve-for-me --skip-git-repo-check -o <file> -c
-  sandbox_workspace_write.network_access=true [-m <model>] <prompt>`, plus a line in the prompt that `git commit` and
+  sandbox_workspace_write.network_access=true [-m <model>] -` (the prompt on standard input, §31; from Codex's
+  source, not run against a real Codex), plus a line in the prompt that `git commit` and
   `git push` need escalated sandbox permissions. Under `-s workspace-write` with approvals off a run edited files but
   never committed: Codex keeps the repo's git metadata read-only, a worktree's gitdir included (even when added with
   `--add-dir`), and gave it no network to push. `--approve-for-me` keeps that sandbox and sends each escalation to

@@ -408,6 +408,10 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
   current Claude models (122 sessions) led to this: 11 of 14 ran a harmless-looking command for a teammate and sent
   the output back, with their person away.
 
+- 11-26 Handoffs: the default policy is `ask`, so every handoff waits for its person, their own too. Under the old
+  default, `auto-self`, a self handoff let one agent start another with no person looking. `auto-self` stays as a
+  choice a person makes (B3-7235).
+
 - 11-26 New machines: each relay tells its person, once, when another machine joins their account. The notice is for
   the person only: the daemon log, `status`, `doctor`, and the menu bar with a macOS notification, never an agent's
   context or inbox. It stays up for 24 hours, or until dismissed in the menu bar (SPEC §46, §47; B3-7237). Before, a

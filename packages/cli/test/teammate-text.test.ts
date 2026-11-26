@@ -365,7 +365,7 @@ describe("the daemon's own notices", () => {
       now: () => T,
       onSync: (n, p) => d?.onSync(n, p),
     });
-    d = new Delegate({ coord: () => coord, getSession: () => undefined, isShared: () => true, repoOf: () => undefined, settings: () => ({ wake: true, accept: "never", customGates: [] }), now: () => T });
+    d = new Delegate({ coord: () => coord, getSession: () => undefined, isShared: () => true, repoOf: () => undefined, settings: () => ({ wake: true, accept: "never", runAccepted: "confirm", customGates: [] }), now: () => T });
     const sync = (status: string, note?: string) =>
       coord.apply(
         hubSyncAcceptSchema.parse({

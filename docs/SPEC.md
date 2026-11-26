@@ -728,8 +728,9 @@ read and drops the rest one by one):
       never passes for it, and a sender the hub sent with no email never matches it.
     - Any other entry is a display name. It stands for the one person the last sync's roster lists under that name.
       This device's own person counts too, also when the roster leaves them out. The sender is then matched against
-      that person by §49's rule: by email when both have one, else by display name. A name the roster does not list
-      stands for nobody.
+      that person by §49's stricter check. When the roster has that person's email, the sender must carry the same
+      email, so a message the hub made from a Linear prompt never passes on a name alone. Only when the roster has
+      no email for them do the display names decide. A name the roster does not list stands for nobody.
     - A name that two or more people share, told apart by email, stands for nobody. The daemon log says so once per
       list and name. It names their emails, so the person can write one of them instead. Entries with no email are
       not told apart from each other, as with a hub that sends none, so there the name decides, as before.
@@ -1801,8 +1802,6 @@ reader, §14).
   - Leases, claims and recent edits (§23): "your own other session" in a lease refusal, the open-claims line at a
     session's start, and whose recent edit gets a heads-up.
   - Replies (§23): whether the person a message goes to is the one whose agent wrote first.
-  - Lists of people (§23): whether a message's sender is the one person a display name in `messages.wake` or
-    `messages.from` stands for.
 - **What the relay does without asking** (`surelyMe`). The `auto-self` policy accepts, with no click, only a handoff
   this person sent themselves. It decides that by a stricter check:
   - Once the last sync carried `me.email`, an entry with no email is someone else. One with an email is this person
@@ -1812,9 +1811,10 @@ reader, §14).
   - The same check decides whether a message is the person's own (§23). An own message may wake a session, is never
     held, and passes `messages.from: self`. So a message from a teammate with the same display name follows a
     teammate's rules.
-  - It also decides whether a message a session receives is a reply to a person the session wrote to (§23,
-    `replies`). There, the email the relay has for that person takes the place of `me.email`. A reply may wake a
-    session without asking the person.
+  - It also decides two things about a message a session receives (§23). Is it a reply to a person the session wrote
+    to (`replies`)? Is its sender the person a name in `messages.wake` or `messages.from` stands for? There, the
+    email the relay has for that person takes the place of `me.email`. Both let a message wake a session or reach
+    it without asking the person.
 - **Everything else keeps the rule above.** An email the hub leaves out never makes the relay stop seeing its own
   lease, claim or gate policy as its own.
 - **A name a person or an agent typed** (`send`, §23; `handoff`, §31). The relay looks it up in the last sync's

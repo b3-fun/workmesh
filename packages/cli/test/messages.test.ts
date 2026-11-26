@@ -862,8 +862,8 @@ describe("a list of people in `messages.wake` or `messages.from`, on a hub that 
       const r = through(key, ["sam lee"], { roster: roster(), inbox });
       expect(r.ids, key).toEqual(["wm_sam"]);
       expect(r.said(), key).toEqual([]);
-      // A sender the hub sent with no email: the names decide, as with a hub that sends none.
-      expect(through(key, ["Sam Lee"], { roster: roster(), inbox: [fromSam("wm_none", null)] }).ids, key).toEqual(["wm_none"]);
+      // A sender the hub sent with no email does not pass for a person whose email the roster has.
+      expect(through(key, ["Sam Lee"], { roster: roster(), inbox: [fromSam("wm_none", null)] }).ids, key).toEqual([]);
       // A name the roster does not list stands for nobody.
       const kim = message({ id: "wm_kim", from: { person: "Kim", email: "kim@example.com" } });
       expect(through(key, ["Kim"], { roster: roster(), inbox: [kim] }).ids, key).toEqual([]);
@@ -895,6 +895,13 @@ describe("a list of people in `messages.wake` or `messages.from`, on a hub that 
     expect(r.said()).toEqual([
       'messages.wake: "An" matches 2 people on this team (an@example.org; an@example.com), so it lets none of them through. Write one of those emails instead of the name.',
     ]);
+  });
+
+  it("a message the hub made from a Linear prompt, with a listed person's name and no email, passes no list", () => {
+    for (const key of KEYS) {
+      const linear = message({ id: "wm_lin", from: { person: "Sam Lee" }, via: "linear" });
+      expect(through(key, ["Sam Lee"], { roster: roster(), inbox: [linear, fromSam("wm_sam")] }).ids, key).toEqual(["wm_sam"]);
+    }
   });
 
   it("a GitHub login lets nobody through: a machine reports its own person's login, so anyone can claim one", () => {

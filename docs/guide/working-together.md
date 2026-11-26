@@ -296,8 +296,9 @@ a teammate's, so it wakes, is held or is dropped by a teammate's rules. A reply 
 the person that session wrote to, when Workmesh knows it.
 
 The same goes for the lists of people in `messages.wake` and `messages.from`. An email there names one person for
-sure. A name stands for the one person on the team who has it. When two teammates share it, it lets neither
-through, and the daemon log says so once:
+sure. A name stands for the one person on the team who has it. When Workmesh knows that person's email, a message
+must carry it to pass, so a message made from a Linear prompt does not pass on the name alone. When two teammates
+share a name, it lets neither through, and the daemon log says so once:
 
 ```text
 messages.wake: "Sam Lee" matches 2 people on this team (sam@example.com; sam.lee@example.org), so it lets none of

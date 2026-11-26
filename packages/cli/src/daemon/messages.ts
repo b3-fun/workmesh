@@ -529,9 +529,11 @@ function sender(person: string, via: "linear" | "other" | undefined): string {
  * - An entry with an `@` is an email. It matches the sender's email only, so a display name that looks like an email
  *   never passes for it, and a sender the hub sent with no email never matches one.
  * - Any other entry is a display name. It stands for the one person the last sync's roster lists under that name,
- *   this machine's own person included, and that person is matched with `samePerson`. A name the roster does not
- *   list stands for nobody. A name two people share stands for nobody either, and `ambiguous` hears of it with
- *   their emails, so the person can write the email instead.
+ *   this machine's own person included. The sender is matched with that person by the strict check (`surelyMe`):
+ *   when the roster has their email, the sender must carry the same one, so a message the hub made from a Linear
+ *   prompt never passes on a name alone. When the roster has no email for them, the names decide.
+ * - A name the roster does not list stands for nobody. A name two people share stands for nobody either, and
+ *   `ambiguous` hears of it with their emails, so the person can write the email instead.
  *
  * GitHub logins are not read: a machine reports its own person's login, so anyone can claim one.
  */
@@ -551,7 +553,7 @@ export function namesPerson(
       continue;
     }
     const one = onePerson(entry, st?.roster, me, ambiguous);
-    if (one && samePerson(one, sender)) return true;
+    if (one && surelyMe(one, sender)) return true;
   }
   return false;
 }

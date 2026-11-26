@@ -80,6 +80,17 @@ starts on a teammate's say-so.
 On 11-25 Sean's agent messaged An; it reached An's agent at its next tool call and the reply came back 26 seconds
 later.
 
+A message can also start in Linear. When someone writes a prompt on an issue your agent claimed, the hub turns it into
+a message. Its opening line says so:
+
+```text
+<workmesh-message from="Sean" via="linear">
+```
+
+Linear names the author of such a message. No machine of yours signed in to send it. So your machine treats it as a
+teammate's message, even when the name on it is your own. It wakes a session, is held or is dropped by the same rules
+as any teammate's message.
+
 ### Messages held for you
 
 A session that runs with permission prompts skipped acts on what it reads before you see it. So a teammate's message

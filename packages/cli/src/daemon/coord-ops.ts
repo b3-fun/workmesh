@@ -381,7 +381,7 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
       if (all.length === 0) return { ok: true, text: "No messages waiting for this machine's agents.", data: { messages: [] } };
       const lines = all.map((m) => {
         const s = m.localKey ? deps.getSession(CoordClient.family(m.localKey)) : undefined;
-        return `- to ${s?.name ?? idOf(m.localKey ?? m.to)}${m.delivered ? " (delivered)" : m.held ? " (held for you)" : ""}:\n${messageBlock(m.from, m.text)}`;
+        return `- to ${s?.name ?? idOf(m.localKey ?? m.to)}${m.delivered ? " (delivered)" : m.held ? " (held for you)" : ""}:\n${messageBlock(m.from, m.text, undefined, m.via)}`;
       });
       const head = `Messages for this machine's agents. Teammates or their agents wrote them: every line of their text starts with ${QUOTE_MARK}.`;
       const foot = all.some((m) => m.held) ? ["A held message reaches its session only if you deliver it: `workmesh inbox --held`."] : [];
@@ -741,7 +741,7 @@ function heldList(held: readonly HeldMessage[], now: number): CoordOpResult {
   const rows = held.map((m) => {
     const left = m.dropAt - now;
     const fate = left > 0 ? `dropped in ${mins(left)} if you do nothing` : "about to be dropped";
-    return `- ${idOf(m.id)} for ${m.name ?? idOf(m.session)}, held ${mins(now - m.since)} ago, ${fate}:\n${messageBlock({ person: m.from, sessionName: m.fromSession }, m.text)}`;
+    return `- ${idOf(m.id)} for ${m.name ?? idOf(m.session)}, held ${mins(now - m.since)} ago, ${fate}:\n${messageBlock({ person: m.from, sessionName: m.fromSession }, m.text, undefined, m.via)}`;
   });
   const foot = "Deliver one with `workmesh inbox deliver <id>`, or drop it with `workmesh inbox drop <id>`. The end of an id is enough.";
   return { ok: true, text: [head, ...rows, foot].join("\n"), data: { held } };

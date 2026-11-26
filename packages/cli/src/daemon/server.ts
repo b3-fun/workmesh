@@ -67,13 +67,35 @@ export interface CoordSummary {
   /** null: not asked yet; false: this hub has no coordination. */
   available: boolean | null;
   holds: Array<{ session: string; name?: string; by: string; reason?: string; since: number }>;
-  unread: Array<{ id: string; session?: string; name?: string; from: string; fromSession?: string; text: string; ts: number; delivered: boolean }>;
+  /** `via`: where the hub made the message from, when no paired machine sent it (`linear`: a Linear prompt). */
+  unread: Array<{
+    id: string;
+    session?: string;
+    name?: string;
+    from: string;
+    fromSession?: string;
+    via?: "linear" | "other";
+    text: string;
+    ts: number;
+    delivered: boolean;
+  }>;
   /**
    * Teammates' messages held for the person (SPEC §23): not handed to their session unless the person delivers them
    * (`POST /coord/op` `inbox` with `action: deliver | drop`). Names and text are cleaned. `dropAt`: when one is
    * dropped if nobody answers.
    */
-  held: Array<{ id: string; session: string; name?: string; from: string; fromSession?: string; text: string; ts: number; since: number; dropAt: number }>;
+  held: Array<{
+    id: string;
+    session: string;
+    name?: string;
+    from: string;
+    fromSession?: string;
+    via?: "linear" | "other";
+    text: string;
+    ts: number;
+    since: number;
+    dropAt: number;
+  }>;
 }
 
 /** The header a hook sends with its event: the agent's hook event name (`PreToolUse`, …). */

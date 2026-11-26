@@ -388,6 +388,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         name: nameOf(m.localKey),
         from: m.from.person,
         fromSession: m.from.sessionName,
+        // Where the hub made it from, when no paired machine sent it (a Linear prompt).
+        ...(m.via ? { via: m.via } : {}),
         text: m.text.slice(0, 500),
         ts: m.ts,
         delivered: m.delivered,

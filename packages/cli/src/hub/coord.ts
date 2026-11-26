@@ -474,8 +474,12 @@ export class CoordClient {
   /**
    * Whether a message is this device's person's own: one of this device's sessions sent it, or the hub names its
    * sender as it names this device's person (their other machines, the board, a terminal).
+   *
+   * Never one the hub made from another source (`via`, such as a Linear prompt). That source names the author, and
+   * no paired machine or signed-in member vouches for the name. Such a message follows a teammate's rules.
    */
   isOwn(item: HubSyncInboxItem): boolean {
+    if (item.via !== undefined) return false;
     if (item.from.sessionKey !== undefined && this.localKey(item.from.sessionKey) !== undefined) return true;
     const me = this.me()?.toLowerCase();
     return me !== undefined && item.from.person.toLowerCase() === me;

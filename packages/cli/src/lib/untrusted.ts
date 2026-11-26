@@ -80,10 +80,20 @@ export function quoted(text: string, max = Number.POSITIVE_INFINITY): string {
 /**
  * One message from a teammate as a block: who it is from on the opening line, the text as marked lines. The sender
  * chooses the text and the session name, so neither can leave the block or add a line to it.
+ *
+ * `via` says where the hub made the message from when no paired machine sent it (SPEC §23): `linear` for a Linear
+ * user's prompt, `other` for a source this relay does not know. The opening line then ends with one of these two
+ * words, written here and never copied from the hub.
  */
-export function messageBlock(from: { person: string; sessionName?: string | undefined }, text: string, max?: number): string {
+export function messageBlock(
+  from: { person: string; sessionName?: string | undefined },
+  text: string,
+  max?: number,
+  via?: "linear" | "other" | undefined,
+): string {
   const session = from.sessionName ? label(from.sessionName) : "";
-  const who = `from="${label(from.person)}"${session ? ` session="${session}"` : ""}`;
+  const source = via === undefined ? "" : via === "linear" ? ' via="linear"' : ' via="other"';
+  const who = `from="${label(from.person)}"${session ? ` session="${session}"` : ""}${source}`;
   return `<workmesh-message ${who}>\n${quoted(text, max)}\n</workmesh-message>`;
 }
 

@@ -9,7 +9,7 @@ import { CoordClient } from "../src/hub/coord";
 import { CoordHooks } from "../src/daemon/coord-hooks";
 import { runCoordOp } from "../src/daemon/coord-ops";
 import type { CoordOpRequest, CoordOpsDeps } from "../src/daemon/coord-ops";
-import { Delegate } from "../src/daemon/delegate";
+import { Delegate, wakeText } from "../src/daemon/delegate";
 import { MessageGate, SENT_KEEP_MS, SENT_MAX, holdsFor, modeLevel, recipientPerson } from "../src/daemon/messages";
 import { inboxArgs } from "../src/commands/coord";
 import { wakeRuleText } from "../src/commands/wake";
@@ -762,5 +762,80 @@ describe("who may message this machine's sessions at all", () => {
     const id = x.coord.notify(LOCAL, "Workmesh: your handoff to Sam is done.");
     expect(x.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual([id]);
     expect(wakes(x)).toEqual([id]);
+  });
+});
+
+describe("a message the hub made from a Linear prompt", () => {
+  /** Linear names its author. No session sent it. */
+  const linear = (over: Partial<Message> = {}): Message => message({ id: "wm_lin", from: { person: "Sam" }, via: "linear", ...over });
+  const LINEAR_BLOCK = '<workmesh-message from="Sam" via="linear">\n│ Can you rebase?\n</workmesh-message>';
+
+  it("says so on the block's opening line: in a session's context, in a wake, and in the person's list", async () => {
+    const x = started({ settings: { wake: "team" } }, "default");
+    x.sync({ inbox: [linear()] });
+    expect(wakeText(x.coord.wakeFor(LOCAL))?.text).toContain(LINEAR_BLOCK);
+    expect((await x.op("inbox", {}, PERSON)).text).toContain(LINEAR_BLOCK);
+    expect(x.boundary("s1", "default")).toContain(LINEAR_BLOCK);
+    // The agent's own `inbox` shows the same block.
+    const y = started({}, "default");
+    y.sync({ inbox: [linear()] });
+    expect((await y.op("inbox")).text).toContain(LINEAR_BLOCK);
+  });
+
+  it("says so where a held message is shown to the person, and in the daemon log", async () => {
+    const x = started();
+    x.sync({ inbox: [linear()] });
+    expect(x.gate.heldMessages()).toMatchObject([{ id: "wm_lin", from: "Sam", via: "linear" }]);
+    expect((await x.op("inbox", { held: true }, PERSON)).text).toContain(LINEAR_BLOCK);
+    expect(x.logs).toEqual(["held a message from Sam (via Linear) for claude-code:s1: its person delivers or drops it (menu bar, or workmesh inbox --held)"]);
+    await x.op("inbox", { action: "drop", id: "wm_lin" }, PERSON);
+    expect(x.logs.at(-1)).toBe("dropped a held message from Sam (via Linear) for claude-code:s1: its person said so");
+  });
+
+  it("follows the rules of any teammate's message, also when Linear names its author as this machine's person", async () => {
+    // Linear names the author. No paired machine vouches for the name, so it is never the person's own message.
+    const named = linear({ from: { person: "An" } });
+    const own = message({ id: "wm_own", from: { person: "An" } });
+    // Wake: the person's own message wakes under every rule; this one only as a teammate's would.
+    const x = harness();
+    x.sync({ inbox: [named, own] });
+    expect(wakes(x)).toEqual(["wm_own"]);
+    const self = harness({ settings: { wake: "self" } });
+    self.sync({ inbox: [named, own] });
+    expect(wakes(self)).toEqual(["wm_own"]);
+    const team = harness({ settings: { wake: "team" } });
+    team.sync({ inbox: [named, own] });
+    expect(wakes(team)).toEqual(["wm_lin", "wm_own"]);
+    // Hold: the person's own message is never held; this one is, for a session with no permission prompts.
+    const h = started();
+    h.sync({ inbox: [named, own] });
+    expect(h.gate.heldMessages().map((m) => m.id)).toEqual(["wm_lin"]);
+    expect(h.coord.pendingFor(LOCAL).map((i) => i.id)).toEqual(["wm_own"]);
+    // From: a machine that takes only its person's own messages drops it.
+    const f = harness({ settings: { from: "self" } });
+    f.sync({ inbox: [named, own] });
+    expect(f.coord.inboxItems().map((i) => i.id)).toEqual(["wm_own"]);
+    await flush();
+    expect(f.acked()).toEqual(["wm_lin"]);
+    expect(f.logs).toEqual(["dropped a message from An (via Linear): this machine takes only its person's own (messages.from)"]);
+  });
+
+  it("wakes as a teammate's message does: for a person on the list, or as a reply", () => {
+    const listed = harness({ settings: { wake: ["sam-dev"] } });
+    listed.sync({ inbox: [linear()] });
+    expect(wakes(listed)).toEqual(["wm_lin"]);
+    const x = harness();
+    x.sync({ inbox: [linear()] });
+    expect(wakes(x)).toEqual([]);
+    x.gate.sent(LOCAL, { person: "Sam" });
+    expect(wakes(x)).toEqual(["wm_lin"]);
+  });
+
+  it("a source this relay does not know is marked too, and is never the person's own", () => {
+    const x = started({}, "default");
+    x.sync({ inbox: [message({ id: "wm_x", from: { person: "An" }, via: "slack" as never })] });
+    expect(x.coord.inboxItems().map((i) => i.via)).toEqual(["other"]);
+    expect(wakes(x)).toEqual([]);
+    expect(x.boundary("s1", "default")).toContain('<workmesh-message from="An" via="other">');
   });
 });

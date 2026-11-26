@@ -47,6 +47,8 @@ export interface HeldMessage {
   /** Who sent it and from which session, each as one line. */
   from: string;
   fromSession?: string;
+  /** Where the hub made it from, when no paired machine sent it (a Linear prompt, or a source this relay doesn't know). */
+  via?: "linear" | "other";
   /** The text, without what a reader cannot see. */
   text: string;
   ts: number;
@@ -271,7 +273,7 @@ export class MessageGate implements InboxPolicy {
       if (this.refusedAt.size > 500) this.refusedAt.clear();
       this.refusedAt.set(who, now);
       const takes = rule === "self" ? "only its person's own" : "only its person's own and those of the people listed";
-      this.log(`dropped a message from ${label(item.from.person) || "someone"}: this machine takes ${takes} (messages.from)`);
+      this.log(`dropped a message from ${sender(item.from.person, item.via)}: this machine takes ${takes} (messages.from)`);
     }
     return false;
   }
@@ -311,7 +313,7 @@ export class MessageGate implements InboxPolicy {
     if (this.heldIds.size >= HELD_MAX) this.heldIds.delete(this.heldIds.keys().next().value!);
     this.heldIds.set(id, { session: localKey, since: this.now() });
     this.touch();
-    this.log(`held a message from ${label(item.from.person) || "someone"} for ${localKey}: its person delivers or drops it (menu bar, or workmesh inbox --held)`);
+    this.log(`held a message from ${sender(item.from.person, item.via)} for ${localKey}: its person delivers or drops it (menu bar, or workmesh inbox --held)`);
     return true;
   }
 
@@ -336,7 +338,7 @@ export class MessageGate implements InboxPolicy {
         this.touch();
       } else if (now - h.since >= limit) {
         this.discard(id);
-        this.log(`dropped a held message from ${label(m.from.person) || "someone"} for ${h.session}: nobody delivered it in ${this.deps.settings().holdMinutes} min`);
+        this.log(`dropped a held message from ${sender(m.from.person, m.via)} for ${h.session}: nobody delivered it in ${this.deps.settings().holdMinutes} min`);
       }
     }
     for (const id of [...this.released]) {
@@ -372,6 +374,7 @@ export class MessageGate implements InboxPolicy {
         ...(name ? { name } : {}),
         from: label(m.from.person) || "someone",
         ...(fromSession ? { fromSession } : {}),
+        ...(m.via ? { via: m.via } : {}),
         text: cleanText(m.text).trim(),
         ts: m.ts,
         since: h.since,
@@ -388,7 +391,7 @@ export class MessageGate implements InboxPolicy {
     this.heldIds.delete(found.message.id);
     this.released.add(found.message.id);
     this.touch();
-    this.log(`delivered a held message from ${found.message.from} to ${found.message.session}: its person said so`);
+    this.log(`delivered a held message from ${found.message.from}${viaNote(found.message.via)} to ${found.message.session}: its person said so`);
     return found;
   }
 
@@ -397,7 +400,7 @@ export class MessageGate implements InboxPolicy {
     const found = this.find(id);
     if (!found.ok) return found;
     this.discard(found.message.id);
-    this.log(`dropped a held message from ${found.message.from} for ${found.message.session}: its person said so`);
+    this.log(`dropped a held message from ${found.message.from}${viaNote(found.message.via)} for ${found.message.session}: its person said so`);
     return found;
   }
 
@@ -473,6 +476,16 @@ export class MessageGate implements InboxPolicy {
       // Best effort: the worst case is a reply that waits for the session's next turn, or a message held again.
     }
   }
+}
+
+/** " (via Linear)" after a sender's name in the daemon log, when the hub made the message from another source. */
+function viaNote(via: "linear" | "other" | undefined): string {
+  return via === undefined ? "" : via === "linear" ? " (via Linear)" : " (via another source)";
+}
+
+/** A sender as the daemon log names them: on one line, with where the hub made the message from. */
+function sender(person: string, via: "linear" | "other" | undefined): string {
+  return `${label(person) || "someone"}${viaNote(via)}`;
 }
 
 /**

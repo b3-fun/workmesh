@@ -987,9 +987,9 @@ command run; a waiter that can't reach the daemon ends.
     name says the value is a secret. The redaction rules' reading of a name decides (§9): the last word counts, so
     `GITHUB_TOKEN` and `AWS_SECRET_ACCESS_KEY` go, and `PATH`, `NVM_DIR` and `SSH_AUTH_SOCK` stay.
   - What the agent tool signs in with is kept. For Claude Code that is `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
-    and `CLAUDE_CODE_OAUTH_TOKEN`, and the AWS or Google credentials when `CLAUDE_CODE_USE_BEDROCK` or
-    `CLAUDE_CODE_USE_VERTEX` is set. For Codex it is `OPENAI_API_KEY`. Every name in the config key `handoffs.env`
-    is kept too.
+    and `CLAUDE_CODE_OAUTH_TOKEN`. It is also the AWS or Google credentials when `CLAUDE_CODE_USE_BEDROCK` or
+    `CLAUDE_CODE_USE_VERTEX` is set, and `ANTHROPIC_FOUNDRY_API_KEY` when `CLAUDE_CODE_USE_FOUNDRY` is set. For
+    Codex it is `OPENAI_API_KEY`. Every name in the config key `handoffs.env` is kept too.
   - The run's log (`agent.log`) opens with the names that were dropped, never their values.
   - The permission mode default stays `auto` (`handoffs.permissionMode`). `acceptEdits` can't commit in a headless
     run, and the person reads the whole handoff and sees the mode before they accept.

@@ -96,6 +96,7 @@ describe("the environment a handoff's agent gets", () => {
     AWS_SESSION_TOKEN: "v-aws-session",
     AWS_BEARER_TOKEN_BEDROCK: "v-bedrock",
     GOOGLE_APPLICATION_CREDENTIALS: "/home/sam/adc.json",
+    ANTHROPIC_FOUNDRY_API_KEY: "v-foundry",
     UNSET: undefined,
   };
   const names = (env: NodeJS.ProcessEnv) => Object.keys(env).sort();
@@ -105,6 +106,7 @@ describe("the environment a handoff's agent gets", () => {
     const r = handoffEnv(base, "claude");
     expect(names(r.env)).toEqual([...toolChain, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"].sort());
     expect(r.dropped).toEqual([
+      "ANTHROPIC_FOUNDRY_API_KEY",
       "AWS_BEARER_TOKEN_BEDROCK",
       "AWS_SECRET_ACCESS_KEY",
       "AWS_SESSION_TOKEN",
@@ -133,9 +135,17 @@ describe("the environment a handoff's agent gets", () => {
     const vertex = handoffEnv({ ...base, CLAUDE_CODE_USE_VERTEX: "true" }, "claude");
     expect(vertex.env.GOOGLE_APPLICATION_CREDENTIALS).toBe("/home/sam/adc.json");
     expect(vertex.dropped).toContain("AWS_SECRET_ACCESS_KEY");
+    const foundry = handoffEnv({ ...base, CLAUDE_CODE_USE_FOUNDRY: "1" }, "claude");
+    expect(foundry.env.ANTHROPIC_FOUNDRY_API_KEY).toBe("v-foundry");
+    expect(foundry.dropped).not.toContain("ANTHROPIC_FOUNDRY_API_KEY");
+    expect(foundry.dropped).toContain("AWS_SECRET_ACCESS_KEY");
+    expect(foundry.dropped).toContain("GOOGLE_APPLICATION_CREDENTIALS");
+    // Without the switch, or for the other providers, the Foundry key goes like any other secret-looking name.
+    for (const r of [bedrock, vertex, handoffEnv({ ...base, CLAUDE_CODE_USE_FOUNDRY: "0" }, "claude")]) expect(r.dropped).toContain("ANTHROPIC_FOUNDRY_API_KEY");
     // Off, or a Codex run: no cloud credentials.
     for (const off of ["", "0", "false"]) expect(handoffEnv({ ...base, CLAUDE_CODE_USE_BEDROCK: off }, "claude").dropped, off).toContain("AWS_SECRET_ACCESS_KEY");
     expect(handoffEnv({ ...base, CLAUDE_CODE_USE_BEDROCK: "1" }, "codex").dropped).toContain("AWS_SECRET_ACCESS_KEY");
+    expect(handoffEnv({ ...base, CLAUDE_CODE_USE_FOUNDRY: "1" }, "codex").dropped).toContain("ANTHROPIC_FOUNDRY_API_KEY");
   });
 
   it("names the person listed are kept; a listed name that isn't set adds nothing", () => {
@@ -150,8 +160,8 @@ describe("the environment a handoff's agent gets", () => {
     const r = handoffEnv(base, "claude");
     const line = droppedEnvLine(r.dropped);
     expect(line).toBe(
-      "workmesh: 9 environment variables were not passed to the agent, because the name looks like a secret: " +
-        "AWS_BEARER_TOKEN_BEDROCK, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, GITHUB_TOKEN, GOOGLE_APPLICATION_CREDENTIALS, NPM_TOKEN, OPENAI_API_KEY, PGPASSWORD, STRIPE_KEY. " +
+      "workmesh: 10 environment variables were not passed to the agent, because the name looks like a secret: " +
+        "ANTHROPIC_FOUNDRY_API_KEY, AWS_BEARER_TOKEN_BEDROCK, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, GITHUB_TOKEN, GOOGLE_APPLICATION_CREDENTIALS, NPM_TOKEN, OPENAI_API_KEY, PGPASSWORD, STRIPE_KEY. " +
         "To pass one, add its name to handoffs.env in the Workmesh config.",
     );
     for (const value of Object.values(base)) if (value) expect(line.includes(value), value).toBe(false);

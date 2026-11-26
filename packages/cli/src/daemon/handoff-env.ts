@@ -19,6 +19,7 @@ const SIGN_IN: Record<HandoffAgentName, readonly string[]> = {
 const CLAUDE_PROVIDERS: ReadonlyArray<{ flag: string; names: readonly string[] }> = [
   { flag: "CLAUDE_CODE_USE_BEDROCK", names: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_BEARER_TOKEN_BEDROCK"] },
   { flag: "CLAUDE_CODE_USE_VERTEX", names: ["GOOGLE_APPLICATION_CREDENTIALS"] },
+  { flag: "CLAUDE_CODE_USE_FOUNDRY", names: ["ANTHROPIC_FOUNDRY_API_KEY"] },
 ];
 
 /** The working directory and the one before it. `PWD` reads as "password" to a name classifier. */

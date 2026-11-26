@@ -50,7 +50,7 @@ For what to run when, start with the [guide](../guide/getting-started.md).
 | [`workmesh memories`](#workmesh-memories) | Your team's accepted memories, newest first |
 | [`workmesh whoami`](#workmesh-whoami) | Who you are on the team hub, and which agent session this is |
 | [`workmesh handoff`](#workmesh-handoff) | Hand a task to a teammate (or `me`: one of your other machines); their machine starts an agent for it once they accept |
-| [`workmesh handoffs`](#workmesh-handoffs) | Handoffs offered to you and sent by you; read one in full, accept or decline it |
+| [`workmesh handoffs`](#workmesh-handoffs) | Handoffs offered to you and sent by you; read one in full, accept or decline it, or run one accepted elsewhere |
 | [`workmesh handoffs policy`](#workmesh-handoffs-policy) | Which handoffs this machine takes without a click: ask (the default: none), auto-self (your own), never |
 | [`workmesh roots`](#workmesh-roots) | Where your repos live, so a handoff finds its checkout here (repos your sessions worked in count too) |
 | [`workmesh gates`](#workmesh-gates) | Approval gates on your own agents: they ask before they merge, deploy, publish, force-push or spend |
@@ -142,7 +142,8 @@ Commands:
                                      your other machines); their machine starts
                                      an agent for it once they accept
   handoffs [options] [action] [id]   Handoffs offered to you and sent by you;
-                                     read one in full, accept or decline it
+                                     read one in full, accept or decline it, or
+                                     run one accepted elsewhere
   roots [action] [dir]               Where your repos live, so a handoff finds
                                      its checkout here (repos your sessions
                                      worked in count too)
@@ -836,11 +837,12 @@ Options:
 ```text
 Usage: workmesh handoffs [options] [command] [action] [id]
 
-Handoffs offered to you and sent by you; read one in full, accept or decline it
+Handoffs offered to you and sent by you; read one in full, accept or decline it,
+or run one accepted elsewhere
 
 Arguments:
-  action           list | show | accept | decline
-  id               the handoff, for show, accept and decline
+  action           list | show | accept | decline | run
+  id               the handoff, for show, accept, decline and run
 
 Options:
   --note <text>    why (decline)

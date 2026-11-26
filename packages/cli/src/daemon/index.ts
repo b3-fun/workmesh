@@ -24,6 +24,7 @@ import { CoordClient } from "../hub/coord";
 import { CoordHooks } from "./coord-hooks";
 import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
+import { AcceptedHere } from "./accepted-here";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
 import { codexHomeOfRollout } from "../hub/agents";
 import { CodexEndGuard } from "./codex-liveness";
@@ -32,7 +33,7 @@ import type { CoordSummary, HookMeta } from "./server";
 import { readGithubLogin } from "../lib/github";
 import { createDaemonSecret, mirrorLegacySecret } from "../lib/daemon-auth";
 import { loadOwnershipState, saveOwnershipState } from "../lib/ownership-state";
-import { checkoutsPath, handoffsDir, hubForwardStatePath, sessionVersionsPath, stateDir, updateCheckPath, updateLogPath } from "../lib/paths";
+import { acceptedHandoffsPath, checkoutsPath, handoffsDir, hubForwardStatePath, sessionVersionsPath, stateDir, updateCheckPath, updateLogPath } from "../lib/paths";
 import { detectInstall, managerBin } from "../lib/install-method";
 import type { InstallInfo } from "../lib/install-method";
 import { fetchMenubarRelease, fetchRegistryInfo, npmRegistry } from "../lib/registry";
@@ -144,6 +145,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     repoOf: (dir) => forwarder?.classify(dir)?.repo,
     settings,
     runner,
+    accepted: new AcceptedHere(acceptedHandoffsPath()),
     codexWake: config.adapters.codex.enabled ? codexWaker({ log, homeOf: (id) => codexHomes.get(`codex:${id}`) }) : undefined,
     log,
   });
@@ -448,7 +450,9 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         classify: (p) => forwarder?.classify(p),
         isShared: (key) => forwarder?.isShared(key) ?? false,
         claudeSessions: () => readLiveClaudeSessions(claudeDir),
-        onAccepted: (h) => delegate.accepted(h),
+        onAccepted: (h, by) => delegate.accepted(h, by),
+        waitsToRunHere: (h) => delegate.waitsToRunHere(h),
+        onRunHere: (h, by) => delegate.runHere(h, by),
         runningHandoffs: () => runner.running(),
         handoffStart: (h, lead) => delegate.onAccept(h, lead),
       }),

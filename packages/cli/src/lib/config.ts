@@ -131,6 +131,12 @@ export const configSchema = z.object({
        * runs no handoffs.
        */
       accept: z.enum(["ask", "auto-self", "never"]).optional().catch(undefined),
+      /**
+       * What happens to a handoff that was accepted somewhere else, on the board or on another machine. `confirm`
+       * (default): it waits here until you say "run it here". `auto`: this machine starts it. `auto` trusts the hub's
+       * word that you accepted it.
+       */
+      runAccepted: z.enum(["confirm", "auto"]).optional().catch(undefined),
       /** The agent CLI that runs handoffs (default: claude when found, else codex). */
       agent: z.enum(["claude", "codex"]).optional().catch(undefined),
       /** Dirs whose git repos count as checkouts for handoffs (`workmesh roots add <dir>`). */
@@ -310,6 +316,7 @@ export function autoUpdateSettings(config: Pick<Config, "update">): { enabled: b
 export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {
   wake: boolean;
   accept: "ask" | "auto-self" | "never";
+  runAccepted: "confirm" | "auto";
   agent?: "claude" | "codex";
   roots: string[];
   worktree: boolean;
@@ -323,6 +330,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
   return {
     wake: config.wake ?? true,
     accept: h?.accept ?? "ask",
+    runAccepted: h?.runAccepted ?? "confirm",
     agent: h?.agent,
     roots: h?.roots ?? [],
     worktree: h?.worktree ?? true,

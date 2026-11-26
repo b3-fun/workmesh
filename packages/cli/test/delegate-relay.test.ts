@@ -504,6 +504,8 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     const live = [{ key: "claude-code:s7", source: "claude-code", sessionId: "s7", cwd: "/w/b3os-beta", updatedAt: T }];
     const d = deps(hub.coord, {
       onAccepted: (h) => accepted.push(h.id),
+      waitsToRunHere: () => true,
+      onRunHere: (h) => accepted.push(`run ${h.id}`),
       listSessions: () => live as never,
       getSession: (k) => live.find((s) => s.key === k) as never,
       claudeSessions: () => new Map([["s7", { pid: 4242, sessionId: "s7" }]]),
@@ -518,7 +520,7 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
       ["a caller that names no surface", {}],
     ];
     for (const [what, caller] of agents) {
-      for (const action of ["accept", "decline"]) {
+      for (const action of ["accept", "decline", "run"]) {
         const r = await runCoordOp({ op: "handoffs", args: { action, id: "h_abc12345", note: "x" }, caller }, d);
         expect(r, `${action} from ${what}`).toEqual({
           ok: false,
@@ -596,6 +598,66 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
     expect(hub.calls).toEqual([]);
   });
 
+  it("handoffs run: the person's \"run it here\" for a handoff accepted somewhere else, listed and shown as waiting", async () => {
+    const hub = fakeHub();
+    sync(hub.coord, {
+      handoffs: [
+        { ...HANDOFF, id: "h_board", status: "accepted", device: undefined },
+        { ...HANDOFF, id: "h_here", status: "accepted" },
+        { ...HANDOFF, id: "h_new", status: "offered" },
+      ] as never,
+    });
+    const ran: string[] = [];
+    const leads: string[] = [];
+    let agent: "claude" | undefined = "claude";
+    const d = deps(hub.coord, {
+      now: () => T,
+      // Stands in for the daemon's record: only h_board waits.
+      waitsToRunHere: (h) => h.id === "h_board",
+      onRunHere: (h, by) => ran.push(`${h.id} by ${by}`),
+      handoffStart: (_h, lead) => {
+        leads.push(lead);
+        return agent ? { agent, permissionMode: "auto", text: `${lead} a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta.` } : { text: "This Mac can't run it: no checkout of b3-fun/b3os-beta here." };
+      },
+    });
+    // The list says so where the status would be, and names the command.
+    const list = await runCoordOp({ op: "handoffs", args: {}, caller: PERSON }, d);
+    expect(list.text.split("\n")).toEqual([
+      "- h_board · accepted on the board: run it here? · from An · b3-fun/b3os-beta, B3-7168: Port the KEK rotation to the new runner [more: workmesh handoffs show h_board] [workmesh handoffs run h_board]",
+      "- h_here · accepted · from An · b3-fun/b3os-beta, B3-7168: Port the KEK rotation to the new runner [more: workmesh handoffs show h_here]",
+      "- h_new · offered · from An · b3-fun/b3os-beta, B3-7168: Port the KEK rotation to the new runner [more: workmesh handoffs show h_new]",
+    ]);
+    // The full view says it too, and what a yes starts.
+    const view = await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_board" }, caller: PERSON }, d);
+    const lines = view.text.split("\n");
+    expect(lines[0]).toBe("Handoff h_board · accepted on the board: run it here? · sent under a minute ago");
+    expect(lines.at(-1)).toBe("Running it here starts a Claude Code agent on this Mac in auto mode, in a new worktree of b3-fun/b3os-beta.");
+    expect(view.data).toMatchObject({ canAccept: false, canRun: true });
+    expect((await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_here" }, caller: PERSON }, d)).data).toMatchObject({ canAccept: false, canRun: false });
+    expect((await runCoordOp({ op: "handoffs", args: { action: "show", id: "h_new" }, caller: PERSON }, d)).data).toMatchObject({ canAccept: true, canRun: false });
+    // The yes: from the CLI and from the menu bar. No hub call is the op's own (the runner claims the start).
+    expect(await runCoordOp({ op: "handoffs", args: { action: "run", id: "h_board" }, caller: PERSON }, d)).toMatchObject({
+      ok: true,
+      text: "Running h_board here: this machine starts an agent for it.",
+    });
+    await runCoordOp({ op: "handoffs", args: { action: "run", id: "h_board" }, caller: { client: "menubar" } }, d);
+    expect(ran).toEqual(["h_board by cli", "h_board by menubar"]);
+    expect(hub.calls).toEqual([]);
+    // One that doesn't wait here, one the hub doesn't list, a call with no id, and a machine that can't run it.
+    expect(await runCoordOp({ op: "handoffs", args: { action: "run", id: "h_new" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "Workmesh: h_new isn't waiting to run on this machine." });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "run", id: "h_nope" }, caller: PERSON }, d)).toMatchObject({
+      ok: false,
+      text: "No handoff h_nope for you or from you in the hub's list (`handoffs` lists them).",
+    });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "run" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "`handoffs` run needs `id` (`handoffs` lists them)." });
+    agent = undefined;
+    expect(await runCoordOp({ op: "handoffs", args: { action: "run", id: "h_board" }, caller: PERSON }, d)).toMatchObject({
+      ok: false,
+      text: "This Mac can't run it: no checkout of b3-fun/b3os-beta here.",
+    });
+    expect(ran).toHaveLength(2);
+  });
+
   it("handoffs show: no start line for one this person can't accept; an id the hub didn't list is said plainly", async () => {
     const hub = fakeHub();
     sync(hub.coord, {
@@ -617,7 +679,7 @@ describe("v2 ops through the daemon (SPEC §31)", () => {
       text: "No handoff h_nope for you or from you in the hub's list (`handoffs` lists them).",
     });
     expect(await runCoordOp({ op: "handoffs", args: { action: "show" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "`handoffs` show needs `id` (`handoffs` lists them)." });
-    expect(await runCoordOp({ op: "handoffs", args: { action: "take" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "`handoffs` takes action list, show, accept or decline." });
+    expect(await runCoordOp({ op: "handoffs", args: { action: "take" }, caller: PERSON }, d)).toMatchObject({ ok: false, text: "`handoffs` takes action list, show, accept, decline or run." });
   });
 
   it("a sync older than 5 s is refreshed first (a person at the terminal while no shared session is live)", async () => {

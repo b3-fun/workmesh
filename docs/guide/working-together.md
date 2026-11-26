@@ -99,8 +99,9 @@ who held it releases it (Release on the board, or "resume" on Linear). Your menu
 
 ## Handoffs
 
-`handoff` gives a task to a teammate, or to `me` for another of your machines. The recipient accepts it on the board,
-in the menu bar, or with `workmesh handoffs accept <id>`. Their machine then finds its checkout of the repo, makes a git
+`handoff` gives a task to a teammate, or to `me` for another of your machines. The recipient accepts it in the menu
+bar or with `workmesh handoffs accept <id>`. (One accepted on the board waits for a second yes on the machine that
+should run it, see below.) Their machine then finds its checkout of the repo, makes a git
 worktree on a fresh `workmesh/handoff-…` branch from the default branch (their working tree is never touched), and
 starts `claude -p` (or `codex exec`) there in the background. The new session shows on the board, and the sender's
 agent hears when it is taken and when it finishes.
@@ -142,6 +143,12 @@ menu bar or the board.
 
 In the menu bar, **Show all** opens the whole task and context. For a long handoff the first click on **Accept** opens
 them too, and the button then reads **Accept and run**. The line above the buttons says what starts.
+
+Your machine starts only handoffs that were accepted on it: at its terminal, in its menu bar, or by your own
+`auto-self` policy. The hub saying "accepted" is not enough. So a handoff you accepted on the board is not started on
+its own. `workmesh handoffs` and the menu bar show it as "accepted on the board: run it here?". `workmesh handoffs run
+<id>` prints the whole handoff and what starts, then asks. In the menu bar it takes the same two steps as Accept. To get
+the old behaviour back, set `handoffs.runAccepted` to `auto` in the config. That trusts the hub's word that you accepted.
 
 By default every handoff waits for your Accept, your own too. That is the `ask` policy. `workmesh handoffs policy
 auto-self` lets handoffs you send yourself start with no click. It trusts every machine and token of yours: each of

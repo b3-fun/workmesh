@@ -11,7 +11,9 @@ import type { HubSyncInboxItem } from "../hub/coord";
 import { gateVerb, matchGates } from "./gates";
 import type { GateMatch } from "./gates";
 import { formatInbox } from "./coord-hooks";
-import { NOTHING_VISIBLE, handoffStart, readable } from "./handoff-text";
+import { AcceptedHere } from "./accepted-here";
+import type { AcceptedBy } from "./accepted-here";
+import { NOTHING_VISIBLE, handoffStart, readable, runHereQuestion } from "./handoff-text";
 import type { HandoffPlan, HandoffStart } from "./handoff-text";
 import { oneLine } from "../lib/untrusted";
 
@@ -48,6 +50,8 @@ export interface DelegateSettings {
   wake: boolean;
   /** Who may hand this machine work without a click (default `ask`: nobody). */
   accept: HandoffAcceptPolicy;
+  /** A handoff accepted somewhere else: wait for the person's "run it here" (`confirm`, the default), or start it. */
+  runAccepted: "confirm" | "auto";
   /** The person's own `custom` gate patterns. */
   customGates: readonly string[];
 }
@@ -74,6 +78,8 @@ export interface DelegateDeps {
   repoOf: (dir: string) => string | undefined;
   settings: () => DelegateSettings;
   runner?: HandoffRunnerLike;
+  /** The handoffs accepted on this machine (absent: a record kept in memory only). */
+  accepted?: AcceptedHere;
   /** Deliver a message into an idle Codex thread now; false when it couldn't (next-turn delivery stands). */
   codexWake?: (threadId: string, text: string) => Promise<boolean>;
   now?: () => number;
@@ -98,8 +104,9 @@ interface Waiter {
 export interface DelegateSummary {
   available: boolean;
   /**
-   * Handoffs offered to this person (Accept / Decline), and ones running here. `task` and `context` are the whole
-   * text, cleaned for a person to read. `onAccept` says what Accept starts on this machine (offered ones only).
+   * Handoffs offered to this person (Accept / Decline), ones accepted somewhere else that wait for "run it here"
+   * (`runHere` is the question), and ones running here. `task` and `context` are the whole text, cleaned for a
+   * person to read. `onAccept` says what an Accept or a "run it here" starts on this machine.
    */
   handoffs: Array<{
     id: string;
@@ -108,6 +115,7 @@ export interface DelegateSummary {
     task: string;
     context?: string;
     onAccept?: HandoffStart;
+    runHere?: string;
     repo?: string;
     issue?: string;
     status: HubHandoffAccepted["status"];
@@ -174,11 +182,14 @@ export class Delegate {
   private readonly ended = new Set<string>();
   /** Codex messages handed to `codexWake` (by id), so each is tried once. */
   private readonly codexTried = new Set<string>();
+  /** The handoffs accepted on this machine: the only ones it starts. */
+  private readonly acceptedHere: AcceptedHere;
 
   constructor(deps: DelegateDeps) {
     this.deps = deps;
     this.now = deps.now ?? Date.now;
     this.log = deps.log ?? (() => {});
+    this.acceptedHere = deps.accepted ?? new AcceptedHere();
   }
 
   private me(coord: CoordClient): string | undefined {
@@ -404,6 +415,8 @@ export class Delegate {
       if (before.get(a.id) === "pending" || askedHere) this.tellDecision(coord, a, CoordClient.family(local), a.gate);
     }
     this.onHandoffs(coord, next.handoffs ?? []);
+    // An id leaves the record once the hub stops listing its handoff. A hub without v2 sends no list: nothing to go by.
+    if (next.handoffs !== undefined) this.acceptedHere.prune(new Set(next.handoffs.map((h) => h.id)));
     this.check();
   }
 
@@ -477,6 +490,7 @@ export class Delegate {
       .then((r) => {
         if (r.ok && r.body.ok) {
           this.log(`handoff ${h.id}: accepted by policy (auto-self)`);
+          this.acceptedHere.add(h.id, "policy", this.now());
           if (r.body.handoff.status === "accepted") this.maybeStart(coord, r.body.handoff, policy, true);
         }
       })
@@ -487,6 +501,8 @@ export class Delegate {
     const runner = this.deps.runner;
     if (!runner || policy === "never") return;
     if (h.device && h.device !== coord.deviceId) return;
+    // The hub's word is not enough: this machine starts only what was accepted on it, unless its person chose `auto`.
+    if (this.deps.settings().runAccepted !== "auto" && !this.acceptedHere.has(h.id)) return;
     if (runner.running().has(h.id) || (!force && this.handoffCalls.has(h.id))) return;
     const why = runner.cannotRun(h);
     if (why) {
@@ -508,11 +524,39 @@ export class Delegate {
 
   // --- the person's handoff moves (MCP, CLI, menu bar) ------------------------------
 
-  /** The person accepted a handoff from this machine: start it here now, rather than at the next sync. */
-  accepted(h: HubHandoffAccepted): void {
+  /**
+   * The person accepted a handoff on this machine, at its terminal or in its menu bar: the record says so, and it
+   * starts here now, rather than at the next sync.
+   */
+  accepted(h: HubHandoffAccepted, by: AcceptedBy = "cli"): void {
     const coord = this.deps.coord();
     if (!coord || h.status !== "accepted") return;
+    this.acceptedHere.add(h.id, by, this.now());
     this.maybeStart(coord, h, this.deps.settings().accept === "never" ? "ask" : this.deps.settings().accept, true);
+  }
+
+  /**
+   * Whether an accepted handoff waits for this person's "run it here". It was accepted somewhere else: on the board,
+   * or so the hub says while this machine has no record of it. It may run on this machine, and nothing runs it yet.
+   */
+  waitsToRunHere(h: HubHandoffAccepted): boolean {
+    const coord = this.deps.coord();
+    const runner = this.deps.runner;
+    if (!coord || !runner || h.status !== "accepted") return false;
+    const settings = this.deps.settings();
+    if (settings.accept === "never" || settings.runAccepted === "auto") return false;
+    const me = lower(this.me(coord));
+    if (!me || h.to.person.toLowerCase() !== me) return false;
+    if (h.device && h.device !== coord.deviceId) return false;
+    return !this.acceptedHere.has(h.id) && !runner.running().has(h.id);
+  }
+
+  /** The person said "run it here" for a handoff that waits (`waitsToRunHere`): the record says so, and it starts. */
+  runHere(h: HubHandoffAccepted, by: AcceptedBy = "cli"): void {
+    const coord = this.deps.coord();
+    if (!coord || !this.waitsToRunHere(h)) return;
+    this.acceptedHere.add(h.id, by, this.now());
+    this.maybeStart(coord, h, this.deps.settings().accept, true);
   }
 
   /** Handoffs the sync lists for this person: offered to them, sent by them, running here. */
@@ -653,11 +697,12 @@ export class Delegate {
     for (const h of st?.handoffs ?? []) {
       const offeredToMe = me !== undefined && h.to.person.toLowerCase() === me && h.status === "offered";
       const here = running.has(h.id);
-      if (!offeredToMe && !here) continue;
+      const waits = !here && this.waitsToRunHere(h);
+      if (!offeredToMe && !here && !waits) continue;
       // The whole task and context, so the person can read all of it before Accept. Cleaning never adds a
       // character, so both stay within the protocol's limit.
       const context = readable(h.context);
-      const onAccept = offeredToMe && !here ? this.onAccept(h) : undefined;
+      const onAccept = (offeredToMe && !here) || waits ? this.onAccept(h) : undefined;
       handoffs.push({
         id: h.id,
         from: oneLine(h.from.person, 120),
@@ -665,6 +710,7 @@ export class Delegate {
         task: readable(h.task) ?? NOTHING_VISIBLE,
         ...(context === undefined ? {} : { context }),
         ...(onAccept ? { onAccept } : {}),
+        ...(waits ? { runHere: runHereQuestion(h, true) } : {}),
         repo: h.repo,
         issue: h.issue,
         status: h.status,

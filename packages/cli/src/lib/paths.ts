@@ -108,6 +108,11 @@ export function handoffsDir(): string {
   return path.join(stateDir(), "handoffs");
 }
 
+/** v2 (SPEC §31): the ids of the handoffs that were accepted on this machine (0600). Only those are started here. */
+export function acceptedHandoffsPath(): string {
+  return path.join(stateDir(), "handoffs-accepted.json");
+}
+
 /** v2: the main checkout of each shared repo this machine's sessions worked in (for handoffs). */
 export function checkoutsPath(): string {
   return path.join(stateDir(), "checkouts.json");

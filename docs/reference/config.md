@@ -37,6 +37,7 @@ Written by `workmesh hub connect` (or `init`). Don't copy this section between m
 |---|---|---|
 | `handoffs` | absent | Handoff settings for this machine. Absent means the defaults below. |
 | `handoffs.accept` | `ask` | `ask` waits for your Accept on every handoff, your own too. `auto-self` starts handoffs you sent yourself with no click and waits on teammates'. It trusts every machine and token of yours: each of them, and any agent running there, can start an agent on this machine. `never` runs none here (`workmesh handoffs policy`). |
+| `handoffs.runAccepted` | `confirm` | What this machine does with a handoff that was accepted somewhere else, such as on the board. `confirm`: it waits here until you say "run it here" (`workmesh handoffs run <id>`, or the menu bar). `auto`: this machine starts it. `auto` trusts the hub's word that you accepted it. |
 | `handoffs.agent` | `claude` when found, else `codex` | The agent CLI that runs a handoff. |
 | `handoffs.roots` | `[]` | Folders whose git repos count as checkouts for handoffs (`workmesh roots add <dir>`). |
 | `handoffs.worktree` | `true` | Run each handoff in a new git worktree on its own branch. |
@@ -140,5 +141,6 @@ Set by Workmesh itself, useful when you debug:
 | `~/.local/state/workmesh/hub-forward.json` | Shared sessions and unsent events, so a restart loses nothing (`0600`). |
 | `~/.local/state/workmesh/update.log`, `update/previous/` | The last `workmesh update` run and the copy it rolls back to. |
 | `~/.local/state/workmesh/handoffs/` | Handoff runs on this machine. |
+| `~/.local/state/workmesh/handoffs-accepted.json` | The ids of the handoffs that were accepted on this machine (`0600`). Only those are started here. |
 | `~/Library/LaunchAgents/org.npclabs.workmesh.daemon.plist` | The daemon service on macOS. |
 | `~/.config/systemd/user/workmesh.service` | The daemon service on Linux. |

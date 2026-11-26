@@ -417,9 +417,9 @@ program
   .action(wrap(runHandoff));
 const handoffs = program
   .command("handoffs")
-  .description("Handoffs offered to you and sent by you; read one in full, accept or decline it")
-  .argument("[action]", "list | show | accept | decline")
-  .argument("[id]", "the handoff, for show, accept and decline")
+  .description("Handoffs offered to you and sent by you; read one in full, accept or decline it, or run one accepted elsewhere")
+  .argument("[action]", "list | show | accept | decline | run")
+  .argument("[id]", "the handoff, for show, accept, decline and run")
   .option("--note <text>", "why (decline)")
   .option("--json", "machine-readable output")
   .action(wrap((action: string | undefined, id: string | undefined, opts: { note?: string; json?: boolean }) => runHandoffs(action, id, opts)));

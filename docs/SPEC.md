@@ -927,8 +927,8 @@ command run; a waiter that can't reach the daemon ends.
   for them. (A cooperative guard rail, not a sandbox: anything running as the person can call the hub.)
 - **Handoffs** (`daemon/delegate.ts`, `daemon/handoff-runner.ts`, `daemon/handoff-text.ts`). MCP `handoff { to, task,
   repo?, issue?, context? }` (repo: the calling session's, by default; `to: "me"` is the person themselves) and
-  `handoffs` (the list only); CLI `workmesh handoff`, `handoffs [list | show <id> | accept <id> | decline <id>]`,
-  `handoffs policy`, `roots`. Task and context are redacted (§9).
+  `handoffs` (the list only); CLI `workmesh handoff`, `handoffs [list | show <id> | accept <id> | decline <id> | run
+  <id>]`, `handoffs policy`, `roots`. Task and context are redacted (§9).
   - **Only a person accepts or declines** (B3-7234). Accepting starts an agent on their machine, so the answer is
     not an agent's to give. The daemon takes an accept or a decline only from a person's own surfaces: the CLI and
     the menu bar app (`caller.client` is `cli` or `menubar`). It must also read no agent session behind the call
@@ -959,8 +959,27 @@ command run; a waiter that can't reach the daemon ends.
   sending machine waits 20 s so another of their machines may take it first), anyone else's waits for the person.
   It trusts every machine and token of the person: each of them, and any agent running there, can start an agent on
   this machine with no click. `never`: this machine runs none.
-  Accepted for this device (`device`), or accepted on the board with no device, the runner `start`s it (the
-  hub's first-start-wins decides between the person's machines) and runs it: it finds a main checkout of `repo` (the
+  - **This machine starts only what was accepted on it** (B3-7235). The hub listing a handoff as accepted is not
+    enough: the hub can be wrong, and a board session can be used by someone else. The relay keeps a record of the
+    handoff ids that were accepted here: by the person at this machine's terminal or in its menu bar, or by their
+    `auto-self` policy here. It starts a handoff only when its id is in that record.
+  - The record is a file in the state dir (`handoffs-accepted.json`, 0600). It holds each id with when and where it
+    was accepted, never a handoff's text. It keeps 500 ids and survives a daemon restart. An id goes when the hub
+    stops listing its handoff.
+  - A handoff accepted somewhere else is not started. That is one accepted on the board, or one the hub lists as
+    accepted for this machine while the record has no such id. The list and the menu bar show it as "accepted on the
+    board: run it here?". The person confirms at a terminal (`workmesh handoffs run <id>`): the whole handoff, the
+    line about what starts, then "Run it here and start an agent? [y/N]". No option skips the question, and no
+    terminal means no start. The menu bar confirms with the same two steps as Accept. A confirm puts the id in the
+    record. An agent can't confirm: the daemon answers it with the same refusal as for an accept.
+  - One accepted on another of the person's machines (`device` is that machine) is that machine's to run. It is not
+    offered here.
+  - The config key `handoffs.runAccepted` is `confirm` when absent. With `auto`, this machine starts any handoff the
+    hub lists as accepted for its person, as before B3-7235. That trusts the hub's word.
+
+  For a handoff in the record, accepted for this device (`device`) or on the board with no device, the runner
+  `start`s it (the hub's first-start-wins decides between the person's machines) and runs it: it finds a main
+  checkout of `repo` (the
   shared repos this machine's sessions worked in, remembered in `checkouts.json`, and repos up to two levels under
   `handoffs.roots`), makes `git worktree add -b workmesh/handoff-<id> <checkout>-handoff-<id> <origin's default
   branch>` (`handoffs.worktree: false` runs in the checkout), and starts the agent detached, wrapped in `sh` so its
@@ -1017,7 +1036,10 @@ command run; a waiter that can't reach the daemon ends.
   - A handoff offered to the person also says what Accept starts: `onAccept: { agent?: "claude" | "codex",
     permissionMode?, text }`. The line to show is `text`. Example: "Starts a Claude Code agent on this Mac in auto
     mode, in a new worktree of b3-fun/b3os-beta." The `agent` is absent when this machine can't run the handoff.
-  - These fields are additive: an older app shows two lines of `task` as before.
+  - A handoff that waits for "run it here" is listed too, with `status: "accepted"`, the question as `runHere`
+    ("Accepted on the board: run it here?") and the same `onAccept` line (B3-7235).
+  - These fields are additive: an older app shows two lines of `task` as before, and does not show a handoff that
+    waits for "run it here".
   - Workmesh.app shows a task of up to 80 characters whole, with the `onAccept` line under it. A longer task, or a
     handoff with a context, shows two lines and "Show all". That opens the whole task and context in a box that
     scrolls and whose text can be selected. On such a row the first click on Accept opens the box and accepts

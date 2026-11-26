@@ -305,10 +305,12 @@ struct CoordMessage: Decodable, Identifiable {
     let name: String?
     let from: String
     let fromSession: String?
+    /// Where the hub made it from, when no paired machine sent it: "linear" (a Linear prompt) or "other".
+    let via: String?
     let text: String
     let ts: Double?
 
-    private enum K: String, CodingKey { case id, session, name, from, fromSession, text, ts }
+    private enum K: String, CodingKey { case id, session, name, from, fromSession, via, text, ts }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -321,7 +323,18 @@ struct CoordMessage: Decodable, Identifiable {
         name = c.text(.name)
         from = c.text(.from) ?? "A teammate"
         fromSession = c.text(.fromSession)
+        via = c.text(.via)
         ts = c.lenient(Double.self, .ts)
+    }
+}
+
+/// " via Linear" after a sender's name, when the hub made the message from a
+/// source other than a paired machine. Empty for every other message.
+func viaNote(_ via: String?) -> String {
+    switch via {
+    case nil: return ""
+    case "linear": return " via Linear"
+    default: return " via another source"
     }
 }
 
@@ -333,6 +346,8 @@ struct CoordHeld: Decodable, Identifiable {
     let name: String?
     let from: String
     let fromSession: String?
+    /// Where the hub made it from, when no paired machine sent it: "linear" (a Linear prompt) or "other".
+    let via: String?
     let text: String
     /// When it was held and when it is dropped if I do nothing, on this Mac's clock (epoch ms).
     let since: Double?
@@ -346,7 +361,7 @@ struct CoordHeld: Decodable, Identifiable {
         return mins < 120 ? "Dropped in \(mins) min if you do nothing" : "Dropped in \(mins / 60) h if you do nothing"
     }
 
-    private enum K: String, CodingKey { case id, session, name, from, fromSession, text, since, dropAt }
+    private enum K: String, CodingKey { case id, session, name, from, fromSession, via, text, since, dropAt }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -359,6 +374,7 @@ struct CoordHeld: Decodable, Identifiable {
         name = c.text(.name)
         from = c.text(.from) ?? "A teammate"
         fromSession = c.text(.fromSession)
+        via = c.text(.via)
         since = c.lenient(Double.self, .since)
         dropAt = c.lenient(Double.self, .dropAt)
     }

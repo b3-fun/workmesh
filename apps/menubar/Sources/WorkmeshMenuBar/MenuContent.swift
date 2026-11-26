@@ -354,7 +354,7 @@ struct MenuContent: View {
 
     /// v1: a teammate's message that hasn't reached its agent yet (it arrives at the agent's next tool call).
     private func messageRow(_ m: CoordMessage, hubNow: Date) -> some View {
-        let from = m.fromSession.map { "\(m.from) (\($0))" } ?? m.from
+        let from = (m.fromSession.map { "\(m.from) (\($0))" } ?? m.from) + viaNote(m.via)
         let to = m.name.map { " → \($0)" } ?? ""
         return HStack(alignment: .top, spacing: 8) {
             Image(systemName: "envelope")
@@ -380,7 +380,7 @@ struct MenuContent: View {
     /// A teammate's message held for me. Its session runs with no permission
     /// prompts, so the agent has not seen it: Deliver hands it over, Drop removes it.
     private func heldRow(_ m: CoordHeld, now: Date) -> some View {
-        let from = m.fromSession.map { "\(m.from) (\($0))" } ?? m.from
+        let from = (m.fromSession.map { "\(m.from) (\($0))" } ?? m.from) + viaNote(m.via)
         let to = m.name.map { " → \($0)" } ?? ""
         let fate = m.fate(now: now)
         return HStack(alignment: .top, spacing: 8) {

@@ -40,7 +40,9 @@ app is presentation + control only, so there's zero logic to keep in sync.
   with no permission prompts. The agent has not seen it. **Deliver** hands it
   to the session, **Drop** removes it, and the tooltip says when it is dropped
   if you do nothing. It comes from `GET /team`'s `coord.held` and answers
-  through `POST /coord/op` (`inbox`); an older daemon sends none.
+  through `POST /coord/op` (`inbox`); an older daemon sends none. A message the
+  hub made from a Linear prompt reads "Sam via Linear", here and under
+  "Messages for your agents".
 - **Handoffs for you** (v2): tasks a teammate handed you, with who, repo and
   issue, and **Accept** / **Decline**; ones already running here say so. Up to
   four, the header counts all. Accept starts an agent on this Mac, and the

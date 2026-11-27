@@ -1880,9 +1880,9 @@ device token names the person, requests carry ingest keys, answers carry hub key
      who reviews. Without `paths`, the hub may read the PR's changed files itself. GitHub's rules apply: gitignore
      patterns, the last matching line decides, and a line with no owners leaves its paths unowned. An email owner is
      the person with that email. A `@login` owner is a person only when the hub can vouch for the login from GitHub
-     itself (B3's hub: its GitHub App read a PR by that login, and the one session that created it, an event with
-     `cmd: "gh pr create"` and that PR in `pr`, was that person's; viewing or linking a PR vouches for nothing, and a
-     second person creating one by the same login makes it nobody's). A login a machine reports names nobody: nothing checks it, so a member could claim a teammate's login and receive the
+     itself (B3's hub: its GitHub App read a PR by that login, and the only person whose sessions in that repo ran
+     `git commit` or `git push` on the PR's head branch is that person; viewing, linking or reviewing a PR vouches for
+     nothing, and a second person committing on such a branch makes the login nobody's). A login a machine reports names nobody: nothing checks it, so a member could claim a teammate's login and receive the
      reviews meant for them (§49, B3-7239). A team names its members only when the hub can read them from GitHub (B3's
      hub can't yet), and nobody otherwise.
   3. Then people whose sessions recently worked those paths in that repo (edits, leases, claims, sessions).

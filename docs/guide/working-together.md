@@ -253,7 +253,7 @@ yours: a Codex review for a Claude Code PR, and the reverse.
 
 CODEOWNERS comes from the repo's default branch, which B3's hub reads itself through its GitHub App (read-only, that
 one file). What your branch's file says doesn't change who reviews. An owner counts by email, or by a GitHub login the
-hub has seen on GitHub itself: a PR by that login whose branch only your sessions committed or pushed to. Opening,
+hub has seen on GitHub itself: a PR by that login that only your sessions committed or pushed to. Opening,
 checking out or reviewing someone else's PR doesn't count. A login a machine claims names nobody, and so does a team, for now. The review card says why someone was picked, for example "code owner of
 apps/hub/". Before you ask, the board's Request agent review shows who the hub would pick and why.
 

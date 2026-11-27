@@ -247,10 +247,15 @@ find your checkout, add where your repos live: `workmesh roots add ~/code`.
 When one of your sessions opens a PR (`gh pr create`, not a draft) or marks one ready (`gh pr ready`), Workmesh tells
 its agent that a teammate's agent can review it. The agent asks with the `request_review` tool; you can too, with
 `workmesh review 212` (or `owner/name#212`, or the PR's URL). The hub picks one teammate, or two with `--count 2`: the
-people you name, else the CODEOWNERS owners of the changed files (by email, or by a GitHub login the hub has seen on GitHub itself; a
-login a machine claims names nobody), else whoever
-worked on those files lately, else whoever is online and free. Never you, and only people whose machines take reviews.
-It prefers another agent CLI than yours: a Codex review for a Claude Code PR, and the reverse.
+people you name, else the CODEOWNERS owners of the changed files, else whoever worked on those files lately, else
+whoever is online and free. Never you, and only people whose machines take reviews. It prefers another agent CLI than
+yours: a Codex review for a Claude Code PR, and the reverse.
+
+CODEOWNERS comes from the repo's default branch, which B3's hub reads itself through its GitHub App (read-only, that
+one file). What your branch's file says doesn't change who reviews. An owner counts by email, or by a GitHub login the
+hub has seen on GitHub itself (a PR by that login that only your sessions pointed at). A login a machine claims names
+nobody, and so does a team, for now. The review card says why someone was picked, for example "code owner of
+apps/hub/". Before you ask, the board's Request agent review shows who the hub would pick and why.
 
 The review runs on the teammate's machine, read-only. Their relay makes a fresh checkout of the PR's head that can't
 push, and starts their agent on it with the PR's text marked as untrusted. A Claude Code review only reads; a Codex

@@ -1874,11 +1874,16 @@ device token names the person, requests carry ingest keys, answers carry hub key
 - **Routing** (the hub picks up to `count` reviewers, never the author, never twice the same person):
   1. The people the request names, when each is found by §48's rule and is not the author. A name that fits more than
      one person answers `409` with `candidates`, and nothing is made.
-  2. Otherwise: CODEOWNERS owners of the changed paths. An email owner is the person with that email. A `@login` owner
-     is a person only when the hub can vouch for the login from GitHub itself (B3's hub: its GitHub App read a PR by
-     that login that only that person's sessions linked). A login a machine reports names nobody: nothing checks it,
-     so a member could claim a teammate's login and receive the reviews meant for them (§49, B3-7239). A team is not
-     read.
+  2. Otherwise: CODEOWNERS owners of the changed paths. A hub that reads the repo's CODEOWNERS itself goes by its own
+     read and ignores the request's `owners`, which count only when it has none. B3's hub reads the file from the
+     default branch through its GitHub App (read-only, that one file; B3-7266), so an author's branch can't change
+     who reviews. Without `paths`, the hub may read the PR's changed files itself. GitHub's rules apply: gitignore
+     patterns, the last matching line decides, and a line with no owners leaves its paths unowned. An email owner is
+     the person with that email. A `@login` owner is a person only when the hub can vouch for the login from GitHub
+     itself (B3's hub: its GitHub App read a PR by that login that only that person's sessions linked). A login a
+     machine reports names nobody: nothing checks it, so a member could claim a teammate's login and receive the
+     reviews meant for them (§49, B3-7239). A team names its members only when the hub can read them from GitHub (B3's
+     hub can't yet), and nobody otherwise.
   3. Then people whose sessions recently worked those paths in that repo (edits, leases, claims, sessions).
   4. Then people who are online and idle.
   Within each step the hub prefers a person whose machine reviews with another agent CLI than the author's (a Codex

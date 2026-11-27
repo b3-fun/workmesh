@@ -6,7 +6,8 @@ your account, and reading your first `workmesh doctor`.
 
 Not an engineer? You don't need to install anything to ask for work. Sign in to the board at
 https://workmesh.b3os.org, open **Ask** and switch it to **Request work**, then say what you need in your own words.
-It finds the engineer who should do it and asks them; nothing runs until they accept. You follow it under
+It finds the engineer who should do it (the code owner of that part of the repo first, then whoever worked there
+lately) and asks them; nothing runs until they accept. You follow it under
 **Requests** and sign it off when it's what you meant. You can also mention Workmesh on a Linear issue.
 
 ## Before you start

@@ -247,7 +247,8 @@ find your checkout, add where your repos live: `workmesh roots add ~/code`.
 When one of your sessions opens a PR (`gh pr create`, not a draft) or marks one ready (`gh pr ready`), Workmesh tells
 its agent that a teammate's agent can review it. The agent asks with the `request_review` tool; you can too, with
 `workmesh review 212` (or `owner/name#212`, or the PR's URL). The hub picks one teammate, or two with `--count 2`: the
-people you name, else the CODEOWNERS owners of the changed files (by email: a GitHub login names nobody), else whoever
+people you name, else the CODEOWNERS owners of the changed files (by email, or by a GitHub login the hub has seen on GitHub itself; a
+login a machine claims names nobody), else whoever
 worked on those files lately, else whoever is online and free. Never you, and only people whose machines take reviews.
 It prefers another agent CLI than yours: a Codex review for a Claude Code PR, and the reverse.
 

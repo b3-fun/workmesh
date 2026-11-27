@@ -4,6 +4,11 @@ One command sets up a machine: it installs the agent hooks and MCP tools, runs t
 B3's hub. This page covers what it changes, how to undo it, the macOS menu bar app, the notice when a machine joins
 your account, and reading your first `workmesh doctor`.
 
+Not an engineer? You don't need to install anything to ask for work. Sign in to the board at
+https://workmesh.b3os.org, open **Ask** and switch it to **Request work**, then say what you need in your own words.
+It finds the engineer who should do it and asks them; nothing runs until they accept. You follow it under
+**Requests** and sign it off when it's what you meant. You can also mention Workmesh on a Linear issue.
+
 ## Before you start
 
 - Node 20, 22 or 24 (`node -v`).

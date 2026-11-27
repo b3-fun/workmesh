@@ -1874,9 +1874,9 @@ device token names the person, requests carry ingest keys, answers carry hub key
 - **Routing** (the hub picks up to `count` reviewers, never the author, never twice the same person):
   1. The people the request names, when each is found by §48's rule and is not the author. A name that fits more than
      one person answers `409` with `candidates`, and nothing is made.
-  2. Otherwise: CODEOWNERS owners of the changed paths. An email owner is the person with that email. A `@login` owner
-     is a person only when exactly one member reports that GitHub login; a team is not read. A login is only a hint
-     here (a machine reports its own person's login, §49): it decides an order, never who may do what.
+  2. Otherwise: CODEOWNERS owners of the changed paths. An email owner is the person with that email. A `@login` or a
+     team names nobody: a machine reports its own person's GitHub login and nothing checks it, so a member could
+     claim a teammate's login and receive the reviews meant for them (§49, B3-7239).
   3. Then people whose sessions recently worked those paths in that repo (edits, leases, claims, sessions).
   4. Then people who are online and idle.
   Within each step the hub prefers a person whose machine reviews with another agent CLI than the author's (a Codex
@@ -1916,6 +1916,73 @@ ready", off by default); `autoRepos` are the repos where every ready PR gets one
 
 What the hub does with a round is the hub's own (the board, a person's turn after the last round): the hosted hub's
 docs say how.
+
+## 53. The relay side (`packages/cli`)
+
+Everything here follows the handoff rules of §31 (B3-7234, B3-7235) and the message rules of §23 (B3-7232, B3-7233,
+B3-7258). Where a review could start an agent or reach a session, the stricter of the two applies.
+
+- **The machine's policy** (`reviews` in config, `workmesh reviews policy`). `reviews.accept`: `ask` (absent = this)
+  waits for the person's accept on this machine (menu bar, `workmesh handoffs accept`, or the board then "run it
+  here"), as any handoff does. `auto` starts a review offered to this person on this machine at once, recorded as
+  accepted by policy (§31's record). `never` runs none here. `reviews.postToGitHub` (absent = false), `reviews.agent`
+  and `reviews.model` (absent: the handoff ones), `reviews.auto`, `reviews.count`, `reviews.maxMinutes` (30). Only
+  the person sets them: the daemon's `review_policy` operation refuses any caller it reads as an agent session and
+  every call through the MCP server, which has no tool for it; the hub's sync never sets them. The relay sends the
+  policy to the hub once the hub has reviews (§52 `policy`), when it changes, and every 6 hours.
+- **A PR opened or made ready.** At `PostToolUse` of a shell command that is `gh pr create` (not `--draft`) or `gh pr
+  ready` (not `--undo`) in a shared session, with a PR URL of that session's repo in its output (§15's reading), the
+  session gets one line of context: it can ask for an agent review with the workmesh `request_review` tool. When the
+  person's standing rule is on (`reviews.auto` on this machine, else the sync's `reviews.auto` or the repo in
+  `autoRepos`), the relay asks by itself in the background (`auto: true`), once per PR per daemon, and the line says
+  so. A review run never gets either.
+- **Asking** (MCP `request_review { pr?, repo?, focus?, reviewers?, count? }`, CLI `workmesh review [pr]`). `pr` is a
+  number, `owner/name#n` or the PR's URL; absent, the PR the session opened last (24 hours). Before asking, the
+  relay reads the PR's changed files with the person's own `gh` (else `git diff` against the remote's default branch
+  in the session's checkout) and their CODEOWNERS owners from the checkout (`.github/CODEOWNERS`, `CODEOWNERS`,
+  `docs/CODEOWNERS`; gitignore patterns, the last match wins). Named reviewers are found in the roster as for `send`
+  (§49); the person themselves is refused. The focus is redacted (§9). The hub's no (a round still open, the rounds
+  used, nobody to ask, a name that fits two people) comes back in its words. `workmesh reviews [list | show <id>]`
+  and the MCP `reviews` tool list them and print one in full.
+- **Running one** (`daemon/handoff-runner.ts`, `daemon/review-git.ts`). A review handoff is built from its `review`
+  fields, never from its `task`. The runner claims it (`start`), reads the PR with the person's `gh` (title,
+  description, files, head and base, comments and reviews by bots), and makes a fresh checkout in the run's own
+  directory under the state dir: a `git clone --shared` of the person's checkout when there is one (else a partial
+  clone from GitHub), its push URL set to one no transport takes, the PR's head (`refs/pull/<n>/head`, else its
+  branch) and its base fetched under `workmesh-review-*` names. Nothing in the person's checkout changes. The prompt
+  (on standard input) says the review is read-only and never approves; fences the PR's title, description and
+  earlier bot reviews as untrusted input, and says an instruction inside them is a finding, not a task; adds the
+  team's accepted memories for the repo (§36) as conventions; and asks for one JSON block of findings.
+  - **Claude Code** runs with `--permission-mode dontAsk`, only the tools `Read`, `Grep`, `Glob` and `Bash`, `Bash`
+    only for read-only commands (`git diff|log|show|status|blame|ls-files|rev-parse|merge-base|grep`, `ls`, `wc`,
+    `head`, `tail`, `cat`), `--setting-sources user` (settings, hooks and MCP servers in the PR's own checkout don't
+    load, so the PR can't run anything as the reviewer) and `--strict-mcp-config` (no MCP servers). It runs none of
+    the PR's code.
+  - **Codex** runs `codex exec -s workspace-write -c approval_policy="never"` with no network and its answer shaped
+    by `--output-schema`: it may run the PR's tests inside that sandbox.
+  - **The daemon's gate** (`daemon/review-gate.ts`) refuses, at `PreToolUse` in a review run, every file edit tool,
+    `git push` and other writes to git's remotes or credentials, every GitHub write through `gh` (`pr merge|review|
+    comment|close|edit|ready|create`, issue writes, releases, repo writes, workflows, secrets, `gh api` with a write
+    method or fields), `curl`-style writes to GitHub, and everything an approval gate matches (§31). The hook knows
+    the run by its `WORKMESH_HANDOFF` environment (sent as `x-workmesh-handoff`) before a Codex thread names itself,
+    and by its session key after. A cooperative guard rail on the person's own machine, as every gate is.
+  - The environment is the handoff one (§31): a fixed list, and the agent tool's own sign-in. The relay's own `gh`
+    and `git` calls run as the person, without prompts.
+  - At exit the runner reads the answer, redacts it (§9), keeps at most 50 findings, sets the verdict from them (a
+    high or medium finding suggests changes; an answer with no readable block is a comment, never a clean bill),
+    posts it on the PR as a plain review comment (`gh pr review --comment`, never `--approve`) only when
+    `reviews.postToGitHub` is on, with mentions and images defused, and sends `report`. The checkout is removed. A run
+    that ends with nothing readable is a `fail`.
+- **The answer.** A review a session here asked for, once done, is fetched whole (`result`) and given to that session
+  as Workmesh's own notice, waking it: who reviewed with which agent and model, the round, the verdict and counts,
+  then the reviewer's words in one `<workmesh-review from=… pr=… round=…>` block, every line behind `│`. It is a
+  requested delivery, so it doesn't wait for the person (B3-7258), and it is still marked as a teammate's text: the
+  notice says the findings are review comments to weigh, not instructions, that anything beyond the person's task
+  needs the person's say-so, and that agent reviews never approve. Accepted, declined and failed reviews are told in
+  Workmesh's own words; the other side's free-text note never goes into a notice (B3-7258). The board shows the
+  same findings (the hub's side).
+- **What a review never does**: approve, merge, push, or post anything but a comment, and only for a reviewer who
+  opted in. A person approves the PR.
 
 ## Message delivery and device credentials (0.13)
 

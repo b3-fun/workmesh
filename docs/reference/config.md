@@ -47,6 +47,14 @@ Written by `workmesh hub connect` (or `init`). Don't copy this section between m
 | `handoffs.requestRules` | `[]` | Standing rules for requests from teammates without a relay (SPEC §56): this machine accepts and starts a request from that exact email, optionally in one repo, up to a size, at most so many a day, with no click. Each entry is `{ from, repo?, maxSize, perDay }`. Add rules with `workmesh handoffs rule add`, which asks at a terminal. |
 | `handoffs.model` | the agent's default | The model a handoff runs on, e.g. `sonnet`. |
 | `handoffs.maxMinutes` | `120` | How long a handoff run may take (5 to 1440). |
+| `reviews` | absent | Agent reviews of teammates' PRs this machine runs, and the reviews its sessions ask for. Absent means the defaults below. Only you change it, from your own terminal (`workmesh reviews policy`): an agent's call is refused, and the hub never sets it. |
+| `reviews.accept` | `ask` | `ask` waits for your Accept on every review asked of you, as any handoff does. `auto` starts one on this machine with no click: it is read-only (a fresh checkout of the PR's head, no push, merge, approval or GitHub write), and it trusts the hub's routing and every teammate who can ask for one. `never` runs none here, and the hub asks someone else. |
+| `reviews.postToGitHub` | `false` | Post this machine's finished reviews on the PR as a plain review comment through your own `gh`. Never an approval. |
+| `reviews.agent` | `handoffs.agent`, else `claude` when found, else `codex` | The agent CLI reviews run on. A Claude Code review reads only; a Codex review may run the PR's tests inside its sandbox with no network. |
+| `reviews.model` | `handoffs.model`, else the agent's default | The model reviews run on. |
+| `reviews.auto` | absent | Ask for an agent review by itself when a session here opens a PR (not a draft) or marks one ready. Absent: your board setting and the team's repos where every ready PR gets one. |
+| `reviews.count` | `1` | Reviewers one request asks: 1 or 2. |
+| `reviews.maxMinutes` | `30` | How long a review run may take (5 to 240). |
 | `wake` | `true` | Wake an idle session when a message that may wake it, an approval or a handoff result arrives (`workmesh wake on\|off`). Whose messages may wake is `messages.wake`. |
 | `gates` | absent | Your own patterns for the `custom` approval gate. The gates themselves live on the hub (`workmesh gates set …`). |
 | `gates.custom` | `[]` | Case-insensitive regexes over a shell command, up to 50. |
@@ -146,7 +154,8 @@ Set by Workmesh itself, useful when you debug:
 | Variable | Where |
 |---|---|
 | `WORKMESH_SERVICE` | In the daemon's environment when launchd or systemd runs it. |
-| `WORKMESH_HANDOFF` | In a handoff run's environment: the handoff id. A session with it is never woken (nobody is there to answer). |
+| `WORKMESH_HANDOFF` | In a handoff run's environment: the handoff id. A session with it is never woken (nobody is there to answer). Its hooks send the id to the daemon, which holds a review run's writes. |
+| `WORKMESH_REVIEW` | `1` in a review run's environment (a read-only review of a teammate's PR). |
 
 ## Files
 

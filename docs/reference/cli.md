@@ -53,6 +53,9 @@ For what to run when, start with the [guide](../guide/getting-started.md).
 | [`workmesh handoffs`](#workmesh-handoffs) | Handoffs offered to you and sent by you; read one in full, accept or decline it, or run one accepted elsewhere |
 | [`workmesh handoffs rule`](#workmesh-handoffs-rule) | Standing rules for requests from teammates without a relay: accept and start some with no click (added only at a terminal) |
 | [`workmesh handoffs policy`](#workmesh-handoffs-policy) | Which handoffs this machine takes without a click: ask (the default: none), auto-self (your own), never |
+| [`workmesh review`](#workmesh-review) | Ask a teammate's agent for a read-only review of a PR (never an approval); the findings come back to the asking session |
+| [`workmesh reviews`](#workmesh-reviews) | Agent reviews you asked for and ones asked of you; read one's findings |
+| [`workmesh reviews policy`](#workmesh-reviews-policy) | Which reviews this machine runs without a click (ask, the default; auto; never), and whether it posts them on the PR |
 | [`workmesh roots`](#workmesh-roots) | Where your repos live, so a handoff finds its checkout here (repos your sessions worked in count too) |
 | [`workmesh gates`](#workmesh-gates) | Approval gates on your own agents: they ask before they merge, deploy, publish, force-push or spend |
 | [`workmesh approvals`](#workmesh-approvals) | Approvals your agents asked for, and ones you can decide; approve or deny one |
@@ -147,6 +150,11 @@ Commands:
   handoffs [options] [action] [id]   Handoffs offered to you and sent by you;
                                      read one in full, accept or decline it, or
                                      run one accepted elsewhere
+  review [options] [pr]              Ask a teammate's agent for a read-only
+                                     review of a PR (never an approval); the
+                                     findings come back to the asking session
+  reviews [options] [action] [id]    Agent reviews you asked for and ones asked
+                                     of you; read one's findings
   roots [action] [dir]               Where your repos live, so a handoff finds
                                      its checkout here (repos your sessions
                                      worked in count too)
@@ -901,6 +909,72 @@ Arguments:
 
 Options:
   -h, --help  display help for command
+```
+
+## workmesh review
+
+```text
+Usage: workmesh review [options] [pr]
+
+Ask a teammate's agent for a read-only review of a PR (never an approval); the
+findings come back to the asking session
+
+Arguments:
+  pr                      212, owner/name#212 or the PR's URL (default: the PR
+                          this session opened)
+
+Options:
+  --repo <owner/name>     the repo (default: the PR's, else this directory's)
+  --focus <text>          what to look at
+  --reviewer <person...>  up to two people (default: CODEOWNERS, recent work,
+                          who is free)
+  --count <n>             how many reviewers: 1 (default) or 2
+  --json                  machine-readable output
+  -h, --help              display help for command
+```
+
+## workmesh reviews
+
+```text
+Usage: workmesh reviews [options] [command] [action] [id]
+
+Agent reviews you asked for and ones asked of you; read one's findings
+
+Arguments:
+  action                     list | show
+  id                         the review, for show
+
+Options:
+  --json                     machine-readable output
+  -h, --help                 display help for command
+
+Commands:
+  policy [options] [accept]  Which reviews this machine runs without a click
+                             (ask, the default; auto; never), and whether it
+                             posts them on the PR
+```
+
+## workmesh reviews policy
+
+```text
+Usage: workmesh reviews policy [options] [accept]
+
+Which reviews this machine runs without a click (ask, the default; auto; never),
+and whether it posts them on the PR
+
+Arguments:
+  accept                  auto | ask | never
+
+Options:
+  --post <on|off>         post finished reviews on the PR as a comment through
+                          your gh (default off; never an approval)
+  --agent <claude|codex>  the agent CLI reviews run on
+  --model <name>          the model reviews run on
+  --auto <on|off|hub>     ask for a review when a PR you open here is ready
+                          (hub: your board setting)
+  --count <n>             reviewers per request: 1 or 2
+  --json                  machine-readable output
+  -h, --help              display help for command
 ```
 
 ## workmesh roots

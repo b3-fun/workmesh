@@ -181,6 +181,39 @@ export const configSchema = z.object({
     })
     .optional()
     .catch(undefined),
+  /**
+   * Review exchange (SPEC §53): teammates' PR reviews this machine runs, and the reviews its sessions ask for. Absent =
+   * the defaults below. A malformed section, or a malformed key in it, reads as absent.
+   */
+  reviews: z
+    .object({
+      /**
+       * `ask` (default): a review handoff waits for your Accept, as any handoff does. `auto`: this machine starts it at
+       * once. A review is read-only: a fresh checkout of the PR's head, no push, merge or approval. `never`: this
+       * machine runs no reviews (the hub then asks someone else).
+       */
+      accept: z.enum(["auto", "ask", "never"]).optional().catch(undefined),
+      /**
+       * Post this machine's reviews on the PR as a comment, through your own `gh` (default false). Never an approval:
+       * a person approves the PR.
+       */
+      postToGitHub: z.boolean().optional().catch(undefined),
+      /** The agent CLI reviews run on (default: `handoffs.agent`, else claude when found, else codex). */
+      agent: z.enum(["claude", "codex"]).optional().catch(undefined),
+      /** The model reviews run on (default: `handoffs.model`, else the agent's default). */
+      model: z.string().regex(/^[\w.:\[\]/-]{1,80}$/).optional().catch(undefined),
+      /**
+       * Ask for an agent review by itself when a session here opens a PR (not a draft) or marks one ready. Absent:
+       * your setting on the board (off by default) and the team's repos where every ready PR gets one.
+       */
+      auto: z.boolean().optional().catch(undefined),
+      /** Reviewers one review asks: 1 (default) or 2. */
+      count: z.number().int().min(1).max(2).optional().catch(undefined),
+      /** A review is stopped after this long (default 30 min). */
+      maxMinutes: z.number().int().min(5).max(240).optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
   /** v2: wake an idle session when a message for it arrives (default true; `workmesh wake off`). */
   wake: z.boolean().optional().catch(undefined),
   /**
@@ -414,7 +447,7 @@ export function messageSettings(config: Pick<Config, "messages">): MessageSettin
   return { wake: m?.wake ?? "replies", hold: m?.hold ?? "bypass", holdMinutes: m?.holdMinutes ?? 60, from: m?.from ?? "team" };
 }
 
-export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {
+export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates"> & Partial<Pick<Config, "reviews">>): {
   wake: boolean;
   accept: "ask" | "auto-self" | "never";
   runAccepted: "confirm" | "auto";
@@ -428,6 +461,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
   env: string[];
   customGates: string[];
   requestRules: RequestRule[];
+  reviewAccept: "auto" | "ask" | "never";
 } {
   const h = config.handoffs;
   return {
@@ -444,6 +478,49 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
     env: h?.env ?? [],
     customGates: config.gates?.custom ?? [],
     requestRules: h?.requestRules ?? [],
+    reviewAccept: config.reviews?.accept ?? "ask",
+  };
+}
+
+/**
+ * A change to the config's `reviews` section (SPEC §53): a value sets the key, `null` removes it (its default again).
+ * Only a person's own terminal reaches this (`review_policy`); the hub and agents never do.
+ */
+export function patchReviewConfig(config: Config, patch: Partial<Record<keyof ReviewSettings, unknown>>): Config {
+  const next: Record<string, unknown> = { ...(config.reviews ?? {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) continue;
+    if (v === null) delete next[k];
+    else next[k] = v;
+  }
+  const parsed = configSchema.shape.reviews.safeParse(next);
+  return { ...config, reviews: parsed.success ? parsed.data : config.reviews };
+}
+
+/** Review exchange (SPEC §53): this machine's review settings, with the defaults. */
+export interface ReviewSettings {
+  accept: "auto" | "ask" | "never";
+  postToGitHub: boolean;
+  agent?: "claude" | "codex";
+  model?: string;
+  /** Undefined: the hub's word (the person's board setting, the team's repos). */
+  auto?: boolean;
+  count: 1 | 2;
+  maxMinutes: number;
+}
+
+export function reviewSettings(config: Pick<Config, "reviews" | "handoffs">): ReviewSettings {
+  const r = config.reviews;
+  const agent = r?.agent ?? config.handoffs?.agent;
+  const model = r?.model ?? config.handoffs?.model;
+  return {
+    accept: r?.accept ?? "ask",
+    postToGitHub: r?.postToGitHub ?? false,
+    ...(agent ? { agent } : {}),
+    ...(model ? { model } : {}),
+    ...(r?.auto === undefined ? {} : { auto: r.auto }),
+    count: r?.count === 2 ? 2 : 1,
+    maxMinutes: r?.maxMinutes ?? 30,
   };
 }
 

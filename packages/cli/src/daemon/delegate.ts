@@ -62,6 +62,11 @@ export interface DelegateSettings {
   customGates: readonly string[];
   /** Standing rules for requests (SPEC §56): this machine's config, added only at its terminal. */
   requestRules?: readonly RequestRule[];
+  /**
+   * Review exchange (SPEC §53): review handoffs on this machine. `auto` starts one at once (this machine's own config,
+   * never the hub's or an agent's word), `ask` (absent = this) waits for the person, `never` runs none.
+   */
+  reviewAccept?: "auto" | "ask" | "never";
 }
 
 /** Runs accepted handoffs on this machine (daemon/handoff-runner.ts). */
@@ -447,6 +452,12 @@ export class Delegate {
       // A handoff a session here sent: tell it how it went (not for what was already so when the daemon started).
       if (fromLocal && !seed && prev !== undefined && prev !== h.status) this.tellSender(coord, h, CoordClient.family(fromLocal));
       if (!coord.isMe(h.to)) continue;
+      if (h.kind === "review") {
+        // A review: this machine's own review policy decides (SPEC §53), never the handoff policy or a request rule.
+        if (h.status === "offered") this.maybeAutoAcceptReview(coord, h);
+        else if (h.status === "accepted") this.maybeStartReview(coord, h);
+        continue;
+      }
       if (h.status === "offered") {
         if (!this.maybeAcceptByRule(coord, h)) this.maybeAutoAccept(coord, h, settings.accept, fromLocal !== undefined);
       }
@@ -458,7 +469,52 @@ export class Delegate {
     }
   }
 
+  /** The accept policy that covers this handoff here: a review's is the review policy (SPEC §53). */
+  private policyOf(h: Pick<HubHandoffAccepted, "kind">): HandoffAcceptPolicy {
+    if (h.kind === "review") return (this.deps.settings().reviewAccept ?? "ask") === "never" ? "never" : "ask";
+    return this.deps.settings().accept;
+  }
+
+  /**
+   * A review offered to this person, with this machine's review policy at `auto`: accept it here and start it. The
+   * policy is the person's own setting in this machine's config (`workmesh reviews policy auto`, which an agent's call
+   * is refused), so the record says it was accepted by policy, as for `auto-self`. A review is read-only (SPEC §53).
+   */
+  private maybeAutoAcceptReview(coord: CoordClient, h: HubHandoffAccepted): void {
+    const runner = this.deps.runner;
+    if (this.deps.settings().reviewAccept !== "auto" || !runner) return;
+    if (this.handoffCalls.has(h.id) || runner.cannotRun(h) || !runner.hasRoom()) return;
+    this.handoffCalls.add(h.id);
+    void coord
+      .handoff({ action: "accept", id: h.id })
+      .then((r) => {
+        if (r.ok && r.body.ok) {
+          this.log(`review ${h.id}: accepted by this machine's review policy (auto)`);
+          this.acceptedHere.add(h.id, "policy", this.now(), handoffHash(h));
+          if (r.body.handoff.status === "accepted") this.maybeStart(coord, r.body.handoff, "ask", true);
+        }
+      })
+      .finally(() => this.handoffCalls.delete(h.id));
+  }
+
+  /**
+   * An accepted review: it starts when this machine accepted it (the person here, or the review policy), as any
+   * handoff (B3-7235). With the policy at `auto`, one the person accepted on the board needs no second step here: the
+   * policy already lets every review for this person run on this machine.
+   */
+  private maybeStartReview(coord: CoordClient, h: HubHandoffAccepted): void {
+    const policy = this.deps.settings().reviewAccept ?? "ask";
+    if (policy === "never") return;
+    if (h.device && h.device !== coord.deviceId) return;
+    if (policy === "auto" && !this.acceptedHere.get(h.id) && this.deps.runner && !this.deps.runner.cannotRun(h)) {
+      this.acceptedHere.add(h.id, "policy", this.now(), handoffHash(h));
+    }
+    this.maybeStart(coord, h, "ask");
+  }
+
   private tellSender(coord: CoordClient, h: HubHandoffAccepted, local: string): void {
+    // A review's author hears from the review exchange, with the findings (daemon/reviews.ts).
+    if (h.kind === "review") return;
     const who = label(h.to.person);
     // The task sits in quotes, so it is a label (no quote in it ends them); the note is the other side's words.
     const task = label(h.task, 120);
@@ -593,7 +649,8 @@ export class Delegate {
     const coord = this.deps.coord();
     if (!coord || h.status !== "accepted") return;
     this.acceptedHere.add(h.id, by, this.now(), handoffHash(seen));
-    this.maybeStart(coord, h, this.deps.settings().accept === "never" ? "ask" : this.deps.settings().accept, true);
+    const policy = this.policyOf(h);
+    this.maybeStart(coord, h, policy === "never" ? "ask" : policy, true);
   }
 
   /**
@@ -607,7 +664,9 @@ export class Delegate {
     const runner = this.deps.runner;
     if (!coord || !runner || h.status !== "accepted") return undefined;
     const settings = this.deps.settings();
-    if (settings.accept === "never" || settings.runAccepted === "auto") return undefined;
+    if (this.policyOf(h) === "never" || settings.runAccepted === "auto") return undefined;
+    // A review this machine's review policy runs needs no "run it here" (maybeStartReview).
+    if (h.kind === "review" && settings.reviewAccept === "auto") return undefined;
     if (!coord.isMe(h.to)) return undefined;
     if (h.device && h.device !== coord.deviceId) return undefined;
     if (runner.running().has(h.id)) return undefined;
@@ -634,7 +693,7 @@ export class Delegate {
     const coord = this.deps.coord();
     if (!coord || !this.waitsToRunHere(h)) return;
     this.acceptedHere.add(h.id, by, this.now(), handoffHash(h));
-    this.maybeStart(coord, h, this.deps.settings().accept, true);
+    this.maybeStart(coord, h, this.policyOf(h), true);
   }
 
   /** Says once, per change, that a handoff accepted here is now listed with other text. */

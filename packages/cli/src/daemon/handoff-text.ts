@@ -22,8 +22,13 @@ export interface HandoffPlan {
   agent?: "claude" | "codex";
   /** Claude Code's `--permission-mode` for the run. Codex has none. */
   permissionMode?: string;
-  /** A new git worktree of the repo, this machine's checkout itself, or a scratch directory (a handoff with no repo). */
-  where: "worktree" | "checkout" | "scratch";
+  /**
+   * A new git worktree of the repo, this machine's checkout itself, a scratch directory (a handoff with no repo), or a
+   * read-only review of a PR in a fresh checkout of its head (SPEC §53).
+   */
+  where: "worktree" | "checkout" | "scratch" | "review";
+  /** The PR a review is of. */
+  pr?: number;
   /** Why this machine can't run it. */
   cannot?: string;
 }
@@ -54,6 +59,13 @@ export function handoffStart(
   if (!plan.agent || plan.cannot) {
     return { text: `${here[0]!.toUpperCase()}${here.slice(1)} can't run it: ${plan.cannot ?? "no agent CLI found here"}.` };
   }
+  if (plan.where === "review") {
+    const pr = plan.pr ? `PR #${plan.pr}${h.repo ? ` in ${h.repo}` : ""}` : `a PR${h.repo ? ` in ${h.repo}` : ""}`;
+    return {
+      agent: plan.agent,
+      text: `${lead} a read-only ${AGENT_NAMES[plan.agent]} review of ${pr} on ${here}: a fresh checkout of its head, with no push, merge, approval or GitHub write.`,
+    };
+  }
   const mode = plan.permissionMode ? ` in ${plan.permissionMode} mode` : "";
   const where =
     plan.where === "worktree" && h.repo
@@ -72,10 +84,13 @@ export function handoffStart(
  * What a person's accept covers: the task and context they read, and the repo and issue it is for. The hash is of the
  * text as the hub sent it, before any cleaning, so a change nobody could see counts too.
  */
-export function handoffHash(h: Pick<HubHandoffAccepted, "task" | "context" | "repo" | "issue">): string {
-  return createHash("sha256")
-    .update(JSON.stringify([h.task, h.context ?? null, h.repo ?? null, h.issue ?? null]))
-    .digest("hex");
+export function handoffHash(h: Pick<HubHandoffAccepted, "task" | "context" | "repo" | "issue"> & Partial<Pick<HubHandoffAccepted, "kind" | "review">>): string {
+  // A review's accept covers which PR, which round and what to look at too (SPEC §53); a task's hash is as before.
+  const parts =
+    h.kind === "review"
+      ? [h.task, h.context ?? null, h.repo ?? null, h.issue ?? null, "review", h.review?.pr ?? null, h.review?.round ?? null, h.review?.focus ?? null]
+      : [h.task, h.context ?? null, h.repo ?? null, h.issue ?? null];
+  return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 
 /**

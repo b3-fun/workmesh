@@ -90,7 +90,9 @@ export function reviewPrompt(h: HubHandoffAccepted, f: ReviewFacts): string {
     "What to do:",
     `1. Read the change: \`git diff ${f.baseRef ?? "origin/HEAD"}...HEAD\`, \`git log --oneline ${f.baseRef ?? "origin/HEAD"}..HEAD\`, and the code around it.`,
     "2. Look for bugs, security holes, data loss, broken contracts or APIs, missing tests, and breaks of the team's conventions below. Prefer a few findings that matter over many small ones.",
-    "3. You may run the tests or the build when that is quick and needs no secrets or network sign-in; say whether you did.",
+    f.agent === "codex"
+      ? "3. You may run the tests or the build inside your sandbox (no network) when that is quick; say whether you did."
+      : "3. Read only: this review has the read tools and read-only git commands, and runs none of the PR's code (report tests as not_run).",
     "4. Be specific: each finding names the file and line, how bad it is (high: a bug, a hole, data loss; medium: should be fixed before merge; low: could be better; nit), what is wrong, and what to do. Keep suggestions short; no secrets or large code blocks.",
   ];
   if (f.round > 1) {
@@ -211,7 +213,8 @@ export function parseReviewOutput(
             ? "low"
             : "low";
     const fileRaw = str(r.file) ?? str(r.path);
-    const file = fileRaw ? normalizeLeasePath(fileRaw.replace(/^\.?\//, "")) : undefined;
+    // Repo-relative only: an absolute path, or one that leaves the repo, is dropped (normalizeLeasePath).
+    const file = fileRaw ? normalizeLeasePath(fileRaw) : undefined;
     const line = int(r.line);
     const endLine = int(r.endLine ?? r.end_line);
     const suggestion = scrub(str(r.suggestion) ?? str(r.fix), HUB_REVIEW_SUGGESTION_MAX, o.home);

@@ -788,11 +788,7 @@ export class HandoffRunner implements HandoffRunnerLike {
       const name = `review ${h.repo.split("/")[1] ?? h.repo}#${review.pr} for ${label(h.from.person, 60)}`;
       const argv =
         picked.agent === "claude"
-          ? [
-              picked.bin, "-p", "--session-id", sessionId!, "--output-format", "json", "--permission-mode", settings.permissionMode,
-              "--disallowedTools", REVIEW_DISALLOWED_TOOLS, "--name", name,
-              ...(model ? ["--model", model] : []),
-            ]
+          ? claudeReviewArgs(picked.bin, { sessionId: sessionId!, name, model })
           : codexReviewArgs(picked.bin, { dir: checkoutDir, resultFile, schemaFile, model });
       const passed = handoffEnv(env0, picked.agent, settings.env);
       const env: NodeJS.ProcessEnv = {
@@ -1021,8 +1017,34 @@ export function codexThreadFromLog(file: string): string | undefined {
   return undefined;
 }
 
-/** Claude Code's file edit tools: a review run starts without them (SPEC §53). */
-export const REVIEW_DISALLOWED_TOOLS = "Edit,Write,MultiEdit,NotebookEdit";
+/** The only tools a Claude Code review has (SPEC §53): reading, and a shell for the commands below. */
+export const REVIEW_CLAUDE_TOOLS = "Read,Grep,Glob,Bash";
+/**
+ * The shell commands a Claude Code review may run without asking; in `dontAsk` mode everything else is refused. They
+ * read the checkout and its history. A PR's own code (its tests, its build) doesn't run outside a sandbox: Claude
+ * Code reviews read, and a Codex review may run tests inside its sandbox with no network (B3-7235).
+ */
+export const REVIEW_CLAUDE_ALLOWED = [
+  "Read",
+  "Grep",
+  "Glob",
+  ...["git diff", "git log", "git show", "git status", "git blame", "git ls-files", "git rev-parse", "git merge-base", "git grep", "ls", "wc", "head", "tail", "cat"].map((c) => `Bash(${c}:*)`),
+].join(",");
+
+/**
+ * `claude -p` for a review (SPEC §53): only the read tools and the read-only commands above (`dontAsk` refuses the
+ * rest without a prompt), the person's own settings and hooks only (`--setting-sources user`: settings, hooks and MCP
+ * servers in the PR's checkout don't load, so the PR can't run anything as the reviewer), and no MCP servers. The
+ * prompt comes on standard input.
+ */
+export function claudeReviewArgs(bin: string, o: { sessionId: string; name: string; model?: string | undefined }): string[] {
+  return [
+    bin, "-p", "--session-id", o.sessionId, "--output-format", "json", "--permission-mode", "dontAsk",
+    "--setting-sources", "user", "--strict-mcp-config", "--tools", REVIEW_CLAUDE_TOOLS, "--allowedTools", REVIEW_CLAUDE_ALLOWED,
+    "--name", o.name,
+    ...(o.model ? ["--model", o.model] : []),
+  ];
+}
 
 /** The shape a Codex review's final answer must take (`--output-schema`): the findings the hub takes (SPEC §52). */
 export const REVIEW_OUTPUT_SCHEMA = {

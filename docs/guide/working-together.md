@@ -213,6 +213,23 @@ its own. `workmesh handoffs` and the menu bar show it as "accepted on the board:
 <id>` prints the whole handoff and what starts, then asks. In the menu bar it takes the same two steps as Accept. To get
 the old behaviour back, set `handoffs.runAccepted` to `auto` in the config. That trusts the hub's word that you accepted.
 
+### Requests from teammates without a relay
+
+A PM, a designer or someone in ops can ask the team for work on the board, without running Workmesh themselves. The
+hub suggests who should take it and offers it to you as a handoff in their name, marked as a request with how big it
+looks. You accept or decline it like any other handoff.
+
+If you'd rather let some of them start on their own, add a standing rule at your terminal:
+
+```sh
+workmesh handoffs rule add --from allie@example.com --repo b3-fun/docs --size small --per-day 3
+```
+
+It prints the rule and asks first. From then on this machine accepts and starts small requests from Allie in that
+repo, up to three a day. It matches only her exact email, and it checks the repo, the size and the count itself. The
+rule lives in this machine's config; the hub can't set one, and neither can an agent: without a terminal nothing is
+added. `workmesh handoffs rule` lists your rules, and `workmesh handoffs rule remove <n>` removes one.
+
 Your accept covers the text you read. If the hub later lists the handoff with another task, context, repo or issue, it
 is not started. It shows as "accepted, but its text changed after your accept: run it here?" until you read the new
 text and confirm.

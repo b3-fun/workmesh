@@ -44,6 +44,7 @@ Written by `workmesh hub connect` (or `init`). Don't copy this section between m
 | `handoffs.maxRunning` | `2` | Handoffs running at once on this machine (0 to 10). |
 | `handoffs.permissionMode` | `auto` | Claude Code `--permission-mode` for a handoff's session. The default stays `auto`: `acceptEdits` can't commit in a headless run, and you read the whole handoff and see the mode before you accept. |
 | `handoffs.env` | `[]` | Additional environment variables a handoff agent may inherit. By default it receives shell, locale and toolchain settings plus its model provider’s sign-in. For example, listing `SSH_AUTH_SOCK` grants the child access to the SSH agent. The run's log names what was left out. |
+| `handoffs.requestRules` | `[]` | Standing rules for requests from teammates without a relay (SPEC §56): this machine accepts and starts a request from that exact email, optionally in one repo, up to a size, at most so many a day, with no click. Each entry is `{ from, repo?, maxSize, perDay }`. Add rules with `workmesh handoffs rule add`, which asks at a terminal. |
 | `handoffs.model` | the agent's default | The model a handoff runs on, e.g. `sonnet`. |
 | `handoffs.maxMinutes` | `120` | How long a handoff run may take (5 to 1440). |
 | `wake` | `true` | Wake an idle session when a message that may wake it, an approval or a handoff result arrives (`workmesh wake on\|off`). Whose messages may wake is `messages.wake`. |

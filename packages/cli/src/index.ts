@@ -26,7 +26,7 @@ import { runDoctor } from "./commands/doctor";
 import { runEmit } from "./commands/emit";
 import { runHook } from "./commands/hook";
 import { runInit } from "./commands/init";
-import { runHandoffPolicy, runRoots } from "./commands/roots";
+import { runHandoffPolicy, runRequestRule, runRoots } from "./commands/roots";
 import { runWake, runWakeWait } from "./commands/wake";
 import {
   EXAMPLE_HUB_URL,
@@ -426,6 +426,20 @@ const handoffs = program
   .option("--note <text>", "why (decline)")
   .option("--json", "machine-readable output")
   .action(wrap((action: string | undefined, id: string | undefined, opts: { note?: string; json?: boolean }) => runHandoffs(action, id, opts)));
+handoffs
+  .command("rule")
+  .description("Standing rules for requests from teammates without a relay: accept and start some with no click (added only at a terminal)")
+  .argument("[action]", "list | add | remove")
+  .argument("[n]", "for remove: the rule's number")
+  .option("--from <email>", "add: whose requests (their exact email)")
+  .option("--repo <owner/name>", "add: only in this repo")
+  .option("--size <size>", "add: up to small, medium or large (default small)")
+  .option("--per-day <n>", "add: at most this many a day (default 3)")
+  .action(
+    wrap((action: string | undefined, n: string | undefined, opts: { from?: string; repo?: string; size?: string; perDay?: string }) =>
+      runRequestRule(action, n, opts),
+    ),
+  );
 handoffs
   .command("policy")
   .description("Which handoffs this machine takes without a click: ask (the default: none), auto-self (your own), never")

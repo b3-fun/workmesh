@@ -2,11 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { DEFAULT_DAEMON_PORT, DEFAULT_DEBOUNCE_MS, DEFAULT_STATUS_TTL_SEC } from "@workmesh/core";
-import { HUB_DEVICE_TOKEN_RE, HUB_GITHUB_LOGIN_RE, hubProjectRuleSchema, hubShareLevelSchema } from "@workmesh/protocol";
+import { HUB_DEVICE_TOKEN_RE, HUB_GITHUB_LOGIN_RE, HUB_REPO_RE, hubProjectRuleSchema, hubRequestSizeSchema, hubShareLevelSchema } from "@workmesh/protocol";
+import { REQUEST_RULES_MAX, REQUEST_RULE_PER_DAY_MAX, type RequestRule } from "../daemon/request-rules";
 import type { FormatOptions } from "@workmesh/core";
 import type { HubShareLevel } from "@workmesh/protocol";
 import { envSetting } from "./names";
 import { configPath } from "./paths";
+
+/** One standing rule for requests (SPEC §56), as the config keeps it. */
+export const requestRuleSchema = z.object({
+  from: z.string().trim().toLowerCase().max(254).regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/),
+  repo: z.string().max(200).regex(HUB_REPO_RE).optional(),
+  maxSize: hubRequestSizeSchema,
+  perDay: z.number().int().min(1).max(REQUEST_RULE_PER_DAY_MAX),
+});
 
 const templatesSchema = z
   .object({
@@ -158,6 +167,17 @@ export const configSchema = z.object({
        * starts without such variables, except what its own tool signs in with. Names only, never values.
        */
       env: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)).max(100).optional().catch(undefined),
+      /**
+       * Standing rules for requests (SPEC §56): requests this machine accepts with no click, from one person (exact
+       * email), optionally in one repo, up to a size, at most so many a day. Added only at a terminal
+       * (`workmesh handoffs rule add`). A malformed rule is dropped on its own.
+       */
+      requestRules: z
+        .preprocess(
+          (v) => (Array.isArray(v) ? v.filter((r) => requestRuleSchema.safeParse(r).success).slice(0, REQUEST_RULES_MAX) : undefined),
+          z.array(requestRuleSchema).optional(),
+        )
+        .catch(undefined),
     })
     .optional()
     .catch(undefined),
@@ -407,6 +427,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
   maxMinutes: number;
   env: string[];
   customGates: string[];
+  requestRules: RequestRule[];
 } {
   const h = config.handoffs;
   return {
@@ -422,6 +443,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
     maxMinutes: h?.maxMinutes ?? 120,
     env: h?.env ?? [],
     customGates: config.gates?.custom ?? [],
+    requestRules: h?.requestRules ?? [],
   };
 }
 

@@ -3,7 +3,7 @@ import path from "node:path";
 
 /**
  * The handoffs that were accepted on this machine (docs/SPEC.md §31): by the person at its terminal or in its menu
- * bar, or by the person's own `auto-self` policy. The relay starts an agent only for a handoff in this record. The
+ * bar, by the person's own `auto-self` policy, or by one of their standing rules for requests (§56). The relay starts an agent only for a handoff in this record. The
  * hub listing a handoff as accepted is not enough, because the hub can be wrong and the board can be used by someone
  * else.
  *
@@ -15,7 +15,7 @@ import path from "node:path";
  */
 
 /** Where the accept happened on this machine. */
-export type AcceptedBy = "cli" | "menubar" | "policy";
+export type AcceptedBy = "cli" | "menubar" | "policy" | "rule";
 
 export interface AcceptedEntry {
   id: string;
@@ -27,12 +27,14 @@ export interface AcceptedEntry {
    * such an entry matches whatever the hub lists under its id.
    */
   hash?: string;
+  /** For `rule`: which standing rule (`ruleKey`), so each rule's accepts a day can be counted. */
+  rule?: string;
 }
 
 /** The record keeps this many ids; the oldest go first. */
 export const ACCEPTED_HERE_MAX = 500;
 
-const BY: readonly string[] = ["cli", "menubar", "policy"];
+const BY: readonly string[] = ["cli", "menubar", "policy", "rule"];
 const HASH_RE = /^[0-9a-f]{64}$/;
 
 export class AcceptedHere {
@@ -51,7 +53,8 @@ export class AcceptedHere {
         if (typeof x.at !== "number" || !Number.isFinite(x.at) || typeof x.by !== "string" || !BY.includes(x.by)) continue;
         // No hash: an entry from before hashes were kept. A hash that isn't one: not an entry to go by.
         if (x.hash !== undefined && (typeof x.hash !== "string" || !HASH_RE.test(x.hash))) continue;
-        this.entries.set(x.id, { id: x.id, at: x.at, by: x.by, ...(x.hash === undefined ? {} : { hash: x.hash }) });
+        const rule = typeof x.rule === "string" && x.rule.length <= 400 ? x.rule : undefined;
+        this.entries.set(x.id, { id: x.id, at: x.at, by: x.by, ...(x.hash === undefined ? {} : { hash: x.hash }), ...(rule ? { rule } : {}) });
       }
       this.trim();
     } catch {
@@ -72,11 +75,19 @@ export class AcceptedHere {
   }
 
   /** A handoff was accepted on this machine; `hash` says which text the accept covers. */
-  add(id: string, by: AcceptedBy, at: number, hash?: string): void {
+  add(id: string, by: AcceptedBy, at: number, hash?: string, rule?: string): void {
     this.entries.delete(id);
-    this.entries.set(id, { id, at, by, ...(hash === undefined ? {} : { hash }) });
+    this.entries.set(id, { id, at, by, ...(hash === undefined ? {} : { hash }), ...(by === "rule" && rule ? { rule } : {}) });
     this.trim();
     this.save();
+  }
+
+  /** How many handoffs a standing rule accepted on this machine's day of `now`. */
+  countToday(rule: string, now: number): number {
+    const day = new Date(now).toDateString();
+    let n = 0;
+    for (const e of this.entries.values()) if (e.by === "rule" && e.rule === rule && new Date(e.at).toDateString() === day) n++;
+    return n;
   }
 
   /** Drops the ids the hub no longer lists. */

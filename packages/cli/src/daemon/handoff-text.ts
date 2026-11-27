@@ -140,7 +140,9 @@ export function handoffListLine(
   const note = h.note ? ` (${oneLine(h.note, 120)})` : "";
   const more = hasMoreText(h) ? ` [more: workmesh handoffs show ${h.id}]` : "";
   const run = o.runHere ? ` [workmesh handoffs run ${h.id}]` : "";
-  return `- ${h.id} · ${o.runHere ?? h.status} · ${who}${where ? ` · ${where}` : ""}${here}: ${task}${note}${more}${run}`;
+  const request = h.request ? ` · request${h.request.size ? `, ${h.request.size}` : ""}` : "";
+  const rule = h.acceptedBy === "rule" ? " · accepted by a standing rule" : "";
+  return `- ${h.id} · ${o.runHere ?? h.status} · ${who}${where ? ` · ${where}` : ""}${request}${rule}${here}: ${task}${note}${more}${run}`;
 }
 
 /** Someone else's text in full: cleaned, every line behind the quote mark, long runs of blank lines made one. */
@@ -171,6 +173,9 @@ export function handoffView(
     ...(h.repo ? [`Repo:  ${h.repo}`] : []),
     ...(h.issue ? [`Issue: ${h.issue}`] : []),
     ...(h.note ? [`Note:  ${oneLine(h.note, HUB_DELEGATE_NOTE_MAX)}`] : []),
+    // A request (SPEC §55): someone without a relay asked; the size is the hub's estimate.
+    ...(h.request ? [`Kind:  a request${h.request.size ? ` (looks ${h.request.size})` : ""}`] : []),
+    ...(h.acceptedBy === "rule" && h.rule ? [`Rule:  accepted by a standing rule (${oneLine(h.rule, 200)})`] : []),
     "",
     `Task from ${from}:`,
     marked(h.task),

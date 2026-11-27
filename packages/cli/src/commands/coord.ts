@@ -301,6 +301,54 @@ export async function runHandoffs(
   return send();
 }
 
+// --- Review exchange (SPEC §53) ---------------------------------------------------------
+
+/** `workmesh review [pr]`: ask a teammate's agent for a read-only review of a PR. */
+export function runReview(
+  pr: string | undefined,
+  opts: CoordCliOptions & { repo?: string; focus?: string; reviewer?: string[]; count?: string },
+): Promise<void> {
+  return runOp(
+    "request_review",
+    {
+      ...(pr ? { pr } : {}),
+      ...(opts.repo ? { repo: opts.repo } : {}),
+      ...(opts.focus ? { focus: opts.focus } : {}),
+      ...(opts.reviewer?.length ? { reviewers: opts.reviewer } : {}),
+      ...(opts.count ? { count: Number.parseInt(opts.count, 10) } : {}),
+    },
+    opts,
+  );
+}
+
+/** `workmesh reviews [list | show <id>]`. */
+export function runReviews(action: string | undefined, id: string | undefined, opts: CoordCliOptions): Promise<void> {
+  if (action && action !== "list" && action !== "show") {
+    // `workmesh reviews <id>` reads as `show`.
+    return runOp("reviews", { action: "show", id: action }, opts);
+  }
+  return runOp("reviews", { ...(action ? { action } : {}), ...(id ? { id } : {}) }, opts);
+}
+
+/** `workmesh reviews policy [auto|ask|never] [--post on|off] [--agent …] [--model …] [--auto on|off|hub] [--count n]`. */
+export function runReviewPolicy(
+  accept: string | undefined,
+  opts: CoordCliOptions & { post?: string; agent?: string; model?: string; auto?: string; count?: string },
+): Promise<void> {
+  return runOp(
+    "review_policy",
+    {
+      ...(accept ? { accept } : {}),
+      ...(opts.post ? { post: opts.post } : {}),
+      ...(opts.agent ? { agent: opts.agent } : {}),
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.auto ? { auto: opts.auto } : {}),
+      ...(opts.count ? { count: opts.count } : {}),
+    },
+    opts,
+  );
+}
+
 export function runGates(action: string | undefined, list: string | undefined, opts: CoordCliOptions): Promise<void> {
   if (action === undefined || action === "list" || action === "show") return runOp("gates", {}, opts);
   if (action === "off" || action === "clear") return runOp("gates", { set: "off" }, opts);

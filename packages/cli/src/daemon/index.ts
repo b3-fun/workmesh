@@ -13,13 +13,16 @@ import {
   formatOptionsFromConfig,
   hubShareLevel,
   hubStickyShare,
+  loadConfig,
   loadConfigSafe,
+  patchReviewConfig,
   readHubConfig,
+  reviewSettings,
   safeConfig,
   saveConfig,
   updateWaitHours,
 } from "../lib/config";
-import type { Config, HubConfig } from "../lib/config";
+import type { Config, HubConfig, ReviewSettings } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
 import { TeamPoller } from "../hub/team";
 import { CoordClient } from "../hub/coord";
@@ -32,6 +35,8 @@ import { MessageGate } from "./messages";
 import { AcceptedHere } from "./accepted-here";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
 import { NewDeviceNotices } from "./new-devices";
+import { Reviews } from "./reviews";
+import { selectMemories } from "./memory";
 import { codexHomeOfRollout } from "../hub/agents";
 import { CodexEndGuard } from "./codex-liveness";
 import { codexWaker } from "./codex-wake";
@@ -140,12 +145,14 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   let liveClaude: Map<string, ClaudeProcess> | undefined = claudeOn ? readLiveClaudeSessions(claudeDir) : undefined;
   // v2 Delegate (SPEC §31): the settings are read from disk (at most every 2 s), so `workmesh roots|wake|handoffs`
   // apply without a restart.
-  let settingsCache: { at: number; v: ReturnType<typeof delegateSettings>; messages: ReturnType<typeof messageSettings> } | undefined;
+  let settingsCache:
+    | { at: number; v: ReturnType<typeof delegateSettings>; messages: ReturnType<typeof messageSettings>; reviews: ReviewSettings }
+    | undefined;
   const readSettings = (): NonNullable<typeof settingsCache> => {
     const now = Date.now();
     if (!settingsCache || now - settingsCache.at > 2000) {
       const onDisk = loadConfigSafe();
-      settingsCache = { at: now, v: delegateSettings(onDisk), messages: messageSettings(onDisk) };
+      settingsCache = { at: now, v: delegateSettings(onDisk), messages: messageSettings(onDisk), reviews: reviewSettings(onDisk) };
     }
     return settingsCache;
   };
@@ -162,9 +169,29 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   const checkouts = new CheckoutIndex(checkoutsPath());
   const runner = new HandoffRunner({
     coord: () => coord,
-    settings: () => ({ ...settings(), share: liveConfig.hub ? hubShareLevel(liveConfig.hub) : "metadata" }),
+    settings: () => ({ ...settings(), share: liveConfig.hub ? hubShareLevel(liveConfig.hub) : "metadata", reviews: readSettings().reviews }),
     checkouts,
     dir: handoffsDir(),
+    // Review exchange (SPEC §53): the team's accepted conventions and gotchas for the repo go into a review's prompt.
+    reviewMemories: (repo, branch) => {
+      const brief = coord?.brief();
+      if (!brief) return [];
+      const picked = selectMemories(brief, { repo, ...(branch ? { branch } : {}) });
+      return picked ? picked.text.split("\n").slice(1).map((l) => l.replace(/^- /, "")) : [];
+    },
+    log,
+  });
+  // Review exchange (SPEC §53): the machine's review policy, PRs opened here, requests and their answers.
+  const reviews = new Reviews({
+    coord: () => coord,
+    settings: () => readSettings().reviews,
+    getSession: (key) => store.get(key),
+    isShared: (key) => forwarder?.isShared(key) ?? false,
+    classify: (dir) => forwarder?.classify(dir),
+    reviewAgent: () => runner.reviewAgent(),
+    reviewRunOf: (key) => runner.reviewRunOf(key),
+    isReviewRun: (id) => runner.isReviewRun(id),
+    modelOf: (key) => forwarder?.modelOf(key),
     log,
   });
   /** Codex: the home each thread lives in, from its rollout path (a `CODEX_HOME` the daemon's env may not have). */
@@ -262,6 +289,12 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
           // Fail open: held messages are looked at again at the next sync.
         }
         delegate.onSync(next, previous);
+        // Review exchange (SPEC §53): this machine's policy to the hub, and news of reviews its sessions asked for.
+        try {
+          reviews.onSync(next);
+        } catch {
+          // Looked at again at the next sync.
+        }
       },
       policy: messages,
       beforeExternalDelivery: (key, sender) => {
@@ -367,6 +400,15 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         deny = undefined; // fail open
       }
     }
+    if (!deny) {
+      // Review exchange (SPEC §53): a review run is read-only. An error here holds the call: a review never needs to
+      // write, so failing closed costs it nothing.
+      try {
+        deny = reviews.gateRefusal(event, hook, meta?.handoff);
+      } catch {
+        deny = meta?.handoff && runner.isReviewRun(meta.handoff) ? "Workmesh couldn't check this call in a read-only review; it is held." : undefined;
+      }
+    }
     let checked: ReturnType<MessageConsent["check"]>;
     if (!deny && hook === "PreToolUse") {
       try {
@@ -392,6 +434,14 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     } catch {
       note = undefined; // fail open
     }
+    // Review exchange (SPEC §53): a PR this session just opened or made ready can get an agent review.
+    let offer: string | undefined;
+    try {
+      offer = deny === undefined ? reviews.afterTool(event, hook) : undefined;
+    } catch {
+      offer = undefined;
+    }
+    if (offer) note = note ? `${note}\n\n${offer}` : offer;
     if (!note) return answer;
     return { ...answer, context: answer?.context ? `${note}\n\n${answer.context}`.slice(0, 9500) : note };
   };
@@ -536,6 +586,16 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         runningHandoffs: () => runner.running(),
         handoffStart: (h, lead) => delegate.onAccept(h, lead),
         sent: (key, to, info) => messages.sent(key, to, info),
+        reviews: {
+          request: (key, args, o) => reviews.request(key, args, o),
+          settings: () => reviewSettings(loadConfigSafe()),
+          save: (patch) => {
+            const next = patchReviewConfig(loadConfig(), patch);
+            saveConfig(next);
+            settingsCache = undefined;
+            return reviewSettings(next);
+          },
+        },
         held: {
           list: () => messages.heldMessages((local) => store.get(local)?.name),
           deliver: (id) => {
@@ -575,6 +635,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         wake: onDisk.wake,
         messages: onDisk.messages,
         gates: onDisk.gates,
+        reviews: onDisk.reviews,
         update: onDisk.update,
       };
       formatOpts = formatOptionsFromConfig(liveConfig);

@@ -7,6 +7,9 @@ import {
   runGates,
   runHandoff,
   runHandoffs,
+  runReview,
+  runReviewPolicy,
+  runReviews,
   runInbox,
   runLease,
   runLeases,
@@ -445,6 +448,35 @@ handoffs
   .description("Which handoffs this machine takes without a click: ask (the default: none), auto-self (your own), never")
   .argument("[policy]", "ask | auto-self | never")
   .action(wrap(runHandoffPolicy));
+// Review exchange (SPEC §53): agents review each other's PRs, read-only; agent reviews never approve.
+program
+  .command("review")
+  .description("Ask a teammate's agent for a read-only review of a PR (never an approval); the findings come back to the asking session")
+  .argument("[pr]", "212, owner/name#212 or the PR's URL (default: the PR this session opened)")
+  .option("--repo <owner/name>", "the repo (default: the PR's, else this directory's)")
+  .option("--focus <text>", "what to look at")
+  .option("--reviewer <person...>", "up to two people (default: CODEOWNERS, recent work, who is free)")
+  .option("--count <n>", "how many reviewers: 1 (default) or 2")
+  .option("--json", "machine-readable output")
+  .action(wrap(runReview));
+const reviews = program
+  .command("reviews")
+  .description("Agent reviews you asked for and ones asked of you; read one's findings")
+  .argument("[action]", "list | show")
+  .argument("[id]", "the review, for show")
+  .option("--json", "machine-readable output")
+  .action(wrap((action: string | undefined, id: string | undefined, opts: { json?: boolean }) => runReviews(action, id, opts)));
+reviews
+  .command("policy")
+  .description("Which reviews this machine runs without a click (ask, the default; auto; never), and whether it posts them on the PR")
+  .argument("[accept]", "auto | ask | never")
+  .option("--post <on|off>", "post finished reviews on the PR as a comment through your gh (default off; never an approval)")
+  .option("--agent <claude|codex>", "the agent CLI reviews run on")
+  .option("--model <name>", "the model reviews run on")
+  .option("--auto <on|off|hub>", "ask for a review when a PR you open here is ready (hub: your board setting)")
+  .option("--count <n>", "reviewers per request: 1 or 2")
+  .option("--json", "machine-readable output")
+  .action(wrap(runReviewPolicy));
 program
   .command("roots")
   .description("Where your repos live, so a handoff finds its checkout here (repos your sessions worked in count too)")

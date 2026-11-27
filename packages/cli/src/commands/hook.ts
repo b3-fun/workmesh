@@ -71,14 +71,19 @@ function hookEventName(json: unknown): string | undefined {
  * 0.12 (SPEC §41): this hook's version, and at SessionStart what started the session (`startup`, `resume`, `clear`,
  * `compact`) and the tools it got, so the daemon knows what a session started under.
  */
-export function hookMeta(hook: string | undefined, json: unknown): HookMeta {
-  if (hook === "PreToolUse") return { version: pkg.version, actionDigest: actionDigest(json) };
-  if (hook !== "SessionStart") return { version: pkg.version };
+export function hookMeta(hook: string | undefined, json: unknown, env: NodeJS.ProcessEnv = process.env): HookMeta {
+  // A Workmesh handoff's agent runs with its id in the environment (SPEC §31): the daemon then knows the run before it
+  // knows the session's key (a Codex thread names itself only after it started), and applies a review's read-only gate.
+  const run = env.WORKMESH_HANDOFF;
+  const handoff = typeof run === "string" && /^[\w-]{1,64}$/.test(run) ? { handoff: run } : {};
+  if (hook === "PreToolUse") return { version: pkg.version, actionDigest: actionDigest(json), ...handoff };
+  if (hook !== "SessionStart") return { version: pkg.version, ...handoff };
   const source = (json as { source?: unknown } | null)?.source;
   return {
     version: pkg.version,
     ...(typeof source === "string" && /^[a-z_-]{1,20}$/.test(source) ? { start: source } : {}),
     surface: surfaceFingerprint(),
+    ...handoff,
   };
 }
 

@@ -339,7 +339,7 @@ export class Reviews {
     const who = label(h.to.person);
     const ref = `${h.repo ?? "?"}#${h.review?.pr ?? "?"}`;
     const round = h.review?.round ?? 1;
-    const said = h.note ? oneLine(h.note, 300) : "";
+    // A note on a move is the other side's free text: it stays out of Workmesh's notice (B3-7258), as for handoffs.
     switch (h.status) {
       case "accepted":
         if (prev === "offered") coord.notify(local, `Workmesh: ${who} took the review of PR ${ref} (round ${round}); their machine runs it read-only.`, { wake: false, from: who });
@@ -347,14 +347,14 @@ export class Reviews {
       case "declined":
         coord.notify(
           local,
-          `Workmesh: ${who} declined to review PR ${ref}${said ? `: ${said}` : "."} Ask someone else with the workmesh \`request_review\` tool (\`reviewers\`), or carry on.`,
+          `Workmesh: ${who} declined to review PR ${ref}. Ask someone else with the workmesh \`request_review\` tool (\`reviewers\`), or carry on.`,
           { wake: true, from: who },
         );
         return;
       case "failed":
         coord.notify(
           local,
-          `Workmesh: ${who}'s machine couldn't finish the review of PR ${ref} (round ${round})${said ? `: ${said}` : "."} Ask again with \`request_review\` if you still want one.`,
+          `Workmesh: ${who}'s machine couldn't finish the review of PR ${ref} (round ${round}). Ask again with \`request_review\` if you still want one.`,
           { wake: true, from: who },
         );
         return;

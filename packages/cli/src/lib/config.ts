@@ -447,7 +447,7 @@ export function messageSettings(config: Pick<Config, "messages">): MessageSettin
   return { wake: m?.wake ?? "replies", hold: m?.hold ?? "bypass", holdMinutes: m?.holdMinutes ?? 60, from: m?.from ?? "team" };
 }
 
-export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {
+export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates"> & Partial<Pick<Config, "reviews">>): {
   wake: boolean;
   accept: "ask" | "auto-self" | "never";
   runAccepted: "confirm" | "auto";
@@ -461,6 +461,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
   env: string[];
   customGates: string[];
   requestRules: RequestRule[];
+  reviewAccept: "auto" | "ask" | "never";
 } {
   const h = config.handoffs;
   return {
@@ -477,7 +478,23 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
     env: h?.env ?? [],
     customGates: config.gates?.custom ?? [],
     requestRules: h?.requestRules ?? [],
+    reviewAccept: config.reviews?.accept ?? "ask",
   };
+}
+
+/**
+ * A change to the config's `reviews` section (SPEC §53): a value sets the key, `null` removes it (its default again).
+ * Only a person's own terminal reaches this (`review_policy`); the hub and agents never do.
+ */
+export function patchReviewConfig(config: Config, patch: Partial<Record<keyof ReviewSettings, unknown>>): Config {
+  const next: Record<string, unknown> = { ...(config.reviews ?? {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) continue;
+    if (v === null) delete next[k];
+    else next[k] = v;
+  }
+  const parsed = configSchema.shape.reviews.safeParse(next);
+  return { ...config, reviews: parsed.success ? parsed.data : config.reviews };
 }
 
 /** Review exchange (SPEC §53): this machine's review settings, with the defaults. */

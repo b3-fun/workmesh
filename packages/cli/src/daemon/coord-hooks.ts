@@ -292,7 +292,7 @@ export class CoordHooks {
  * The workmesh MCP tools a held session may still call: talk to people, read the board and the team's memory (v3), let
  * go of what it holds.
  */
-const HOLD_MCP_TOOLS = new Set(["whoami", "roster", "send", "inbox", "leases", "notes", "ask", "release", "unlease", "recall", "memories"]);
+const HOLD_MCP_TOOLS = new Set(["whoami", "roster", "send", "inbox", "leases", "notes", "ask", "release", "unlease", "recall", "memories", "reviews"]);
 /** The `workmesh` CLI subcommands a held session may run in the shell (SPEC §23, 0.11.x; v3's reads, SPEC §36). */
 const HOLD_CLI = new Set(["send", "inbox", "whoami", "claims", "leases", "notes", "recall", "memories"]);
 

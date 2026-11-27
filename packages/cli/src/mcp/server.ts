@@ -246,6 +246,30 @@ export const MCP_TOOLS: readonly ToolDef[] = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: READ,
   },
+  // Review exchange (SPEC §53): ask a teammate's agent for a read-only PR review; the findings come back here.
+  {
+    name: "request_review",
+    description:
+      "Ask a teammate's agent to review a PR (read-only, on their machine; never an approval). Default: the PR this session opened. The findings come back to this session as a Workmesh message; fix what holds up and ask again for the next round (3 at most).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pr: s("The PR: 212, owner/name#212 or its URL (default: the PR this session opened or marked ready)."),
+        repo: s("owner/name (default: the PR's, else this session's repo)."),
+        focus: s("What to look at, in a sentence or two (optional, up to 1,000 characters)."),
+        reviewers: { type: "array", items: { type: "string" }, description: "Up to two people (display name or email); default: Workmesh picks by CODEOWNERS, recent work and who is free." },
+        count: { type: "integer", enum: [1, 2], description: "How many reviewers (default 1)." },
+      },
+      additionalProperties: false,
+    },
+    annotations: TEAM_WRITE,
+  },
+  {
+    name: "reviews",
+    description: "Agent reviews this session asked for, one line each; with `id`, one review's findings in full.",
+    inputSchema: { type: "object", properties: { id: s("A review's id, to read its findings.") }, additionalProperties: false },
+    annotations: READ,
+  },
   // Ask (SPEC §29): read-only questions to the board's Ask.
   {
     name: "ask",

@@ -26,8 +26,12 @@ import {
   isLeaseGlob,
   leaseEntriesCovering,
   leasePathsOverlap,
+  hubReviewRequestSchema,
+  hubReviewResponseAcceptSchema,
 } from "@workmesh/protocol";
 import type {
+  HubReviewRequest,
+  HubReviewResponseAccepted,
   HubApprovalRequest,
   HubApprovalResponseAccepted,
   HubAskRequest,
@@ -1173,6 +1177,29 @@ export class CoordClient {
       }
     }
     return r;
+  }
+
+  // --- Review exchange (SPEC §52) ---------------------------------------------------
+
+  /**
+   * `POST /relay/reviews`: request, policy, report, result. A `404` without an answer means this hub has no review
+   * exchange (remembered for 10 minutes, like v2's endpoints); a `404` with `{ ok: false }` is the hub's no.
+   */
+  review(req: HubReviewRequest): Promise<CoordResult<HubReviewResponseAccepted>> {
+    return this.post("/relay/reviews", hubReviewRequestSchema, req, hubReviewResponseAcceptSchema, "v2");
+  }
+
+  /**
+   * This hub has the review exchange: its last sync carried `reviews` (SPEC §52), and `/relay/reviews` hasn't answered
+   * a bare 404 in the last 10 minutes.
+   */
+  reviewsAvailable(now = this.now()): boolean {
+    return this.state?.reviews !== undefined && (this.v2Absent.get("/relay/reviews") ?? 0) <= now;
+  }
+
+  /** The person's board setting and the team's auto repos (SPEC §52), as of the last sync. */
+  reviewAuto(): { auto: boolean; autoRepos: readonly string[] } | undefined {
+    return this.state?.reviews;
   }
 
   // --- v3 Memory (SPEC §35) ----------------------------------------------------------

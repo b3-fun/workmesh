@@ -3,15 +3,19 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HubHandoffAccepted, HubShareLevel } from "@workmesh/protocol";
-import { HUB_DELEGATE_NOTE_MAX } from "@workmesh/protocol";
+import type { HubHandoffAccepted, HubReviewResult, HubShareLevel } from "@workmesh/protocol";
+import { HUB_DELEGATE_NOTE_MAX, HUB_REVIEW_ROUNDS_MAX } from "@workmesh/protocol";
 import type { CoordClient } from "../hub/coord";
+import type { ReviewSettings } from "../lib/config";
 import { GitResolver } from "../hub/git";
 import { scrubText } from "../hub/redact";
 import { QUOTE_MARK, label, quoted } from "../lib/untrusted";
 import type { HandoffRunnerLike } from "./delegate";
 import { droppedEnvLine, handoffEnv } from "./handoff-env";
 import type { HandoffPlan } from "./handoff-text";
+import { postReview, prFacts, prepareReviewCheckout } from "./review-git";
+import type { Run } from "./review-git";
+import { parseReviewOutput, reviewComment, reviewPrompt } from "./review-text";
 
 /**
  * v2 handoffs on this machine (docs/SPEC.md §31): an accepted handoff gets a fresh agent session. The runner finds
@@ -48,6 +52,8 @@ export interface RunnerSettings {
   env?: readonly string[];
   /** This machine's sharing level: the done note carries the agent's last words only at `conversation`. */
   share: HubShareLevel;
+  /** Review exchange (SPEC §53): which agent and model reviews run on, whether they post, how long they may take. */
+  reviews?: ReviewSettings;
 }
 
 export interface RunRecord {
@@ -63,6 +69,23 @@ export interface RunRecord {
   resultFile?: string;
   task: string;
   from: string;
+  /** A review run (SPEC §53): read-only, reports a result, and its checkout is removed at the end. */
+  kind?: "review";
+  review?: {
+    repo: string;
+    pr: number;
+    round: number;
+    rounds: number;
+    headSha?: string;
+    /** Post the review on the PR when done (the reviewer opted in). */
+    post: boolean;
+    model?: string;
+    /** The throwaway checkout (removed when the run ends). */
+    checkout: string;
+    /** For the comment: who asked and who ran it. */
+    fromPerson: string;
+    toPerson: string;
+  };
 }
 
 export interface HandoffRunnerDeps {
@@ -81,6 +104,13 @@ export interface HandoffRunnerDeps {
   pathEnv?: () => Promise<string>;
   /** The daemon's own environment (tests pass their own). */
   env?: () => NodeJS.ProcessEnv;
+  /**
+   * Review exchange: the team's accepted memories for a repo, one line each (`[m12] convention: …`), for a review's
+   * prompt. Absent or empty: none.
+   */
+  reviewMemories?: (repo: string, branch?: string) => string[];
+  /** `gh` and `git` for a review (tests pass a fake). */
+  run?: Run;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -328,6 +358,8 @@ export class HandoffRunner implements HandoffRunnerLike {
   /** Ids being started (a `start` call or worktree in flight). */
   private readonly starting = new Set<string>();
   private readonly ids = new Set<string>();
+  /** Review handoffs being started (before their record exists): their tool calls are a review's already. */
+  private readonly startingReviews = new Set<string>();
   private timer: NodeJS.Timeout | undefined;
 
   constructor(deps: HandoffRunnerDeps) {
@@ -394,9 +426,10 @@ export class HandoffRunner implements HandoffRunnerLike {
     return this.ids.size < Math.max(0, this.deps.settings().maxRunning);
   }
 
-  private agentFor(): { agent: HandoffAgent; bin: string } | undefined {
+  private agentFor(kind?: "review"): { agent: HandoffAgent; bin: string } | undefined {
     const which = this.deps.which ?? ((b: string) => findBin(b));
-    const want = this.deps.settings().agent;
+    const settings = this.deps.settings();
+    const want = kind === "review" ? (settings.reviews?.agent ?? settings.agent) : settings.agent;
     const order: HandoffAgent[] = want ? [want] : ["claude", "codex"];
     for (const agent of order) {
       const bin = which(agent);
@@ -407,10 +440,17 @@ export class HandoffRunner implements HandoffRunnerLike {
 
   cannotRun(h: HubHandoffAccepted): string | undefined {
     if (this.deps.settings().maxRunning <= 0) return "handoffs.maxRunning is 0";
-    if (!this.agentFor()) {
-      const want = this.deps.settings().agent;
+    if (h.kind === "review") {
+      if (this.deps.settings().reviews?.accept === "never") return "this machine runs no reviews (`workmesh reviews policy never`)";
+      if (!h.repo || !h.review) return "the review names no repo or PR";
+    }
+    if (!this.agentFor(h.kind === "review" ? "review" : undefined)) {
+      const settings = this.deps.settings();
+      const want = h.kind === "review" ? (settings.reviews?.agent ?? settings.agent) : settings.agent;
       return want ? `no ${want} CLI found on this machine` : "neither claude nor codex is installed here";
     }
+    // A review makes its own checkout (from this machine's checkout when it has one, else from GitHub).
+    if (h.kind === "review") return undefined;
     if (h.repo && !this.deps.checkouts.find(h.repo, this.deps.settings().roots)) {
       return `no checkout of ${h.repo} here (\`workmesh roots add <dir>\` names where your repos live)`;
     }
@@ -423,8 +463,11 @@ export class HandoffRunner implements HandoffRunnerLike {
    */
   plan(h: HubHandoffAccepted): HandoffPlan {
     const settings = this.deps.settings();
-    const picked = this.agentFor();
+    const picked = this.agentFor(h.kind === "review" ? "review" : undefined);
     const cannot = this.cannotRun(h);
+    if (h.kind === "review") {
+      return { ...(picked ? { agent: picked.agent } : {}), where: "review", ...(h.review ? { pr: h.review.pr } : {}), ...(cannot ? { cannot } : {}) };
+    }
     return {
       ...(picked ? { agent: picked.agent } : {}),
       ...(picked?.agent === "claude" ? { permissionMode: settings.permissionMode } : {}),
@@ -449,6 +492,7 @@ export class HandoffRunner implements HandoffRunnerLike {
   }
 
   private async runUnsafe(h: HubHandoffAccepted): Promise<void> {
+    if (h.kind === "review") return this.runReview(h);
     const coord = this.deps.coord();
     const picked = this.agentFor();
     if (!coord || !picked) return;
@@ -600,7 +644,8 @@ export class HandoffRunner implements HandoffRunnerLike {
       }
       const alive = pidAlive(r.pid);
       if (code === undefined && alive) {
-        if (this.now() - r.startedAt > settings.maxMinutes * 60_000 && r.pid) {
+        const limit = r.kind === "review" ? (settings.reviews?.maxMinutes ?? 30) : settings.maxMinutes;
+        if (this.now() - r.startedAt > limit * 60_000 && r.pid) {
           try {
             process.kill(-r.pid, "SIGTERM");
           } catch {
@@ -610,7 +655,7 @@ export class HandoffRunner implements HandoffRunnerLike {
               // gone
             }
           }
-          this.log(`handoff ${r.id}: stopped after ${settings.maxMinutes} min`);
+          this.log(`handoff ${r.id}: stopped after ${limit} min`);
         }
         continue;
       }
@@ -618,6 +663,10 @@ export class HandoffRunner implements HandoffRunnerLike {
       this.records.delete(r.id);
       this.persist();
       this.syncIds();
+      if (r.kind === "review") {
+        void this.finishReview(r, code, coord).catch((err: unknown) => this.log(`review ${r.id}: ${err instanceof Error ? err.message : String(err)}`));
+        continue;
+      }
       const ok = code === 0;
       const summary = settings.share === "conversation" ? resultText(r) : undefined;
       const how = code === undefined ? "the agent stopped without an exit code" : ok ? "finished" : `the agent exited ${code}`;
@@ -625,6 +674,236 @@ export class HandoffRunner implements HandoffRunnerLike {
       const note = (summary ? `${summary}` : `${how}.${where}`).slice(0, HUB_DELEGATE_NOTE_MAX);
       this.log(`handoff ${r.id}: ${how}`);
       void coord.handoff({ action: ok ? "done" : "fail", id: r.id, ...(r.sessionKey ? { sessionKey: r.sessionKey } : {}), note });
+    }
+  }
+
+  // --- review exchange (SPEC §53) ----------------------------------------------------
+
+  /** The review run a session is, by its key (`claude-code:<id>`, `codex:<thread>`), or undefined. */
+  reviewRunOf(sessionKey: string): string | undefined {
+    for (const r of this.records.values()) if (r.kind === "review" && r.sessionKey === sessionKey) return r.id;
+    return undefined;
+  }
+
+  /** A handoff id is a review running here (or being started). */
+  isReviewRun(id: string): boolean {
+    return this.records.get(id)?.kind === "review" || this.startingReviews.has(id);
+  }
+
+  /** The agent and model this machine's reviews run on, for the review policy it tells the hub. */
+  reviewAgent(): { agent?: HandoffAgent; model?: string } {
+    const picked = this.agentFor("review");
+    const settings = this.deps.settings();
+    const model = settings.reviews?.model ?? settings.model;
+    return { ...(picked ? { agent: picked.agent } : {}), ...(model ? { model } : {}) };
+  }
+
+  /**
+   * A review handoff (SPEC §53): claims the run, makes a fresh checkout of the PR's head that can't push, and starts
+   * the reviewer's agent headless in it with the review prompt, read-only: Claude Code without its edit tools, Codex
+   * in its workspace sandbox with no network and no escalation, and the daemon's review gate on every tool call.
+   */
+  private async runReview(h: HubHandoffAccepted): Promise<void> {
+    const coord = this.deps.coord();
+    const picked = this.agentFor("review");
+    const review = h.review;
+    if (!coord || !picked || !review || !h.repo) return;
+    this.startingReviews.add(h.id);
+    try {
+      const settings = this.deps.settings();
+      const rs = settings.reviews;
+      const sessionId = picked.agent === "claude" ? randomUUID() : undefined;
+      const sessionKey = sessionId ? `claude-code:${sessionId}` : undefined;
+      const claim = await coord.handoff({ action: "start", id: h.id, ...(sessionKey ? { sessionKey } : {}) });
+      if (!claim.ok || !claim.body.ok) {
+        const why = claim.ok ? (claim.body.ok ? "" : claim.body.error) : claim.error;
+        this.log(`review ${h.id}: not starting here (${why || "the hub said no"})`);
+        return;
+      }
+      const fail = async (note: string): Promise<void> => {
+        this.log(`review ${h.id}: ${note}`);
+        await coord.handoff({ action: "fail", id: h.id, note: note.slice(0, HUB_DELEGATE_NOTE_MAX) });
+      };
+      const runDir = path.join(this.deps.dir, shortId(h.id));
+      fs.mkdirSync(runDir, { recursive: true, mode: 0o700 });
+      const checkoutDir = path.join(runDir, "checkout");
+      fs.rmSync(checkoutDir, { recursive: true, force: true });
+      const env0 = (this.deps.env ?? (() => process.env))();
+      const pathEnv = await (this.deps.pathEnv ?? loginPath)();
+      // gh and git run as the person (their own sign-in), never prompting.
+      const toolEnv: NodeJS.ProcessEnv = { ...env0, PATH: pathEnv, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" };
+      const run = this.deps.run;
+      const gh = findBin("gh", pathEnv) ?? "gh";
+      const facts = await prFacts(h.repo, review.pr, { ...(run ? { run } : {}), gh, env: toolEnv });
+      const checkout = this.deps.checkouts.find(h.repo, settings.roots);
+      const prepared = await prepareReviewCheckout({
+        repo: h.repo,
+        pr: review.pr,
+        dir: checkoutDir,
+        ...(checkout ? { checkout } : {}),
+        ...(facts?.headRef ? { headRef: facts.headRef } : {}),
+        ...(facts?.baseRef ? { baseRef: facts.baseRef } : {}),
+        ...(run ? { run } : {}),
+        env: toolEnv,
+      });
+      if ("error" in prepared) return fail(`Couldn't check out PR #${review.pr} on this machine: ${prepared.error}`);
+      const rounds = review.rounds ?? HUB_REVIEW_ROUNDS_MAX;
+      let memories: string[] = [];
+      try {
+        memories = this.deps.reviewMemories?.(h.repo, facts?.headRef) ?? [];
+      } catch {
+        memories = [];
+      }
+      const prompt = reviewPrompt(h, {
+        repo: h.repo,
+        pr: review.pr,
+        round: review.round,
+        rounds,
+        headSha: prepared.headSha,
+        ...(prepared.baseRef ? { baseRef: prepared.baseRef } : {}),
+        ...(facts?.baseRef ? { baseName: facts.baseRef } : {}),
+        ...(facts?.title ? { title: facts.title } : {}),
+        ...(facts?.body ? { body: facts.body } : {}),
+        ...(facts?.authorLogin ? { authorLogin: facts.authorLogin } : {}),
+        files: facts?.files ?? [],
+        botReviews: facts?.botReviews ?? [],
+        memories,
+        agent: picked.agent,
+      });
+      const logFile = path.join(runDir, "agent.log");
+      const exitFile = path.join(runDir, "exit-code");
+      const resultFile = path.join(runDir, "result.txt");
+      const promptFile = path.join(runDir, "prompt.txt");
+      const schemaFile = path.join(runDir, "review-schema.json");
+      try {
+        fs.writeFileSync(promptFile, prompt, { mode: 0o600 });
+        fs.chmodSync(promptFile, 0o600);
+        fs.writeFileSync(schemaFile, `${JSON.stringify(REVIEW_OUTPUT_SCHEMA)}\n`, { mode: 0o600 });
+        fs.rmSync(exitFile, { force: true });
+        fs.rmSync(resultFile, { force: true });
+      } catch {
+        return fail("couldn't write the review's prompt on this machine");
+      }
+      const model = rs?.model ?? settings.model;
+      const name = `review ${h.repo.split("/")[1] ?? h.repo}#${review.pr} for ${label(h.from.person, 60)}`;
+      const argv =
+        picked.agent === "claude"
+          ? claudeReviewArgs(picked.bin, { sessionId: sessionId!, name, model })
+          : codexReviewArgs(picked.bin, { dir: checkoutDir, resultFile, schemaFile, model });
+      const passed = handoffEnv(env0, picked.agent, settings.env);
+      const env: NodeJS.ProcessEnv = {
+        ...passed.env,
+        PATH: pathEnv,
+        WORKMESH_HANDOFF: h.id,
+        WORKMESH_REVIEW: "1",
+        WM_EXIT_FILE: exitFile,
+        GIT_TERMINAL_PROMPT: "0",
+        GH_PROMPT_DISABLED: "1",
+      };
+      delete env.CLAUDECODE;
+      delete env.CLAUDE_CODE_SESSION_ID;
+      delete env.CODEX_THREAD_ID;
+      const out = fs.openSync(logFile, "a", 0o600);
+      const input = fs.openSync(promptFile, "r");
+      let pid: number | undefined;
+      try {
+        if (passed.dropped.length > 0) fs.writeSync(out, `${droppedEnvLine(passed.dropped)}\n`);
+        const child = (this.deps.spawnImpl ?? spawn)("/bin/sh", ["-c", '"$@"; echo $? > "$WM_EXIT_FILE"', "workmesh-review", ...argv], {
+          cwd: checkoutDir,
+          env,
+          detached: true,
+          stdio: [input, out, out],
+        });
+        child.on("error", () => {});
+        child.unref();
+        pid = child.pid;
+      } finally {
+        fs.closeSync(out);
+        fs.closeSync(input);
+      }
+      if (!pid) return fail(`couldn't start ${picked.agent} for the review`);
+      const record: RunRecord = {
+        id: h.id,
+        agent: picked.agent,
+        pid,
+        sessionKey,
+        dir: checkoutDir,
+        startedAt: this.now(),
+        logFile,
+        exitFile,
+        resultFile,
+        task: `review ${h.repo}#${review.pr}`,
+        from: h.from.person,
+        kind: "review",
+        review: {
+          repo: h.repo,
+          pr: review.pr,
+          round: review.round,
+          rounds,
+          headSha: prepared.headSha,
+          post: rs?.postToGitHub === true,
+          ...(model ? { model } : {}),
+          checkout: checkoutDir,
+          fromPerson: h.from.person,
+          toPerson: h.to.person,
+        },
+      };
+      this.records.set(h.id, record);
+      this.persist();
+      this.syncIds();
+      this.log(`review ${h.id}: ${picked.agent} reviewing ${h.repo}#${review.pr} at ${prepared.headSha.slice(0, 12)} (pid ${pid})`);
+      this.deps.onStarted?.(record);
+    } finally {
+      this.startingReviews.delete(h.id);
+    }
+  }
+
+  /** A review run ended: read its findings, post them when the reviewer opted in, report them, remove the checkout. */
+  private async finishReview(r: RunRecord, code: number | undefined, coord: CoordClient): Promise<void> {
+    const review = r.review;
+    if (!review) return;
+    const text = agentAnswer(r);
+    const settings = this.deps.settings();
+    try {
+      if (!text || (code !== 0 && !/"findings"|```/.test(text))) {
+        const how = code === undefined ? "the agent stopped without an exit code" : `the agent exited ${code}`;
+        this.log(`review ${r.id}: ${how}, no findings`);
+        await coord.handoff({ action: "fail", id: r.id, ...(r.sessionKey ? { sessionKey: r.sessionKey } : {}), note: `The review didn't finish: ${how}.` });
+        return;
+      }
+      let result: HubReviewResult = parseReviewOutput(text, {
+        agent: r.agent,
+        ...(review.model ? { model: review.model } : {}),
+        ...(review.headSha ? { headSha: review.headSha } : {}),
+      });
+      if (review.post && settings.reviews?.postToGitHub === true) {
+        const bodyFile = path.join(path.dirname(r.logFile), "comment.md");
+        try {
+          fs.writeFileSync(
+            bodyFile,
+            reviewComment({ from: { person: review.fromPerson, sessionKey: undefined, sessionName: undefined }, to: { person: review.toPerson }, review }, result),
+            { mode: 0o600 },
+          );
+          const pathEnv = await (this.deps.pathEnv ?? loginPath)();
+          const env = { ...(this.deps.env ?? (() => process.env))(), PATH: pathEnv, GH_PROMPT_DISABLED: "1" };
+          const posted = await postReview(review.repo, review.pr, bodyFile, { ...(this.deps.run ? { run: this.deps.run } : {}), gh: findBin("gh", pathEnv) ?? "gh", env });
+          if (posted.ok) result = { ...result, posted: true };
+          this.log(`review ${r.id}: ${posted.ok ? "posted on the PR as a comment" : `couldn't post on the PR (${posted.error ?? "gh failed"})`}`);
+        } catch (err) {
+          this.log(`review ${r.id}: couldn't post on the PR (${err instanceof Error ? err.message : String(err)})`);
+        }
+      }
+      const rep = await coord.review({ action: "report", id: r.id, ...(r.sessionKey ? { sessionKey: r.sessionKey } : {}), result });
+      if (rep.ok && rep.body.ok) {
+        this.log(`review ${r.id}: reported (${result.verdict}, ${result.findings.length} findings)`);
+      } else {
+        const why = rep.ok ? (rep.body.ok ? "" : rep.body.error) : rep.error;
+        this.log(`review ${r.id}: the hub didn't take the report (${why || "no answer"}); marking it done with the summary`);
+        await coord.handoff({ action: "done", id: r.id, ...(r.sessionKey ? { sessionKey: r.sessionKey } : {}), note: result.summary.slice(0, HUB_DELEGATE_NOTE_MAX) });
+      }
+    } finally {
+      // The checkout was made for this review only, under Workmesh's own state dir.
+      if (review.checkout.startsWith(this.deps.dir + path.sep)) fs.rmSync(review.checkout, { recursive: true, force: true });
     }
   }
 }
@@ -731,6 +1010,102 @@ export function codexThreadFromLog(file: string): string | undefined {
       }
     } finally {
       fs.closeSync(fd);
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/** The only tools a Claude Code review has (SPEC §53): reading, and a shell for the commands below. */
+export const REVIEW_CLAUDE_TOOLS = "Read,Grep,Glob,Bash";
+/**
+ * The shell commands a Claude Code review may run without asking; in `dontAsk` mode everything else is refused. They
+ * read the checkout and its history. A PR's own code (its tests, its build) doesn't run outside a sandbox: Claude
+ * Code reviews read, and a Codex review may run tests inside its sandbox with no network (B3-7235).
+ */
+export const REVIEW_CLAUDE_ALLOWED = [
+  "Read",
+  "Grep",
+  "Glob",
+  ...["git diff", "git log", "git show", "git status", "git blame", "git ls-files", "git rev-parse", "git merge-base", "git grep", "ls", "wc", "head", "tail", "cat"].map((c) => `Bash(${c}:*)`),
+].join(",");
+
+/**
+ * `claude -p` for a review (SPEC §53): only the read tools and the read-only commands above (`dontAsk` refuses the
+ * rest without a prompt), the person's own settings and hooks only (`--setting-sources user`: settings, hooks and MCP
+ * servers in the PR's checkout don't load, so the PR can't run anything as the reviewer), and no MCP servers. The
+ * prompt comes on standard input.
+ */
+export function claudeReviewArgs(bin: string, o: { sessionId: string; name: string; model?: string | undefined }): string[] {
+  return [
+    bin, "-p", "--session-id", o.sessionId, "--output-format", "json", "--permission-mode", "dontAsk",
+    "--setting-sources", "user", "--strict-mcp-config", "--tools", REVIEW_CLAUDE_TOOLS, "--allowedTools", REVIEW_CLAUDE_ALLOWED,
+    "--name", o.name,
+    ...(o.model ? ["--model", o.model] : []),
+  ];
+}
+
+/** The shape a Codex review's final answer must take (`--output-schema`): the findings the hub takes (SPEC §52). */
+export const REVIEW_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["verdict", "summary", "tests", "findings"],
+  properties: {
+    verdict: { type: "string", enum: ["no_issues", "comments", "changes_suggested"] },
+    summary: { type: "string" },
+    tests: { type: "string", enum: ["passed", "failed", "not_run"] },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["file", "line", "severity", "summary", "suggestion"],
+        properties: {
+          file: { type: ["string", "null"] },
+          line: { type: ["integer", "null"] },
+          severity: { type: "string", enum: ["high", "medium", "low", "nit"] },
+          summary: { type: "string" },
+          suggestion: { type: ["string", "null"] },
+        },
+      },
+    },
+  },
+} as const;
+
+/**
+ * `codex exec` for a review (SPEC §53): the workspace sandbox (writes only inside the throwaway checkout, for tests
+ * and builds), no network, no escalation (`approval_policy = "never"`: a command the sandbox refuses stays refused),
+ * and the final answer in the review's JSON shape. The prompt is read from standard input (`-`).
+ */
+export function codexReviewArgs(bin: string, o: { dir: string; resultFile: string; schemaFile: string; model?: string | undefined }): string[] {
+  return [
+    bin, "exec", "--json", "-C", o.dir, "-s", "workspace-write", "-c", 'approval_policy="never"',
+    "--skip-git-repo-check", "-o", o.resultFile, "--output-schema", o.schemaFile,
+    ...(o.model ? ["-m", o.model] : []),
+    "-",
+  ];
+}
+
+/** A run's whole last answer (not cut, not redacted: the review's reader does both), or undefined. */
+export function agentAnswer(r: Pick<RunRecord, "agent" | "logFile" | "resultFile">): string | undefined {
+  try {
+    if (r.agent === "codex" && r.resultFile) {
+      const t = fs.readFileSync(r.resultFile, "utf8");
+      return t.trim() ? t : undefined;
+    }
+    const text = readTail(r.logFile, 1024 * 1024);
+    for (const line of text.split("\n").reverse()) {
+      const t = line.trim();
+      if (!t.startsWith("{")) continue;
+      try {
+        const j = JSON.parse(t) as { type?: unknown; result?: unknown; structured_output?: unknown };
+        if (j.type !== "result") continue;
+        if (j.structured_output && typeof j.structured_output === "object") return JSON.stringify(j.structured_output);
+        if (typeof j.result === "string") return j.result;
+      } catch {
+        // not this line
+      }
     }
   } catch {
     return undefined;

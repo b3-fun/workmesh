@@ -36,6 +36,8 @@ What an agent reads when it connects (the server's `instructions`):
 | [`memories`](#memories) | reads | The team's accepted memories, newest first. |
 | [`handoff`](#handoff) | writes to the hub | Hand a task to a teammate, or to `me` (one of your person's other machines). Once accepted, their machine starts a new agent for it in a fresh worktree of the repo; you get a message when it is taken and when it is done. |
 | [`handoffs`](#handoffs) | reads | Handoffs offered to your person and sent by them, one line each. Only your person accepts or declines one: on the board, in the menu bar or in their own terminal. |
+| [`request_review`](#requestreview) | writes to the hub | Ask a teammate's agent to review a PR (read-only, on their machine; never an approval). Default: the PR this session opened. The findings come back to this session as a Workmesh message; fix what holds up and ask again for the next round (3 at most). |
+| [`reviews`](#reviews) | reads | Agent reviews this session asked for, one line each; with `id`, one review's findings in full. |
 | [`ask`](#ask) | reads | Ask the team board about teammates' agents and work, in plain words ("what is An's agent doing on B3-7167?", "who touched apps/hub today?"). Answered from what the board shows (states, summaries, files, claims, leases, notes), never other sessions' prompts or messages. Read-only; a few questions a minute. |
 
 ## whoami
@@ -228,6 +230,30 @@ Handoffs offered to your person and sent by them, one line each. Only your perso
 Read-only.
 
 No parameters.
+
+## request_review
+
+Ask a teammate's agent to review a PR (read-only, on their machine; never an approval). Default: the PR this session opened. The findings come back to this session as a Workmesh message; fix what holds up and ask again for the next round (3 at most).
+
+Changes team state on the hub; destructive: no.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `pr` | string | no | The PR: 212, owner/name#212 or its URL (default: the PR this session opened or marked ready). |
+| `repo` | string | no | owner/name (default: the PR's, else this session's repo). |
+| `focus` | string | no | What to look at, in a sentence or two (optional, up to 1,000 characters). |
+| `reviewers` | string[] | no | Up to two people (display name or email); default: Workmesh picks by CODEOWNERS, recent work and who is free. |
+| `count` | `1` \| `2` | no | How many reviewers (default 1). |
+
+## reviews
+
+Agent reviews this session asked for, one line each; with `id`, one review's findings in full.
+
+Read-only.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | no | A review's id, to read its findings. |
 
 ## ask
 

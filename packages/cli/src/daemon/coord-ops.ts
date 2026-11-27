@@ -23,6 +23,8 @@ import { formatInbox } from "./coord-hooks";
 import { cleanHandoff, handoffListLine, handoffView } from "./handoff-text";
 import type { HandoffStart } from "./handoff-text";
 import { forgetOp, memoriesOp, noteAsMemory, recallOp, rememberOp } from "./memory-ops";
+import { reviewPolicyOp, reviewsOp } from "./review-ops";
+import type { ReviewOpsDeps } from "./review-ops";
 import { recipientPerson } from "./messages";
 import type { HeldAnswer, HeldMessage } from "./messages";
 
@@ -62,6 +64,10 @@ export const COORD_OPS = [
   "recall",
   "forget",
   "memories",
+  // Review exchange (SPEC §53)
+  "request_review",
+  "reviews",
+  "review_policy",
 ] as const;
 export type CoordOp = (typeof COORD_OPS)[number];
 
@@ -134,6 +140,8 @@ export interface CoordOpsDeps {
    * the operation refuses every caller but a person's own surface (`PERSON_CLIENTS`) before it asks.
    */
   held?: { list(): HeldMessage[]; deliver(id: string): HeldAnswer; drop(id: string): HeldAnswer };
+  /** Review exchange (SPEC §53): requests, the list, and this machine's review policy (a person's to set). */
+  reviews?: ReviewOpsDeps;
   /** Ask: this machine's IANA time zone, for "today" and clock times (default: the process's). */
   timeZone?: () => string | undefined;
   now?: () => number;
@@ -750,6 +758,38 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
     case "memories":
       if (unavailable) return unavailable;
       return memoriesOp(a, ctx);
+
+    // --- Review exchange (SPEC §53) ---------------------------------------------------
+
+    case "request_review": {
+      if (unavailable) return unavailable;
+      if (!deps.reviews) return fail("This Workmesh daemon has no review exchange.");
+      const names = strList(a.reviewers, 2) ?? [];
+      const reviewers: Array<{ person: string; email?: string }> = [];
+      for (const n of names) {
+        const p = personOf(n, st, myself);
+        if (!p) return fail(`Workmesh doesn't know who ${oneLine(n, 120)} is on this team (\`roster\` lists people).`);
+        if ("error" in p) return fail(p.error);
+        if (samePerson(myself, p)) return fail("An agent review comes from a teammate: name someone other than yourself.");
+        reviewers.push({ person: p.person, ...(p.email ? { email: p.email } : {}) });
+      }
+      const pr = typeof a.pr === "number" ? a.pr : str(a.pr, 300);
+      const count = typeof a.count === "number" ? a.count : Number.parseInt(str(a.count, 2) ?? "", 10) || undefined;
+      return deps.reviews.request(key, { pr, repo: str(a.repo, 200), focus: str(a.focus, 4000), count }, { reviewers, ...(cwd ? { cwd } : {}) });
+    }
+
+    case "reviews":
+      if (unavailable) return unavailable;
+      return reviewsOp(a, { coord, key, deps: deps.reviews, myself });
+
+    case "review_policy":
+      // This machine's review policy decides what runs here with no click: the person's own, from their terminal.
+      // An agent's call is refused, whatever it asks (SPEC §53, as for gates, B3-7238).
+      if (key !== undefined || !PERSON_CLIENTS.includes(req.caller.client ?? "")) {
+        return fail("Review policy is your person's to set, from their own terminal (`workmesh reviews policy`), not an agent's.");
+      }
+      if (!deps.reviews) return fail("This Workmesh daemon has no review exchange.");
+      return reviewPolicyOp(a, deps.reviews);
 
     // --- Ask (SPEC §29) -----------------------------------------------------------------
 

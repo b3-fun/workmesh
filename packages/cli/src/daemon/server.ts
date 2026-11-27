@@ -106,6 +106,8 @@ export const CLIENT_HEADER = "x-workmesh-client";
 export const START_HEADER = "x-workmesh-start";
 export const ACTION_HEADER = "x-workmesh-action-digest";
 export const SURFACE_HEADER = "x-workmesh-surface";
+/** Review exchange (SPEC §53): the Workmesh handoff a hook's agent runs for (`WORKMESH_HANDOFF`), if any. */
+export const HANDOFF_HEADER = "x-workmesh-handoff";
 
 /** What a hook says about itself (0.12): what the session it fires for started under. */
 export interface HookMeta {
@@ -113,6 +115,8 @@ export interface HookMeta {
   version?: string;
   start?: string;
   surface?: string;
+  /** The handoff run the hook's agent belongs to (`WORKMESH_HANDOFF`, SPEC §53). */
+  handoff?: string;
 }
 
 function headerValue(req: http.IncomingMessage, name: string, re: RegExp): string | undefined {
@@ -311,6 +315,7 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
             start: headerValue(req, START_HEADER, /^[a-z_-]{1,20}$/),
             actionDigest: headerValue(req, ACTION_HEADER, /^[0-9a-f]{64}$/),
             surface: headerValue(req, SURFACE_HEADER, /^[0-9a-f]{8,64}$/),
+            handoff: headerValue(req, HANDOFF_HEADER, /^[\w-]{1,64}$/),
           };
           try {
             answer = deps.applyHookEvent(parsed.data, hook.slice(0, 64), meta);

@@ -653,6 +653,11 @@ export class HubForwarder {
     return this.sessions.get(key)?.mirror?.mode;
   }
 
+  /** A shared session's model as its transcript last said it (local use: a review request names the author's model). */
+  modelOf(key: string): string | undefined {
+    return this.sessions.get(key)?.mirror?.model;
+  }
+
   /** v1: some shared top-level session is live (the coordination sync then polls fast). */
   hasLiveShared(): boolean {
     for (const t of this.sessions.values()) {

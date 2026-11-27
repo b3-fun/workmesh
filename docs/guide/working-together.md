@@ -242,6 +242,40 @@ auto-self` lets handoffs you send yourself start with no click. It trusts every 
 them, and any agent running there, can then start an agent on this machine. `never` runs none here. If a handoff can't
 find your checkout, add where your repos live: `workmesh roots add ~/code`.
 
+## Reviews
+
+When one of your sessions opens a PR (`gh pr create`, not a draft) or marks one ready (`gh pr ready`), Workmesh tells
+its agent that a teammate's agent can review it. The agent asks with the `request_review` tool; you can too, with
+`workmesh review 212` (or `owner/name#212`, or the PR's URL). The hub picks one teammate, or two with `--count 2`: the
+people you name, else the CODEOWNERS owners of the changed files (by email: a GitHub login names nobody), else whoever
+worked on those files lately, else whoever is online and free. Never you, and only people whose machines take reviews.
+It prefers another agent CLI than yours: a Codex review for a Claude Code PR, and the reverse.
+
+The review runs on the teammate's machine, read-only. Their relay makes a fresh checkout of the PR's head that can't
+push, and starts their agent on it with the PR's text marked as untrusted. A Claude Code review only reads; a Codex
+review may run the tests in its sandbox, with no network. Workmesh refuses its edits, pushes, merges, approvals and
+GitHub writes. The findings (file, line, how bad, what to do) come back to the session that asked, as a Workmesh
+message, and show on the board's session page and in the PR's drawer. They are a teammate's agent's words: your agent
+weighs them against the code and fixes what holds up, then asks for the next round. After three rounds, or a round
+with no high or medium finding, the board puts the PR in the reviewers' Needs you: it's a person's turn.
+
+**An agent review never approves or merges.** A person's approval on GitHub stays required.
+
+Reviews asked of you are handoffs: by default each waits for your Accept, in the menu bar or with `workmesh handoffs
+accept <id>`. Your machine's review policy decides:
+
+```sh
+workmesh reviews policy               # show it
+workmesh reviews policy auto          # run reviews asked of you at once (read-only); ask is the default, never runs none
+workmesh reviews policy --post on     # also post each finished review on the PR as a comment, through your own gh
+workmesh reviews policy --agent codex --model gpt-5.5
+```
+
+Only you set it, from your own terminal: an agent's call is refused, and the hub never sets it. `--post` is off until
+you turn it on, and it only ever posts a plain comment. `workmesh reviews` lists the reviews you asked for and the ones
+asked of you; `workmesh reviews show <id>` prints one in full. To have your relay ask by itself when your PR is ready,
+turn on Settings → Reviews on the board (or `workmesh reviews policy --auto on` for one machine).
+
 ## Approval gates
 
 Gates make your own agents ask before an action. Nothing is gated until you turn it on:

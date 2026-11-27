@@ -230,6 +230,16 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
   project-wide `remember` and `notes` lists the brief, on an older hub both work as before. `recall`/`memories` pass a
   hold.
 
+- Review exchange (SPEC §52, §53, B3-7259): `daemon/reviews.ts` (policy to the hub, PR opened/ready offer or the
+  standing rule's request at `PostToolUse`, `request_review`, the author's notice with the findings as a marked
+  `<workmesh-review>` block), `daemon/review-ops.ts` (`reviews`, `review_policy`: the person's only), the runner's
+  review path in `daemon/handoff-runner.ts` (fresh `--shared` clone with no push URL, Claude `dontAsk` + read-only
+  allow list + `--setting-sources user` + `--strict-mcp-config`, Codex `workspace-write` no network + `--output-schema`,
+  opt-in `gh pr review --comment`), `daemon/review-gate.ts` (read-only refusals at `PreToolUse`, known by the hook's
+  `WORKMESH_HANDOFF` → `x-workmesh-handoff`), `daemon/review-git.ts`, `daemon/review-text.ts`, `daemon/codeowners.ts`.
+  Config `reviews` (`accept` ask|auto|never, `postToGitHub`, `agent`, `model`, `auto`, `count`, `maxMinutes`).
+  Live run (Claude Code author + Codex reviewer, temp HOMEs, local hub):
+  `~/Documents/b3/b3os-orch/scratch/team-hub/evidence/review-exchange/`.
 - Codex parity (SPEC §42, 11-25 live run on codex-cli 0.164): MCP tools carry annotations so Codex runs them without
   a prompt (and `codex exec` at all); a Codex `SessionEnd` waits 10 s and is dropped when Codex reloaded the thread
   (`daemon/codex-liveness.ts`, writer lock); notify counts only for known threads without hooks, and the rollout watcher is only a heartbeat for them
@@ -289,7 +299,7 @@ A second output beside the Slack pusher: the daemon forwards session metadata to
 
 - **Contract:** `docs/SPEC.md` is the relay ↔ hub contract (wire format, what may leave a machine, sharing levels,
   redaction, privacy rules). Change it in the same commit as any code that departs from it.
-- **Linear:** parent B3-7165, v0 B3-7166, v1 B3-7167, v2 B3-7168, v3 Memory B3-7203 (project "Workmesh", team NPC Labs; "B3OS Beta" until
+- **Linear:** parent B3-7165, v0 B3-7166, v1 B3-7167, v2 B3-7168, v3 Memory B3-7203, review exchange B3-7259 (project "Workmesh", team NPC Labs; "B3OS Beta" until
   11-25, ids unchanged; new Workmesh issues go to `--project "Workmesh"`). Sean's agents prefix every Linear
   comment with "(Claude, for Sean)", comment at each merge and deploy, and re-read the issue's comments before each
   merge or deploy. A person's comment is an instruction; "hold" pauses the work.

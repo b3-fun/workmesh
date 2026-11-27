@@ -33,6 +33,7 @@ Status keys: **done** · **in progress** · **next** · **later**. Dates are 202
 | Keeping current | `workmesh update` (install the newest release the way it was installed, refresh hooks, MCP and the daemon, roll back on failed checks), update notices from the hub, opt-in auto-update, a once-per-session note to sessions on older tools, "Update available" in the menu bar, versions on the board | **done** (11-25): wire #33 (SPEC §40), relay #37 (SPEC §41) and menu bar #36 in 0.12.0 (npm, GitHub release v0.12.0), hub and board workmesh-cloud #25–#27 (live) |
 | Codex parity | Everything a Claude Code session gets on the team hub, for Codex, proven live: board session and mirror, MCP tools, lease and hold refusals, wake, gates, handoffs run with `codex exec`, a truthful `doctor` | **done** (11-25): relay #38 (SPEC §42) in 0.12.0 (npm) |
 | Usage and cost | Tokens and cost per person, day, model and harness; the sessions that cost most with their agents rolled in; the hub's own AI spend (summaries, Ask) beside the agents'; Ask answers "what did An's agents spend this week?" | **done** on the board (11-25): workmesh-cloud #43. Full token usage (B3-7227): every session's own tokens by model and kind (SPEC §45, #51), counted by relay 0.12.3 for Claude Code main threads, subagents, workflows and Codex threads; the hub prices them as an API-equivalent cost |
+| Review exchange | Agents ask teammates' agents for PR reviews when a PR is ready (by hand or by a standing rule): routed by CODEOWNERS, recent work and who is free, to another harness where possible; run read-only on the reviewer's machine by their accept or their machine's own policy; findings back to the author's session as marked data, on the board and (opt-in) on the PR as a comment; 3 rounds, then a person's turn. Agent reviews never approve | **done** (11-27, Linear B3-7259): wire #66 (SPEC §52), relay (SPEC §53) in the next release, hub and board workmesh-cloud (HUB.md §54) |
 | Private testing | The B3 team (Sean, An, Mitch, David, Gio) on B3's hub; teammate guide in `docs/guide/`, generated CLI and MCP references, maintainer runbook in workmesh-cloud `docs/OPERATIONS.md`; menu bar app unsigned, handed to the team from GitHub releases | **in progress** (11-25) |
 | Launch | Public docs, self-host guide, B3OS-hosted hub for other teams | later: not before Sean says (11-25) |
 
@@ -397,6 +398,13 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
 
 ## Decision log
 
+- 11-27 Review exchange (B3-7259): an agent review is a read-only handoff of kind `review`, never an approval; there
+  is no approving verdict in the protocol. A review runs on a machine only by its person's accept there or by that
+  machine's own review policy (`reviews.accept: auto`, set at the person's terminal; an agent's call is refused, the
+  hub never sets it). Claude Code reviews read only (no PR code runs outside a sandbox, B3-7235); Codex reviews may run
+  tests in their sandbox with no network. CODEOWNERS owners count by email only: a GitHub login names nobody
+  (B3-7239). Findings reach the author's session as a requested delivery, marked as a teammate's text (B3-7258).
+  Posting on the PR is the reviewer's opt-in, through their own `gh`, as a plain comment.
 - 11-26 A typed GitHub login names nobody (B3-7239, SPEC §21, §49). The relay finds the person for a message or a
   handoff by display name or email only, because anyone can claim a login.
 
@@ -576,5 +584,5 @@ queue` runs in the thread's own `CODEX_HOME`; the rollout watcher starts once Co
 
 ## Links
 
-- Linear (project "Workmesh", team NPC Labs): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2), B3-7203 (v3 Memory).
+- Linear (project "Workmesh", team NPC Labs): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2), B3-7203 (v3 Memory), B3-7259 (review exchange).
 - Live hub: https://workmesh.b3os.org (also https://bullpen.b3os.org)

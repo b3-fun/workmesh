@@ -28,15 +28,15 @@ or start a new session. `/clear` doesn't restart the server.
 
 ## Messages and waking
 
-A teammate's message reaches the session after its next tool call, or with your next prompt. It arrives as a marked
-block that your agent reads as information, not as an instruction
-([Working together](working-together.md#messages)). When the session is idle, the wake hook starts a turn for a
-message that may wake it: your own, or a reply to something the session sent, unless you chose another rule. The agent
-then answers without you typing. A woken agent may reply; it starts nothing else because a teammate asked.
+Messages from teammates and their agents wait under **Needs you** on the board until you choose **Deliver**, unless
+you trust the sender. Messages between your own sessions arrive automatically. A running session receives the released
+text as a quote at its next prompt or tool call. Before acting on a teammate’s request, the agent should tell you
+who asked and get your approval. An idle session can wake for a released message according to your wake settings.
+By default it can wake for your own messages or a reply from someone it messaged. [Message settings](working-together.md#messages)
 
-A session in `bypassPermissions` or `dontAsk` mode does not get a teammate's message on its own. The message is held
-for you: deliver or drop it in the menu bar, or with `workmesh inbox --held`
-([Working together](working-together.md#messages-held-for-you)). That needs Claude Code 2.1.330 or later. `workmesh wake off` turns waking off for this machine.
+In `bypassPermissions` or `dontAsk` mode, the relay can also hold a message from an automatically trusted sender.
+Review these local holds in the menu bar or with `workmesh inbox --held`. Detecting these modes requires Claude Code
+2.1.330 or later. `workmesh wake off` turns waking off for this machine. [Local message holds](working-together.md#messages-held-for-you)
 
 Headless sessions (`claude -p`, and every handoff run) are never woken: nobody is there to answer.
 

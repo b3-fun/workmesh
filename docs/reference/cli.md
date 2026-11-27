@@ -39,7 +39,7 @@ For what to run when, start with the [guide](../guide/getting-started.md).
 | [`workmesh unlease`](#workmesh-unlease) | Release this agent session's leases (the paths given, or all of them) |
 | [`workmesh claims`](#workmesh-claims) | Linear issues claimed by your team's agents |
 | [`workmesh claim`](#workmesh-claim) | Claim a Linear issue for this agent session (--release to let it go) |
-| [`workmesh send`](#workmesh-send) | Message a teammate or their agent (delivered at its next tool call) |
+| [`workmesh send`](#workmesh-send) | Send a message. Teammates review it before delivery unless they trust the sender. |
 | [`workmesh inbox`](#workmesh-inbox) | Messages waiting for this machine's agents (or, inside an agent session, for that session); deliver or drop one held for you |
 | [`workmesh note`](#workmesh-note) | Leave a note every teammate's agent can read |
 | [`workmesh notes`](#workmesh-notes) | Your team's newest shared notes |
@@ -119,8 +119,8 @@ Commands:
   claims [options]                   Linear issues claimed by your team's agents
   claim [options] <issue>            Claim a Linear issue for this agent session
                                      (--release to let it go)
-  send [options] <to> <text...>      Message a teammate or their agent
-                                     (delivered at its next tool call)
+  send [options] <to> <text...>      Send a message. Teammates review it before
+                                     delivery unless they trust the sender.
   inbox [options] [action] [id]      Messages waiting for this machine's agents
                                      (or, inside an agent session, for that
                                      session); deliver or drop one held for you
@@ -655,7 +655,8 @@ Options:
 ```text
 Usage: workmesh send [options] <to> <text...>
 
-Message a teammate or their agent (delivered at its next tool call)
+Send a message. Teammates review it before delivery unless they trust the
+sender.
 
 Arguments:
   to             a person (display name or email), an agent's session name, or a

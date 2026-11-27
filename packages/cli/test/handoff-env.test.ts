@@ -1,79 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { droppedEnvLine, handoffEnv, secretEnvName } from "../src/daemon/handoff-env";
-
-/** The environment a handoff's agent starts with (SPEC §31): no variable whose name says its value is a secret. */
-
-describe("which environment variable names say \"secret\"", () => {
-  it("tokens, passwords, keys and credentials do", () => {
-    for (const name of [
-      "GITHUB_TOKEN",
-      "GH_TOKEN",
-      "NPM_TOKEN",
-      "AWS_SECRET_ACCESS_KEY",
-      "AWS_SESSION_TOKEN",
-      "OPENAI_API_KEY",
-      "ANTHROPIC_API_KEY",
-      "STRIPE_KEY",
-      "DATABASE_PASSWORD",
-      "MYSQL_PWD",
-      "PGPASSWORD",
-      "GHTOKEN",
-      "SENTRY_DSN",
-      "GITHUB_PAT",
-      "GOOGLE_APPLICATION_CREDENTIALS",
-      "REDISCLI_AUTH",
-      "SESSION_COOKIE",
-      "WORKMESH_TOKEN",
-      "AWS_BEARER_TOKEN_BEDROCK",
-      "apiKey",
-      "client_secret",
-    ]) {
-      expect(secretEnvName(name), name).toBe(true);
-    }
-  });
-
-  it("the tool chain, the shell and the session do not", () => {
-    for (const name of [
-      "PATH",
-      "HOME",
-      "USER",
-      "SHELL",
-      "LANG",
-      "TMPDIR",
-      "PWD",
-      "OLDPWD",
-      "NVM_DIR",
-      "JAVA_HOME",
-      "GOPATH",
-      "CARGO_HOME",
-      "PYENV_ROOT",
-      "VOLTA_HOME",
-      "BUN_INSTALL",
-      "SSH_AUTH_SOCK",
-      "GIT_ASKPASS",
-      "SSH_ASKPASS",
-      "GPG_TTY",
-      "KUBECONFIG",
-      "AWS_PROFILE",
-      "AWS_REGION",
-      "AWS_ACCESS_KEY_ID",
-      "TERM_SESSION_ID",
-      "SECURITYSESSIONID",
-      "INIT_CWD",
-      "PASSWORD_STORE_DIR",
-      "SSH_KEY_PATH",
-      // The last word decides: a path to a token is not the token.
-      "GITHUB_TOKEN_FILE",
-      "AWS_WEB_IDENTITY_TOKEN_FILE",
-      "MAX_TOKENS",
-      "TOKEN_COUNT",
-      "CLAUDE_CODE_USE_BEDROCK",
-      "WORKMESH_HANDOFF",
-    ]) {
-      expect(secretEnvName(name), name).toBe(false);
-    }
-  });
-});
+import { droppedEnvLine, handoffEnv } from "../src/daemon/handoff-env";
 
 describe("the environment a handoff's agent gets", () => {
   const base = {
@@ -100,13 +26,14 @@ describe("the environment a handoff's agent gets", () => {
     UNSET: undefined,
   };
   const names = (env: NodeJS.ProcessEnv) => Object.keys(env).sort();
-  const toolChain = ["AWS_ACCESS_KEY_ID", "HOME", "JAVA_HOME", "NVM_DIR", "PATH", "PWD", "SSH_AUTH_SOCK"];
+  const toolChain = ["HOME", "JAVA_HOME", "NVM_DIR", "PATH", "PWD"];
 
   it("Claude Code: its own sign-in stays, every other secret-looking name goes, the tool chain passes", () => {
     const r = handoffEnv(base, "claude");
     expect(names(r.env)).toEqual([...toolChain, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"].sort());
     expect(r.dropped).toEqual([
       "ANTHROPIC_FOUNDRY_API_KEY",
+      "AWS_ACCESS_KEY_ID",
       "AWS_BEARER_TOKEN_BEDROCK",
       "AWS_SECRET_ACCESS_KEY",
       "AWS_SESSION_TOKEN",
@@ -115,6 +42,7 @@ describe("the environment a handoff's agent gets", () => {
       "NPM_TOKEN",
       "OPENAI_API_KEY",
       "PGPASSWORD",
+      "SSH_AUTH_SOCK",
       "STRIPE_KEY",
     ]);
     expect(r.env.PATH).toBe("/usr/bin:/bin");
@@ -148,6 +76,12 @@ describe("the environment a handoff's agent gets", () => {
     expect(handoffEnv({ ...base, CLAUDE_CODE_USE_FOUNDRY: "1" }, "codex").dropped).toContain("ANTHROPIC_FOUNDRY_API_KEY");
   });
 
+  it("retains the selected agent's configured profile and endpoint", () => {
+    const env = { CODEX_HOME: "/tmp/codex", OPENAI_BASE_URL: "https://openai.example", CLAUDE_CONFIG_DIR: "/tmp/claude", ANTHROPIC_BASE_URL: "https://claude.example" };
+    expect(handoffEnv(env, "codex").env).toEqual({ CODEX_HOME: env.CODEX_HOME, OPENAI_BASE_URL: env.OPENAI_BASE_URL });
+    expect(handoffEnv(env, "claude").env).toEqual({ CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR, ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL });
+  });
+
   it("names the person listed are kept; a listed name that isn't set adds nothing", () => {
     const r = handoffEnv(base, "claude", ["GITHUB_TOKEN", "NOT_SET_TOKEN"]);
     expect(r.env.GITHUB_TOKEN).toBe("v-github");
@@ -156,12 +90,18 @@ describe("the environment a handoff's agent gets", () => {
     expect(r.dropped).toContain("NPM_TOKEN");
   });
 
+  it("allows only named runtime settings, agent sign-in and explicit opt-ins", () => {
+    const env = { LANG: "C", LC_TIME: "C", SSH_AUTH_SOCK: "sock", OPAQUE_CONFIG: "value", GIT_ASKPASS: "helper", NODE_OPTIONS: "opts" };
+    expect(handoffEnv(env, "codex").env).toEqual({ LANG: "C", LC_TIME: "C" });
+    expect(handoffEnv(env, "codex", ["SSH_AUTH_SOCK"]).env.SSH_AUTH_SOCK).toBe("sock");
+  });
+
   it("the log line names what was dropped and never a value", () => {
     const r = handoffEnv(base, "claude");
     const line = droppedEnvLine(r.dropped);
     expect(line).toBe(
-      "workmesh: 10 environment variables were not passed to the agent, because the name looks like a secret: " +
-        "ANTHROPIC_FOUNDRY_API_KEY, AWS_BEARER_TOKEN_BEDROCK, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, GITHUB_TOKEN, GOOGLE_APPLICATION_CREDENTIALS, NPM_TOKEN, OPENAI_API_KEY, PGPASSWORD, STRIPE_KEY. " +
+      "workmesh: 12 environment variables were not passed to the agent, because they are outside the handoff environment: " +
+        "ANTHROPIC_FOUNDRY_API_KEY, AWS_ACCESS_KEY_ID, AWS_BEARER_TOKEN_BEDROCK, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, GITHUB_TOKEN, GOOGLE_APPLICATION_CREDENTIALS, NPM_TOKEN, OPENAI_API_KEY, PGPASSWORD, SSH_AUTH_SOCK, STRIPE_KEY. " +
         "To pass one, add its name to handoffs.env in the Workmesh config.",
     );
     for (const value of Object.values(base)) if (value) expect(line.includes(value), value).toBe(false);

@@ -35,7 +35,7 @@ const INVISIBLE_RE =
  * (`system-reminder`, `environment_context`, `workmesh-message`). Plain HTML and code (`<div>`, `Array<string>`,
  * `a<b_c) {`) are left alone.
  */
-const MARKUP_RE = /<(?=\/?[a-z][a-z0-9]*(?:[-_:][a-z0-9]+)+(?:\s[^<>]*)?\/?>)/gi;
+const MARKUP_RE = /<(?=\/?(?:system|assistant|developer|user|tool|[a-z][a-z0-9]*(?:[-_:][a-z0-9]+)+)(?:\s[^<>]*)?\/?>)/gi;
 
 /** What every line of someone else's text starts with. */
 export const QUOTE_MARK = "│";

@@ -7,7 +7,6 @@ import { hubSyncAcceptSchema } from "@workmesh/protocol";
 import type { HubHandoffAccepted, HubSyncResponse } from "@workmesh/protocol";
 import { CoordClient } from "../src/hub/coord";
 import { CheckoutIndex, HandoffRunner, codexThreadFromLog, handoffPrompt, handoffSessionName, resultText } from "../src/daemon/handoff-runner";
-import { secretEnvName } from "../src/daemon/handoff-env";
 import type { RunnerSettings } from "../src/daemon/handoff-runner";
 import { runCoordOp } from "../src/daemon/coord-ops";
 import type { CoordOpsDeps } from "../src/daemon/coord-ops";
@@ -92,8 +91,6 @@ const HANDOFF: HubHandoffAccepted = {
   device: DEV,
   sessionKey: undefined,
   note: undefined,
-  acceptedBy: undefined,
-  rule: undefined,
 };
 
 const settings = (over: Partial<RunnerSettings> = {}): RunnerSettings => ({
@@ -203,10 +200,12 @@ describe("handoff runner (SPEC §31)", () => {
       { status: 200, body: { ok: true, handoff: { ...HANDOFF, status: "done" } } },
     ]);
     // The daemon's own environment, as a daemon started from a shell would have it. Every value is made up.
-    const passes = { HOME: home, LANG: "en_US.UTF-8", NVM_DIR: "/home/sam/.nvm", JAVA_HOME: "/opt/jdk-21", SSH_AUTH_SOCK: "/tmp/ssh-agent.sock", AWS_PROFILE: "dev" };
+    const passes = { HOME: home, LANG: "en_US.UTF-8", NVM_DIR: "/home/sam/.nvm", JAVA_HOME: "/opt/jdk-21" };
     const signIn = { ANTHROPIC_API_KEY: "value-anthropic-key", CLAUDE_CODE_OAUTH_TOKEN: "value-oauth" };
     const listed = { MY_SERVICE_TOKEN: "value-listed" };
     const secrets = {
+      SSH_AUTH_SOCK: "/tmp/ssh-agent.sock",
+      AWS_PROFILE: "private-profile-fixture",
       GITHUB_TOKEN: "value-github",
       NPM_TOKEN: "value-npm",
       AWS_SECRET_ACCESS_KEY: "value-aws",
@@ -245,13 +244,12 @@ describe("handoff runner (SPEC §31)", () => {
     expect(child.PATH).toBe(process.env.PATH ?? "/usr/bin:/bin");
     // Nothing else whose name looks like a secret got through, nor the outer session's id.
     for (const name of Object.keys(secrets)) expect(name in child, name).toBe(false);
-    expect(Object.keys(child).filter(secretEnvName).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "MY_SERVICE_TOKEN"]);
     expect("CLAUDE_CODE_SESSION_ID" in child).toBe(false);
     // The run's log opens with the names that were dropped, and holds none of their values.
     const log = fs.readFileSync(rec.logFile, "utf8");
     expect(log.split("\n")[0]).toBe(
-      "workmesh: 7 environment variables were not passed to the agent, because the name looks like a secret: " +
-        "AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, NPM_TOKEN, OPENAI_API_KEY, PGPASSWORD, STRIPE_KEY, WORKMESH_TOKEN. " +
+      "workmesh: 10 environment variables were not passed to the agent, because they are outside the handoff environment: " +
+        "AWS_PROFILE, AWS_SECRET_ACCESS_KEY, CLAUDE_CODE_SESSION_ID, GITHUB_TOKEN, NPM_TOKEN, OPENAI_API_KEY, PGPASSWORD, SSH_AUTH_SOCK, STRIPE_KEY, WORKMESH_TOKEN. " +
         "To pass one, add its name to handoffs.env in the Workmesh config.",
     );
     for (const value of Object.values(secrets)) expect(log.includes(value), value).toBe(false);

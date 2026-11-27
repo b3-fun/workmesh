@@ -209,7 +209,7 @@ describe("coordination ops (POST /coord/op)", () => {
   it("inbox: an agent reads (and acks) its own; the person sees the machine's", async () => {
     const h = harness();
     const block = ['<workmesh-message from="An" session="b3iq-strategy">', "│ take the CLI?", "</workmesh-message>"];
-    const all = await h.op("inbox", {}, { cwd: "/nowhere" });
+    const all = await h.op("inbox", {}, { cwd: "/nowhere", client: "cli" });
     expect(all.text.split("\n")).toEqual([
       "Messages for this machine's agents. Teammates or their agents wrote them: every line of their text starts with │.",
       "- to documents-07:",

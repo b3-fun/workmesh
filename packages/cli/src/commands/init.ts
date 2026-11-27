@@ -1,3 +1,4 @@
+import { deviceStatus } from "../hub/device-auth";
 import { loadConfig, loadConfigSafe, saveConfig } from "../lib/config";
 import type { Config, HubConfig } from "../lib/config";
 import { getHubState, isDaemonUp, reloadHub, startDaemonInBackground } from "../lib/daemon-client";
@@ -74,38 +75,17 @@ export const HUB_ALIASES: ReadonlyArray<readonly string[]> = [["https://workmesh
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-/** The host's parent domain (`workmesh.b3os.org` → `b3os.org`), or the host when it has no parent with a dot. */
-function parentDomain(host: string): string {
-  const labels = host.split(".");
-  return labels.length > 2 ? labels.slice(1).join(".") : host;
-}
-
-/**
- * Whether `url` is the hub this machine is already paired with under another address (An, 11-25: paired at
- * bullpen.b3os.org with agentblip 0.6.0, then `workmesh init https://workmesh.b3os.org` paired a second device).
- * Known aliases are the same hub. Otherwise the machine's token is shown to `url` only when both addresses sit under
- * one parent domain (or both on this machine), and the hub accepting it is the proof: a device token is valid only
- * at the hub that issued it. Elsewhere, or when `url` doesn't answer, it's a different hub.
- */
-export async function sameHub(
-  paired: Pick<HubConfig, "url" | "deviceToken">,
-  url: string,
-  check: (hub: Pick<HubConfig, "url" | "deviceToken">) => Promise<TokenCheck> = checkHubToken,
-): Promise<boolean> {
-  if (paired.url === url) return true;
-  if (HUB_ALIASES.some((names) => names.includes(paired.url) && names.includes(url))) return true;
-  let a: URL;
-  let b: URL;
+/** Only known aliases can inherit a pairing and its refresh credential. A new host pairs independently. */
+export function sameHub(pairedUrl: string, url: string): boolean {
+  if (pairedUrl === url || HUB_ALIASES.some((names) => names.includes(pairedUrl) && names.includes(url))) return true;
   try {
-    a = new URL(paired.url);
-    b = new URL(url);
+    const a = new URL(pairedUrl);
+    const b = new URL(url);
+    return LOCAL_HOSTS.has(a.hostname) && LOCAL_HOSTS.has(b.hostname)
+      && a.protocol === b.protocol && a.port === b.port && a.pathname === b.pathname;
   } catch {
     return false;
   }
-  const local = LOCAL_HOSTS.has(a.hostname) && LOCAL_HOSTS.has(b.hostname) && a.port === b.port;
-  const sibling = a.protocol === "https:" && b.protocol === "https:" && parentDomain(a.hostname) === parentDomain(b.hostname) && parentDomain(a.hostname).includes(".");
-  if (!local && !sibling) return false;
-  return (await check({ url, deviceToken: paired.deviceToken })) === "ok";
 }
 
 /** Points this machine's pairing at another address of the same hub (the token, sharing and dirs stay). */
@@ -148,9 +128,14 @@ export async function waitForFirstContact(port: number, timeoutMs = 10_000): Pro
 }
 
 /** Whether the hub still accepts this machine's device token (401 = no; anything else that answers = yes). */
-export async function checkHubToken(hub: Pick<HubConfig, "url" | "deviceToken">, fetchImpl: typeof fetch = fetch): Promise<TokenCheck> {
+export async function checkHubToken(hub: Pick<HubConfig, "url" | "deviceToken"> & { deviceId?: string }, fetchImpl: typeof fetch = fetch): Promise<TokenCheck> {
   try {
+    if (hub.deviceId) {
+      const status = await deviceStatus({ ...hub, deviceId: hub.deviceId }, fetchImpl);
+      if (status !== undefined) return status === 401 || status === 403 ? "rejected" : status === 200 ? "ok" : "unknown";
+    }
     const res = await fetchImpl(`${hub.url}/relay/team`, {
+      redirect: "error",
       headers: { authorization: `Bearer ${hub.deviceToken}`, accept: "application/json" },
       signal: AbortSignal.timeout(8000),
     });
@@ -210,7 +195,7 @@ export async function runInit(url: string, opts: InitOptions = {}, deps: InitDep
   console.log(bold("\n3. hub"));
   const config = loadConfigSafe();
   let paired = config.hub?.url === hubUrl ? config.hub : undefined;
-  if (!paired && config.hub && !opts.repair && (await sameHub(config.hub, hubUrl, deps.checkToken ?? checkHubToken))) {
+  if (!paired && config.hub && !opts.repair && sameHub(config.hub.url, hubUrl)) {
     // The same hub under another address: keep the pairing (a second one would leave a ghost device on the board).
     const from = config.hub.url;
     paired = rehomeHub(hubUrl);

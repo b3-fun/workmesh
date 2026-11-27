@@ -9,6 +9,7 @@ import { loadConfigSafe } from "../lib/config";
 import { HOOK_TIMING, ensureDaemon, postEvent } from "../lib/daemon-client";
 import type { HookAnswer } from "../daemon/coord-hooks";
 import type { HookMeta } from "../daemon/server";
+import { actionDigest, needsMessageConsent, CONSENT_UNAVAILABLE } from "../daemon/message-consent";
 import { surfaceFingerprint } from "../lib/surface";
 
 const STDIN_TIMEOUT_MS = 1000;
@@ -57,8 +58,8 @@ export function hookOutput(
     out.permissionDecisionReason = agent === "codex" ? answer.deny.replace(/\.\s*$/, "") : answer.deny;
   }
   if (answer.context) out.additionalContext = answer.context;
-  if (Object.keys(out).length === 1) return undefined;
-  return JSON.stringify({ hookSpecificOutput: out });
+  if (Object.keys(out).length === 1 && !answer.systemMessage) return undefined;
+  return JSON.stringify({ hookSpecificOutput: out, ...(answer.systemMessage ? { systemMessage: answer.systemMessage } : {}) });
 }
 
 function hookEventName(json: unknown): string | undefined {
@@ -71,6 +72,7 @@ function hookEventName(json: unknown): string | undefined {
  * `compact`) and the tools it got, so the daemon knows what a session started under.
  */
 export function hookMeta(hook: string | undefined, json: unknown): HookMeta {
+  if (hook === "PreToolUse") return { version: pkg.version, actionDigest: actionDigest(json) };
   if (hook !== "SessionStart") return { version: pkg.version };
   const source = (json as { source?: unknown } | null)?.source;
   return {
@@ -85,27 +87,23 @@ export function hookMeta(hook: string | undefined, json: unknown): HookMeta {
  * agent session: every error is swallowed and the process always exits 0.
  */
 export async function runHook(source: string, payload?: string): Promise<void> {
+  const agent = source === "codex-hooks" ? "codex" : "claude-code";
+  let preToolSession: string | undefined;
+  let hook: string | undefined;
+  let answer: HookAnswer | undefined;
   try {
     let event: SessionEvent | null = null;
-    // Claude Code and Codex hooks: the hook event name, so the daemon can answer it (v1 Coordinate).
-    let hook: string | undefined;
     let meta: HookMeta = {};
-    if (source === "claude-code") {
+    if (source === "claude-code" || source === "codex-hooks") {
       const raw = await readStdin(STDIN_TIMEOUT_MS);
       if (!raw.trim()) return;
-      const json = JSON.parse(raw) as unknown;
+      const json = JSON.parse(raw) as { session_id?: unknown };
       hook = hookEventName(json);
+      if (hook === "PreToolUse" && typeof json.session_id === "string") {
+        preToolSession = `${agent}:${json.session_id.slice(0, 128)}`;
+      }
       meta = hookMeta(hook, json);
-      event = mapHookInput(json);
-    } else if (source === "codex-hooks") {
-      // Codex lifecycle hooks: JSON on stdin. Codex adds a SessionStart/UserPromptSubmit hook's plain stdout to the
-      // model's context, so nothing is printed but the structured JSON answer below.
-      const raw = await readStdin(STDIN_TIMEOUT_MS);
-      if (!raw.trim()) return;
-      const json = JSON.parse(raw) as unknown;
-      hook = hookEventName(json);
-      meta = hookMeta(hook, json);
-      event = mapCodexHookInput(json);
+      event = agent === "codex" ? mapCodexHookInput(json) : mapHookInput(json);
     } else if (source === "codex") {
       const raw = payload ?? (await readStdin(STDIN_TIMEOUT_MS));
       if (!raw.trim()) return;
@@ -120,14 +118,19 @@ export async function runHook(source: string, payload?: string): Promise<void> {
     if (!event) return;
     const config = loadConfigSafe();
     if (!(await ensureDaemon(config, HOOK_TIMING))) return;
-    // The daemon answers from cached state (fails open), so the hook's short timeout costs no answer that matters.
-    const res = await postEvent(config.port, fitEventBody(event), hook, HOOK_TIMING.requestTimeoutMs, meta);
-    const out = hookOutput(hook, res.coord, source === "codex-hooks" ? "codex" : "claude-code");
-    // Synchronous: the process exits right after, and a pipe write could be cut short.
-    if (out) fs.writeSync(1, `${out}\n`);
+    // The daemon answers from cached state within the native hook timeout.
+    answer = (await postEvent(config.port, fitEventBody(event), hook, HOOK_TIMING.requestTimeoutMs, meta)).coord;
   } catch {
-    // swallow everything — exit 0 below
+    // If the daemon or adapter failed, a locally guarded call still receives a refusal below.
   } finally {
-    process.exit(0);
+    try {
+      if (preToolSession && !answer?.deny && !answer?.consentChecked && needsMessageConsent(preToolSession)) {
+        answer = { deny: CONSENT_UNAVAILABLE };
+      }
+      const out = hookOutput(hook, answer, agent);
+      if (out) fs.writeSync(1, `${out}\n`);
+    } finally {
+      process.exit(0);
+    }
   }
 }

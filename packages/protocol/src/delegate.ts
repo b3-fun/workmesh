@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { HUB_ISSUE_RE, HUB_REPO_RE, hubPersonEmailAcceptSchema, hubPersonEmailSchema } from "./fields.js";
+import { hubHandoffKindSchema, hubHandoffReviewAcceptSchema, hubHandoffReviewSchema } from "./review.js";
 
 /**
  * v2 Delegate (docs/SPEC.md §30): handoffs to a person's runner, approval gates on an agent's risky actions, and
@@ -18,8 +19,6 @@ import { HUB_ISSUE_RE, HUB_REPO_RE, hubPersonEmailAcceptSchema, hubPersonEmailSc
 export const HUB_HANDOFF_TEXT_MAX = 4000;
 /** A note on a handoff's or an approval's change (why it was declined, failed, denied; what was done). */
 export const HUB_DELEGATE_NOTE_MAX = 500;
-/** A standing rule's words on a handoff it accepted (§50). */
-export const HUB_HANDOFF_RULE_MAX = 200;
 /** What an approval asks for, e.g. "gh pr merge 212 --merge in b3-fun/b3os-beta". */
 export const HUB_APPROVAL_DETAIL_MAX = 500;
 /** Handoffs and approvals one sync carries. */
@@ -270,13 +269,10 @@ export const hubHandoffSchema = z.object({
   sessionKey: hubKey.optional(),
   /** Why it was declined or failed, or what was done. */
   note: note.optional(),
-  /**
-   * How it was accepted (§50), sent only for an accepted (or later) handoff a standing rule accepted: `rule` means a
-   * rule its person set on the board accepted it, not the person. Absent: the person did, or a hub before §50.
-   */
-  acceptedBy: z.literal("rule").optional(),
-  /** That rule, in the hub's words ("small requests from Allie in b3-fun/docs"), when `acceptedBy` is `rule`. */
-  rule: z.string().min(1).max(HUB_HANDOFF_RULE_MAX).optional(),
+  /** `review` (§52): a read-only PR review, run from `review`, never from `task`. Absent: a task. */
+  kind: hubHandoffKindSchema.optional(),
+  /** A review handoff's PR, round and outcome (§52). */
+  review: hubHandoffReviewSchema.optional(),
 });
 export type HubHandoff = z.infer<typeof hubHandoffSchema>;
 const handoffAccept = z.object({
@@ -299,10 +295,18 @@ const handoffAccept = z.object({
   device: soft(deviceId),
   sessionKey: soft(hubKey),
   note: soft(cut(HUB_DELEGATE_NOTE_MAX)),
-  /** Anything but `rule` reads as absent: the relay then treats it as the person's own accept somewhere else. */
-  acceptedBy: soft(z.literal("rule")),
-  rule: soft(z.string().min(1).transform((s) => s.slice(0, HUB_HANDOFF_RULE_MAX))),
-});
+  /**
+   * A kind this relay doesn't know drops the item, like an unknown status: a relay never runs as a task what was
+   * sent as something else (§52).
+   */
+  kind: hubHandoffKindSchema
+    .nullish()
+    .transform((v) => v ?? undefined)
+    .optional(),
+  review: soft(hubHandoffReviewAcceptSchema).optional(),
+})
+  // A review handoff without a readable `review` is dropped too: the relay builds a review's prompt from it.
+  .refine((h) => h.kind !== "review" || h.review !== undefined, "a review handoff names its PR");
 export type HubHandoffAccepted = z.infer<typeof handoffAccept>;
 
 export const hubHandoffUpdateActionSchema = z.enum(["accept", "decline", "start", "done", "fail"]);

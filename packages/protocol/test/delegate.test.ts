@@ -106,17 +106,6 @@ describe("handoffs (SPEC §30)", () => {
 });
 
 describe("approvals and gates (SPEC §30)", () => {
-  it("a standing rule's accept (§50): built strictly, read unchanged; anything else reads as the person's", () => {
-    const byRule = { ...handoff, status: "accepted", acceptedBy: "rule", rule: "small requests from Allie in b3-fun/docs" } as const;
-    expect(hubHandoffResponseSchema.parse({ ok: true, handoff: byRule })).toEqual({ ok: true, handoff: byRule });
-    expect(hubHandoffResponseAcceptSchema.parse({ ok: true, handoff: byRule })).toEqual({ ok: true, handoff: byRule });
-    // A later hub's other value, or a rule's words over the cap: dropped or cut, never the whole handoff.
-    const odd = hubHandoffResponseAcceptSchema.parse({ ok: true, handoff: { ...byRule, acceptedBy: "policy", rule: "x".repeat(400) } });
-    expect(odd.ok && odd.handoff.acceptedBy).toBeUndefined();
-    expect(odd.ok && odd.handoff.rule?.length).toBe(200);
-    expect(() => hubHandoffResponseSchema.parse({ ok: true, handoff: { ...byRule, acceptedBy: "person" } })).toThrow();
-  });
-
   it("request, approve and deny build strictly and read unchanged", () => {
     for (const b of [
       { action: "request", sessionKey: "claude-code:s1", gate: "merge", detail: approval.detail },

@@ -317,7 +317,7 @@ program
 
 program
   .command("send")
-  .description("Message a teammate or their agent (delivered at its next tool call)")
+  .description("Send a message. Teammates review it before delivery unless they trust the sender.")
   .argument("<to>", "a person (display name or email), an agent's session name, or a hub session key")
   .argument("<text...>", "the message")
   .option("--kind <kind>", "person | agent | session, when <to> is ambiguous")

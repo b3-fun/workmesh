@@ -343,7 +343,9 @@ export class MessageGate implements InboxPolicy {
     // Dropped, and waiting for its ack to reach the hub: it never goes to the session.
     if (this.dropped.has(id) || this.heldIds.has(id)) return true;
     if (this.deps.coord()?.isOwn(item)) return false;
-    if (!this.holdsNow(localKey)) return false;
+    // A hub without release metadata cannot attest to a person's decision.
+    if (item.release === "accepted" || item.release === "requested") return false;
+    if (item.release === "trusted" && !this.holdsNow(localKey)) return false;
     if (this.heldIds.size >= HELD_MAX) this.heldIds.delete(this.heldIds.keys().next().value!);
     this.heldIds.set(id, { session: localKey, since: this.now() });
     this.touch();

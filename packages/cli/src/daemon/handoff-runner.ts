@@ -524,8 +524,7 @@ export class HandoffRunner implements HandoffRunnerLike {
             ...(settings.model ? ["--model", settings.model] : []),
           ]
         : codexExecArgs(picked.bin, { dir, resultFile, model: settings.model, approveForMe: await codexHasApproveForMe(picked.bin) });
-    // The agent works on someone else's task. It gets the daemon's environment without the variables whose names say
-    // "secret", except what its own tool signs in with and what the person listed (handoff-env.ts).
+    // Build the child environment from runtime settings, provider sign-in and the owner’s explicit additions.
     const passed = handoffEnv((this.deps.env ?? (() => process.env))(), picked.agent, settings.env);
     const env: NodeJS.ProcessEnv = { ...passed.env, PATH: await (this.deps.pathEnv ?? loginPath)(), WORKMESH_HANDOFF: h.id, WM_EXIT_FILE: exitFile };
     delete env.CLAUDECODE;

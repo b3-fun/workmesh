@@ -23,9 +23,11 @@ import type { Config, HubConfig } from "../lib/config";
 import { HubForwarder } from "../hub/forwarder";
 import { TeamPoller } from "../hub/team";
 import { CoordClient } from "../hub/coord";
+import { deviceFetch } from "../hub/device-auth";
 import { CoordHooks } from "./coord-hooks";
 import { runCoordOp } from "./coord-ops";
 import { Delegate } from "./delegate";
+import { MessageConsent, CONSENT_UNAVAILABLE } from "./message-consent";
 import { MessageGate } from "./messages";
 import { AcceptedHere } from "./accepted-here";
 import { CheckoutIndex, HandoffRunner } from "./handoff-runner";
@@ -126,6 +128,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   let teamPoller: TeamPoller | undefined;
   // v1 (SPEC §21, §23): leases, holds, claims, messages (GET /relay/sync), read by hooks from memory.
   let coord: CoordClient | undefined;
+  const consent = new MessageConsent();
   // v0.6: the GitHub login `gh` reports, read once per start (the config's copy from `hub connect` until then).
   let githubLogin: string | undefined;
   let githubRead = false;
@@ -183,6 +186,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
   // away from agents: this store is the only place the sync's list goes.
   const newDevices = new NewDeviceNotices({ file: newDevicesPath(), log });
 
+  let auth: { url: string; bootstrap: string; fetch: typeof fetch } | undefined;
   const startForwarder = (hub: HubConfig | undefined): void => {
     const previous = forwarder;
     forwarder = undefined;
@@ -195,13 +199,18 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     coord?.stop();
     coord = undefined;
     if (!hub) {
+      auth = undefined;
       // Disconnected: nothing to carry on with.
       removeStateFile(hubForwardStatePath());
       return;
     }
+    if (!auth || auth.url !== hub.url || auth.bootstrap !== hub.deviceToken) {
+      auth = { url: hub.url, bootstrap: hub.deviceToken, fetch: deviceFetch(hub) };
+    }
     const fwd = new HubForwarder({
       url: hub.url,
       token: hub.deviceToken,
+      fetchImpl: auth.fetch,
       rule: hub.project,
       // Handoffs with no repo run in Workmesh's own scratch dirs, shared so they show on the board (SPEC §31).
       includeDirs: [...hub.includeDirs, handoffsDir()],
@@ -227,6 +236,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     teamPoller = new TeamPoller({
       url: hub.url,
       token: hub.deviceToken,
+      fetchImpl: auth.fetch,
       log,
       // A hub that serves the team view reads v0.6 structure: subagents go as their own sessions.
       onAvailability: (available) => {
@@ -238,6 +248,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
     coord = new CoordClient({
       url: hub.url,
       token: hub.deviceToken,
+      fetchImpl: auth.fetch,
       deviceId: hub.deviceId,
       person: hub.person?.name,
       personEmail: hub.person?.email,
@@ -253,6 +264,9 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         delegate.onSync(next, previous);
       },
       policy: messages,
+      beforeExternalDelivery: (key, sender) => {
+        if (liveConfig.messages?.confirmActions) consent.arm(key, hub.deviceId, sender);
+      },
       onNewDevices: (list, hubNow) => {
         newDevices.observe(list, { board: hub.url, self: hub.deviceId, hubNow });
       },
@@ -353,6 +367,15 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         deny = undefined; // fail open
       }
     }
+    let checked: ReturnType<MessageConsent["check"]>;
+    if (!deny && hook === "PreToolUse") {
+      try {
+        checked = consent.check(CoordHooks.agentKey(event), event.detail?.tool ?? "tool", meta?.actionDigest, coord);
+      } catch {
+        checked = { deny: CONSENT_UNAVAILABLE };
+      }
+      deny = checked?.deny;
+    }
     if (deny) {
       // The tool won't run: keep the session alive, but nothing about the refused call goes anywhere.
       applyEvent({ ...event, kind: "heartbeat", activity: undefined, detail: undefined });
@@ -361,7 +384,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       applyEvent(event);
       if (forwarder?.isShared(`${event.source}:${event.sessionId}`)) coord?.poke();
     }
-    const answer = coordHooks.answer(event, hook, deny);
+    const context = coordHooks.answer(event, hook, deny);
+    const answer = checked ? { ...context, ...checked, consentChecked: true } : context;
     let note: string | undefined;
     try {
       note = staleNote(event, hook, meta, deny !== undefined);
@@ -404,7 +428,7 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       .heldMessages(nameOf)
       .slice(0, 50)
       .map((m) => ({ ...m, text: m.text.slice(0, 1000) }));
-    return { available: view.available, holds, unread, held };
+    return { available: view.available, holds, unread, held, waitingMessages: coord.waitingMessages };
   };
 
   // 0.12 (SPEC §41): what's newer, from the hub or npm; the menu bar's release; opt-in auto-update.

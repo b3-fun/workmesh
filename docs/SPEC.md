@@ -140,11 +140,7 @@ token answers every `/relay/*` call with `401 { "error": "superseded: <machine> 
 says so; the relay that paired again sends its open sessions under the new device. Two machines with the same name
 need their own names (`workmesh init <hub> --machine <name>`).
 
-**One hub, several addresses** (0.11.1). `workmesh init <url>` keeps an existing pairing when `<url>` is the hub it
-already paired with under another address: B3's two hosts (§1) always; another host under the same parent domain (or
-both on this machine) when it accepts the machine's device token (`GET /relay/team` answers anything but `401`/`403`).
-The relay never shows a token to a host outside that domain. The pairing is kept and the relay forwards to `<url>`
-from then on.
+**One hub, several addresses** (0.13). `workmesh init <url>` keeps an existing pairing for B3's two known hostnames (§1) and for the same loopback service. A different remote hostname requires its own pairing. The relay sends credentials only to a paired hub.
 
 ### 3.2 Ingest
 
@@ -1153,11 +1149,8 @@ command run; a waiter that can't reach the daemon ends.
   - One accepted on another of the person's machines (`device` is that machine) is that machine's to run. It is not
     offered here.
   - The config key `handoffs.runAccepted` is `confirm` when absent. With `auto`, this machine starts any handoff the
-    hub lists as accepted for its person, as before B3-7235. That trusts the hub's word. With `rules` (§51), it
-    starts only one that a standing rule of the person's accepted (`acceptedBy: "rule"`, §50), and asks about the rest.
-  - **The agent starts with fewer secrets** (B3-7235). It gets the daemon's environment without the variables whose
-    name says the value is a secret. The redaction rules' reading of a name decides (§9): the last word counts, so
-    `GITHUB_TOKEN` and `AWS_SECRET_ACCESS_KEY` go, and `PATH`, `NVM_DIR` and `SSH_AUTH_SOCK` stay.
+    hub lists as accepted for its person, as before B3-7235. That trusts the hub's word.
+  - Handoff subprocesses inherit a fixed list of shell, locale and toolchain variables. Credential sockets, credential helpers and unrelated environment variables stay in the parent unless the owner explicitly lists them in `handoffs.env`.
   - What the agent tool signs in with is kept. For Claude Code that is `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
     and `CLAUDE_CODE_OAUTH_TOKEN`. It is also the AWS or Google credentials when `CLAUDE_CODE_USE_BEDROCK` or
     `CLAUDE_CODE_USE_VERTEX` is set, and `ANTHROPIC_FOUNDRY_API_KEY` when `CLAUDE_CODE_USE_FOUNDRY` is set. For
@@ -1843,38 +1836,103 @@ reader, §14).
 - **Unchanged:** which session a lease, hold or message belongs to. Those are matched by session key, never by a
   person's name.
 
-# Requests: people without a relay ask for work (B3-7260, 2026-11-26)
+---
 
-Sean, 11-26: "a non technical person prompting or asking the mesh, and the work executing on engineer's machines". A
-person who runs no relay (a PM, ops, design, sales) asks the hub for work in plain words. The hub records the request,
-proposes an owner and offers that engineer an ordinary handoff (§30), sent in the requester's name. The engineer
-accepts it, or a standing rule they set on the board accepts it for them. The relay runs it the way it runs any
-handoff (§31). The requester follows it, comments and signs off on the board. All of that lives on the hub. The wire
-gains one thing: a handoff can say a standing rule accepted it.
+# Review exchange: agents review each other's PRs (Sean, 2026-11-26, Linear B3-7259)
 
-## 50. `acceptedBy` on a handoff
+Sean, 11-26: "agents asking (maybe automatically) each other for PR review when PRs are ready". When a session opens a
+PR or marks one ready, its agent (or its relay, by the person's standing rule) asks the hub for a review. The hub
+routes it to one or two teammates, never the author, and each gets a **review handoff**: a read-only handoff (§30) that
+their relay runs in a fresh checkout of the PR's head, with no way to push, merge or approve. The findings come back to
+the author's session as data and show on the board. The author's agent fixes and asks again, for at most three rounds;
+then it is a person's turn. **An agent review never approves or merges a PR.** A person's approval stays required
+(SOC 2): there is no approving verdict in the protocol, and the reviewer's relay refuses `gh pr review --approve` and
+every merge.
 
-Code form: `packages/protocol/src/delegate.ts` (`hubHandoffSchema`, `HUB_HANDOFF_RULE_MAX`).
+All of it is one new endpoint, two optional fields on a handoff and one optional object on sync, beside v2. An older
+hub answers `404` and sends no `reviews`; a relay then offers no reviews.
 
-- **`acceptedBy: "rule"`** is on a handoff (in sync, in `/relay/team`, in answers) that a standing rule of its
-  recipient's accepted, from `accepted` on. A rule is something the person set on the board, such as "accept small
-  requests from Allie in b3-fun/docs, at most 3 a day". **`rule`** gives that rule in the hub's words, at most 200
-  characters. A handoff the person accepted themselves carries neither field.
-- **A reader** keeps only the value `rule`. Any other value, or none, reads as absent, so the handoff is read as one
-  accepted somewhere else. `rule` is cut to 200 characters. A hub before §50 sends neither field.
-- **Requests are otherwise ordinary handoffs.** `from` is the requester, with no `sessionKey`, because they have no
-  machine. `task` is the request in the requester's words. `context` holds the clarified details, the Linear issue
-  and the request's page on the board. A relay that knows nothing of requests runs one like any other handoff.
+## 52. Review endpoints
 
-## 51. The relay side (`packages/cli`)
+Code form: `packages/protocol/src/review.ts` (two readings per body, §14). Auth, keys and status codes as in §21: the
+device token names the person, requests carry ingest keys, answers carry hub keys.
 
-- **The config key `handoffs.runAccepted`** takes a third value, `rules`. With `rules`, this machine starts a
-  handoff the hub lists as accepted for its person when it carries `acceptedBy: "rule"`, with no "run it here"
-  from the person on this machine. Every other handoff accepted somewhere else waits for "run it here" as under
-  `confirm` (§31). `rules` trusts the hub's word that the person's own rule accepted it. Turning `rules` on at the
-  machine is the person's consent to the rules they set on the board.
-- **With `confirm`** (the default), a handoff a rule accepted waits like any other one accepted somewhere else. Its
-  question reads "accepted by your standing rule on the board: run it here?".
-- `never` still runs none, and `auto` starts every accepted handoff as before.
-- Everything else in §31 holds. A handoff another machine accepted (`device`) is that machine's to run. The started
-  agent gets the same environment, with secrets left out. The run reports `done` or `fail`.
+| Body (`POST /relay/reviews`) | Answer |
+|---|---|
+| `{ action: "request", from?: sessionKey, repo, pr, focus?: ≤ 1000, reviewers?: [{ person, email? }] (1–2), count?: 1 \| 2, auto?: true, agent?: claude \| codex, model?, headSha?, paths?: [path] ≤ 300, owners?: [owner] ≤ 50 }` | `{ ok: true, round, rounds, reviewers: [{ id, to: { person, email? }, why, agent? }] }`; `404` nobody to review it; `409` the PR had its rounds, or a round is open (`round`, `reviewers`), or a named reviewer fits more than one person (`candidates`) |
+| `{ action: "policy", accept: auto \| ask \| never, agent?, model?, post: boolean }` | `{ ok: true }` |
+| `{ action: "report", id, sessionKey?, result: ReviewResult }` | `{ ok: true }`; `404` no such review handoff run by this machine; `409` its state doesn't allow it |
+| `{ action: "result", id }` | `{ ok: true, result? }` (absent while it runs); `404` not one this person sent or ran |
+
+- **request.** The author's session (`from`, an ingest key; absent: the person at a terminal or on the board) asks for
+  a review of `repo#pr`. `focus` is what the author wants looked at. `reviewers` names people; `count` asks for two
+  reviewers instead of one. `agent` and `model` are the author's own harness and model. `headSha`, `paths` (the PR's
+  changed files, repo-relative, §21 path rules) and `owners` (their CODEOWNERS owners: `@login`, `@org/team` or an
+  email, in the file's spelling) are what the author's checkout says about the PR. `auto: true` says the relay asked
+  by its person's standing rule (§53), not because an agent or the person asked just now. Paths and owners are
+  metadata about a shared repo, like a lease's paths (§3.3); no diff, file content or PR text goes in a request.
+- **Routing** (the hub picks up to `count` reviewers, never the author, never twice the same person):
+  1. The people the request names, when each is found by §48's rule and is not the author. A name that fits more than
+     one person answers `409` with `candidates`, and nothing is made.
+  2. Otherwise: CODEOWNERS owners of the changed paths. An email owner is the person with that email. A `@login` owner
+     is a person only when exactly one member reports that GitHub login; a team is not read. A login is only a hint
+     here (a machine reports its own person's login, §49): it decides an order, never who may do what.
+  3. Then people whose sessions recently worked those paths in that repo (edits, leases, claims, sessions).
+  4. Then people who are online and idle.
+  Within each step the hub prefers a person whose machine reviews with another agent CLI than the author's (a Codex
+  review for a Claude Code PR, and the reverse), then another model. Only people with a machine whose review policy is
+  `auto` or `ask` are candidates. `404` when nobody is left.
+- **One review handoff per reviewer** (§30, `kind: "review"`): from the author's session to the reviewer, with
+  `review: { pr, round, rounds, focus?, headSha?, why, authorAgent? }` and the repo. Its `task` is the hub's own line
+  ("Review PR #212 in b3-fun/b3os-beta, round 1 of 3"); a relay builds the review from `review`, never from `task`.
+  The handoff moves as §30 says (offered → accepted → started → done | failed, or declined); `report` makes it `done`.
+- **Rounds.** A PR (`repo#pr`) gets at most `HUB_REVIEW_ROUNDS_MAX` (3) rounds of agent review. A round is the review
+  handoffs one request made. A request while a round is open (some handoff in it not finished) answers `409` with that
+  round. A request after the last round answers `409`: the PR is ready for a person.
+- **Only machines that can read it.** A hub sends a review handoff (on sync, on `/relay/team`, in an answer) only to
+  devices that sent a `policy`. A relay that predates reviews never sees one, so it can't run one as a task. A relay
+  reading a handoff whose `kind` it doesn't know, or a review without a readable `review`, drops it (§30).
+- **policy.** This machine's rule for review handoffs and what it reviews with: `accept` (`auto` runs them at once,
+  `ask` waits for the person as any handoff does, `never` runs none here), the agent CLI and model, and `post`
+  (whether it posts its reviews on the PR). The relay sends it at start and when it changes. The hub keeps the latest
+  per device.
+- **report.** The machine running a review handoff (its `device`, §30) sends the result and the handoff is `done`.
+  The hub keeps the result and puts its numbers on the handoff (`review.outcome`). The text is the reviewer agent's,
+  redacted on the reviewer's machine (§9) and blanked again by the hub (§10). It goes at either sharing level: it is
+  written on purpose for a teammate, as a handoff's task is (§30). A failed review is a `fail` move with a note
+  (§30).
+- **result.** The whole result for the author's relay (or the reviewer's), which a sync carries only as
+  `review.outcome`.
+- **ReviewResult** = `{ verdict, summary: ≤ 2000, findings: [Finding] ≤ 50, headSha?, agent?, model?, tests?: passed |
+  failed | not_run, posted?: true }`. `verdict` is `no_issues`, `comments` (only low or nit findings) or
+  `changes_suggested` (a high or medium one); there is no approving verdict, and a reader takes one it doesn't know as
+  `comments`. **Finding** = `{ file?, line?, endLine?, severity: high | medium | low | nit, summary: ≤ 500,
+  suggestion?: ≤ 2000 }`; a reader takes a severity it doesn't know as `low`.
+
+`GET /relay/sync` (§21) gains one optional object: `reviews: { auto: boolean, autoRepos: [repo] }`. Present means the
+hub has the review exchange. `auto` is the device's person's own setting ("ask for an agent review when my PR is
+ready", off by default); `autoRepos` are the repos where every ready PR gets one (none by default). The sync's
+`handoffs` (§30) carry review handoffs with their `kind` and `review`, as above.
+
+What the hub does with a round is the hub's own (the board, a person's turn after the last round): the hosted hub's
+docs say how.
+
+## Message delivery and device credentials (0.13)
+
+The hub takes the sender identity from the authenticated device, board session or verified Linear event. It resolves the recipient before storing a message. Cross-person messages wait for the recipient's decision on the board. A person's own sessions and structured outcomes of their requests go automatically. Free-form notes attached to outcomes enter the message queue separately. A recipient may trust a sender in advance, mute their requests or block them.
+
+A released inbox item on `GET /relay/sync` carries an optional `release` field with one of `own`, `requested`, `accepted` or `trusted`. An older hub may omit it. The relay holds a cross-person item with absent or unrecognized provenance for a local decision. It recognizes ownership by device session key or verified email. Local sender and wake settings still apply. Sync may also carry `waitingMessages`, up to 50 records containing only an id and sender label. The menu bar opens the selected message in the signed-in browser for review. Account-wide mute, block and trust decisions use the recipient's board identity.
+
+Hook delivery, an explicit session inbox read and an idle wake use bounded, line-quoted message bodies. The relay asks the agent to obtain its user's authorization before taking action and to identify who requested it. After delivery, the next tool call in that turn, including a call by a subagent in the same session, produces a user-visible hook notice. The notice records sequence. Only the user and agent know whether a message motivated the call.
+
+With `messages.confirmActions` enabled, delivering an external message marks its entire local session family before handing over the text. Every subsequent native PreToolUse in that family needs a separate approval from the recipient’s own signed-in board account. A fresh session starts unmarked. Own messages and fixed outcomes do not mark a session. The setting applies to new deliveries, and a marked family stays protected across restarts and resumes.
+
+The hook fingerprints the complete tool input, tool name, working directory, session and subagent locally. The board receives the tool name, sender label and a random request ID. Review the tool arguments in your session and match that ID before approving. Only a matching, recent board decision can release the exact call once. The relay spends that decision before responding. A missing identity, expired request or unavailable daemon holds the call. This check requires native tool hooks. Local programs already running with the owner’s OS permissions remain outside its reach.
+
+### Device authentication
+
+The first completed pairing poll returns a 15-minute `deviceToken` and a separate `refreshToken`. Only the access token authenticates ordinary relay requests. The daemon sends `POST /relay/device/refresh` with its refresh credential as a bearer and JSON fields `deviceId` and `next` (a fresh 256-bit, hex-encoded credential with the prefix `wr_`). The hub rotates both credentials and returns `deviceToken` and `expiresInSec`. Concurrent requests can finish using the immediately preceding access token until its original expiry. Every check includes revocation and idle expiry.
+
+The daemon saves its successor before sending the exchange and can repeat that same predecessor/successor pair if the response is lost. The hub stores credential hashes. The daemon prefers the macOS login Keychain and otherwise writes an atomic mode-0600 file in the Workmesh config directory. `POST /relay/device/status` checks a refresh credential for its device without rotating it. Revoking a device from Settings immediately disables its access and refresh credentials, including pending retries.
+
+At hub upgrade, an existing pairing gets 15 minutes of ordinary access and up to 30 days for a single migration exchange, subject to the existing idle and revocation limits. Upgrade the daemon before the access window ends for continuous service. An older relay cannot renew access. An upgraded daemon paired to an older hub probes for refresh support periodically.

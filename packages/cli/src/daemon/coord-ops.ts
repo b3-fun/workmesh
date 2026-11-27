@@ -382,14 +382,15 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
         if (items.length === 0) return { ok: true, text: "No new messages for this session.", data: { messages: [] } };
         // The same text a hook delivers (SPEC §23), all of it: each message a marked block under the heading that says
         // how to read it, Workmesh's own notices as bare lines.
-        const block = formatInbox(items, Number.POSITIVE_INFINITY);
+        const block = formatInbox(items, 9000);
         if (!block) return { ok: true, text: "No new messages for this session.", data: { messages: [] } };
         coord.markDelivered(block.items.map((i) => i.id));
-        return { ok: true, text: block.text, data: { messages: block.items } };
+        return { ok: true, text: block.text, data: { messages: block.items.map(({ id, ts }) => ({ id, ts })), quoted: block.text } };
       }
       // The machine's whole list. Only the person's own surfaces see a held message in it: any other caller gets
       // the list without one, and no word that it exists.
-      const all = coord.inboxItems().filter((m) => person || !m.held);
+      if (!person) return fail("Workmesh needs this agent’s session to read its inbox.");
+      const all = coord.inboxItems();
       if (all.length === 0) return { ok: true, text: "No messages waiting for this machine's agents.", data: { messages: [] } };
       const lines = all.map((m) => {
         const s = m.localKey ? deps.getSession(CoordClient.family(m.localKey)) : undefined;

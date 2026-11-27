@@ -138,10 +138,9 @@ export const configSchema = z.object({
       /**
        * What happens to a handoff that was accepted somewhere else, on the board or on another machine. `confirm`
        * (default): it waits here until you say "run it here". `auto`: this machine starts it. `auto` trusts the hub's
-       * word that you accepted it. `rules` (SPEC §50): this machine starts one a standing rule you set on the board
-       * accepted, and waits for "run it here" on the rest. `rules` trusts the hub's word that your rule accepted it.
+       * word that you accepted it.
        */
-      runAccepted: z.enum(["confirm", "auto", "rules"]).optional().catch(undefined),
+      runAccepted: z.enum(["confirm", "auto"]).optional().catch(undefined),
       /** The agent CLI that runs handoffs (default: claude when found, else codex). */
       agent: z.enum(["claude", "codex"]).optional().catch(undefined),
       /** Dirs whose git repos count as checkouts for handoffs (`workmesh roots add <dir>`). */
@@ -185,6 +184,8 @@ export const configSchema = z.object({
        * runs with permission prompts skipped. `unattended`: also one in an automatic mode. `always`: every session.
        * `never`: none. A held message is shown to the person (menu bar, `workmesh inbox --held`), never to the agent.
        */
+      /** Require signed-in board approval for each native tool call after a teammate’s message. */
+      confirmActions: z.boolean().optional().catch(undefined),
       hold: z.enum(["bypass", "unattended", "always", "never"]).optional().catch(undefined),
       /** How long a held message waits for the person before it is dropped, in minutes (default 60). */
       holdMinutes: z.number().int().min(1).max(7 * 24 * 60).optional().catch(undefined),
@@ -396,7 +397,7 @@ export function messageSettings(config: Pick<Config, "messages">): MessageSettin
 export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates">): {
   wake: boolean;
   accept: "ask" | "auto-self" | "never";
-  runAccepted: "confirm" | "auto" | "rules";
+  runAccepted: "confirm" | "auto";
   agent?: "claude" | "codex";
   roots: string[];
   worktree: boolean;

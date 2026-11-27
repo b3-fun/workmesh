@@ -83,11 +83,10 @@ export function handoffHash(h: Pick<HubHandoffAccepted, "task" | "context" | "re
  * board. `no-record`: the hub says it was accepted on this machine, and this machine has no record of that.
  * `changed`: it was accepted here, and the hub now lists it with other text.
  */
-export type RunHereWhy = "board" | "rule" | "no-record" | "changed";
+export type RunHereWhy = "board" | "no-record" | "changed";
 
 const RUN_HERE: Record<RunHereWhy, string> = {
   board: "accepted on the board: run it here?",
-  rule: "accepted by your standing rule on the board: run it here?",
   "no-record": "accepted, but this machine has no record of your accept: run it here?",
   changed: "accepted, but its text changed after your accept: run it here?",
 };

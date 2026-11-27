@@ -68,6 +68,7 @@ export interface CoordSummary {
   available: boolean | null;
   holds: Array<{ session: string; name?: string; by: string; reason?: string; since: number }>;
   /** `via`: where the hub made the message from, when no paired machine sent it (`linear`: a Linear prompt). */
+  waitingMessages?: Array<{ id: string; sender: string }>;
   unread: Array<{
     id: string;
     session?: string;
@@ -103,10 +104,12 @@ export const HOOK_HEADER = "x-workmesh-hook";
 /** 0.12 (SPEC §41): the hook's Workmesh version, and at SessionStart its source and surface fingerprint. */
 export const CLIENT_HEADER = "x-workmesh-client";
 export const START_HEADER = "x-workmesh-start";
+export const ACTION_HEADER = "x-workmesh-action-digest";
 export const SURFACE_HEADER = "x-workmesh-surface";
 
 /** What a hook says about itself (0.12): what the session it fires for started under. */
 export interface HookMeta {
+  actionDigest?: string;
   version?: string;
   start?: string;
   surface?: string;
@@ -306,6 +309,7 @@ export function createDaemonServer(deps: DaemonServerDeps): http.Server {
           const meta: HookMeta = {
             version: headerValue(req, CLIENT_HEADER, /^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,30}$/),
             start: headerValue(req, START_HEADER, /^[a-z_-]{1,20}$/),
+            actionDigest: headerValue(req, ACTION_HEADER, /^[0-9a-f]{64}$/),
             surface: headerValue(req, SURFACE_HEADER, /^[0-9a-f]{8,64}$/),
           };
           try {

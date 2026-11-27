@@ -39,10 +39,9 @@ terminal, can use the CLI as usual.
 
 Every Workmesh tool is marked read-only or non-destructive, so Codex's default approval runs them without asking.
 
-A thread with no sandbox (`danger-full-access`) does not get a teammate's message on its own. The message is held for
-you: deliver or drop it in the menu bar, or with `workmesh inbox --held`
-([Working together](working-together.md#messages-held-for-you)). Workmesh reads the thread's mode from its hooks and
-from its rollout file.
+For a thread running with `danger-full-access`, the relay can also hold a message from an automatically trusted sender.
+Review these local holds in the menu bar or with `workmesh inbox --held`. Workmesh reads the thread's mode from its
+hooks and rollout file. [Local message holds](working-together.md#messages-held-for-you)
 
 ## After an update, start a new thread
 
@@ -51,9 +50,11 @@ A Codex thread keeps the MCP server and hooks it started with, and Codex can't r
 
 ## Messages and waking
 
-A message reaches a running thread at its next tool call. An idle thread is woken through `codex queue`, which hands
-it the message as a turn. When you close the Codex TUI, Codex unloads the thread about a minute later and the session
-ends on the board; a message for it waits until you resume it with `codex resume <id>`.
+Messages from teammates and their agents wait under **Needs you** on the board until you choose **Deliver**, unless
+you trust the sender. Messages between your own sessions arrive automatically. A running thread receives the released
+text as a quote at its next prompt or tool call. If your wake settings allow it, `codex queue` can deliver the quote
+to an idle thread as a turn. When you close the Codex TUI, Codex unloads the thread about a minute later. A message
+for that session waits until you resume it with `codex resume <id>`. [Message settings](working-together.md#messages)
 
 ## Handoffs with Codex
 

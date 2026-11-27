@@ -75,6 +75,7 @@ export const HUB_MAX_USAGE_MODELS = 16;
 
 /** Hub device tokens: `bp_` + 64 lowercase hex, shown once. The prefix dates from the hub's first name. */
 export const HUB_DEVICE_TOKEN_RE = /^bp_[0-9a-f]{64}$/;
+export const HUB_REFRESH_TOKEN_RE = /^wr_[0-9a-f]{64}$/;
 /** `dev_` + a ULID. */
 export const HUB_DEVICE_ID_RE = /^dev_[0-9A-Z]{26}$/;
 /** 16 random bytes as hex. */
@@ -701,10 +702,19 @@ export type HubPairPollRequest = z.infer<typeof hubPairPollRequestSchema>;
 export const hubPairPollResponseSchema = z.object({
   status: z.enum(["pending", "complete", "expired"]),
   deviceToken: z.string().optional(),
+  refreshToken: z.string().regex(HUB_REFRESH_TOKEN_RE).optional(),
   person: z.object({ email: z.string(), name: z.string() }).optional(),
   project: hubProjectRuleSchema.optional(),
 });
 export type HubPairPollResponse = z.infer<typeof hubPairPollResponseSchema>;
+
+/** The refresh endpoint consumes a single-use credential. The successor is durable on the device before the POST. */
+export const hubDeviceStatusRequestSchema = z.object({ deviceId: z.string().regex(HUB_DEVICE_ID_RE) });
+export const hubDeviceRefreshRequestSchema = hubDeviceStatusRequestSchema.extend({ next: z.string().regex(HUB_REFRESH_TOKEN_RE) });
+export const hubDeviceRefreshResponseSchema = z.object({
+  deviceToken: z.string().regex(HUB_DEVICE_TOKEN_RE),
+  expiresInSec: z.number().int().positive().max(3600),
+});
 
 /** A pairing code as typed or pasted: trimmed and upper-cased before the check. */
 export const hubPairCodeSchema = z.string().trim().toUpperCase().regex(HUB_PAIR_CODE_RE);
@@ -906,3 +916,6 @@ export * from "./ask.js";
 
 // v3 Memory (SPEC §35): the team's shared knowledge base; sync gains `memory.rev`.
 export * from "./memory.js";
+
+// Review exchange (SPEC §52): agents ask teammates' agents for PR reviews; a review is a read-only handoff.
+export * from "./review.js";

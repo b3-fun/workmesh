@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { HUB_ISSUE_RE, HUB_REPO_RE, hubPersonEmailAcceptSchema, hubPersonEmailSchema } from "./fields.js";
 import { hubHandoffKindSchema, hubHandoffReviewAcceptSchema, hubHandoffReviewSchema } from "./review.js";
+import {
+  hubModelAskAcceptSchema,
+  hubModelAskSchema,
+  hubModelRunAcceptSchema,
+  hubModelRunSchema,
+  hubModelSuggestionAcceptSchema,
+  hubModelSuggestionSchema,
+} from "./models.js";
 
 /**
  * v2 Delegate (docs/SPEC.md §30): handoffs to a person's runner, approval gates on an agent's risky actions, and
@@ -290,6 +298,11 @@ export const hubHandoffSchema = z.object({
    */
   acceptedBy: z.literal("rule").optional(),
   rule: z.string().min(1).max(HUB_HANDOFF_RULE_MAX).optional(),
+  /**
+   * Model choice (§66): the agent, model and effort the sender or the project suggests. The receiving machine's own
+   * policy decides what runs (§67); a suggestion never accepts or starts anything.
+   */
+  suggest: hubModelSuggestionSchema.optional(),
 });
 export type HubHandoff = z.infer<typeof hubHandoffSchema>;
 const handoffAccept = z.object({
@@ -325,6 +338,8 @@ const handoffAccept = z.object({
   request: soft(z.object({ id: recordId, size: soft(hubRequestSizeSchema) })).optional(),
   acceptedBy: soft(z.literal("rule")).optional(),
   rule: soft(z.string().min(1).transform((s) => s.slice(0, HUB_HANDOFF_RULE_MAX))).optional(),
+  /** A suggestion this relay can't read reads as none (§66): the handoff is kept, and runs on this machine's own choice. */
+  suggest: hubModelSuggestionAcceptSchema.optional(),
 })
   // A review handoff without a readable `review` is dropped too: the relay builds a review's prompt from it.
   .refine((h) => h.kind !== "review" || h.review !== undefined, "a review handoff names its PR");
@@ -349,6 +364,8 @@ export const hubHandoffRequestSchema = z.union([
     repo: repoName.optional(),
     issue: issueId.optional(),
     context: handoffText.optional(),
+    /** Model choice (§66): the agent, model and effort the sender suggests for it. */
+    suggest: hubModelAskSchema.optional(),
   }),
   z.strictObject({
     action: hubHandoffUpdateActionSchema,
@@ -358,6 +375,8 @@ export const hubHandoffRequestSchema = z.union([
     /** On `accept` (§55): this machine's own standing rule accepted it, not the person just now; `rule` says which. */
     acceptedBy: z.literal("rule").optional(),
     rule: z.string().min(1).max(HUB_HANDOFF_RULE_MAX).optional(),
+    /** On `start` (§66): what this machine runs it on, after its own model policy. */
+    run: hubModelRunSchema.optional(),
   }),
 ]);
 export type HubHandoffRequest = z.infer<typeof hubHandoffRequestSchema>;
@@ -371,6 +390,8 @@ export const hubHandoffRequestAcceptSchema = z.union([
     /** Issue keys read case-insensitively. */
     issue: opt(issueId.transform((s) => s.toUpperCase())),
     context: opt(textAccept(HUB_HANDOFF_TEXT_MAX)),
+    /** An ask the hub can't read reads as none: the handoff is made without it. */
+    suggest: hubModelAskAcceptSchema,
   }),
   z.object({
     action: hubHandoffUpdateActionSchema,
@@ -379,6 +400,8 @@ export const hubHandoffRequestAcceptSchema = z.union([
     note: opt(cut(HUB_DELEGATE_NOTE_MAX)),
     acceptedBy: soft(z.literal("rule")),
     rule: soft(z.string().min(1).transform((s) => s.slice(0, HUB_HANDOFF_RULE_MAX))),
+    /** An unreadable `run` reads as none; the move lands either way. */
+    run: hubModelRunAcceptSchema,
   }),
 ]);
 export type HubHandoffRequestAccepted = z.infer<typeof hubHandoffRequestAcceptSchema>;

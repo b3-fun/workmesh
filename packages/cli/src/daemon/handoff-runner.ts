@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HubHandoffAccepted, HubReviewResult, HubShareLevel } from "@workmesh/protocol";
+import type { HubEffort, HubHandoffAccepted, HubModelRun, HubReviewResult, HubShareLevel } from "@workmesh/protocol";
 import { HUB_DELEGATE_NOTE_MAX, HUB_REVIEW_ROUNDS_MAX } from "@workmesh/protocol";
 import type { CoordClient } from "../hub/coord";
 import type { ReviewSettings } from "../lib/config";
@@ -13,6 +13,8 @@ import { QUOTE_MARK, label, quoted } from "../lib/untrusted";
 import type { HandoffRunnerLike } from "./delegate";
 import { droppedEnvLine, handoffEnv } from "./handoff-env";
 import type { HandoffPlan } from "./handoff-text";
+import { resolveModel, slotOf } from "./model-policy";
+import type { ModelPolicy, ModelResolution } from "./model-policy";
 import { postReview, prFacts, prepareReviewCheckout } from "./review-git";
 import type { Run } from "./review-git";
 import { parseReviewOutput, reviewComment, reviewPrompt } from "./review-text";
@@ -46,6 +48,11 @@ export interface RunnerSettings {
   permissionMode: string;
   /** The model the agent runs on (`--model` for Claude Code, `-m` for Codex); absent: the agent's default. */
   model?: string;
+  /**
+   * Model choice (SPEC §67): the agents and models this machine runs, its defaults per size and its ceiling for
+   * others' suggestions. Absent: a handoff's suggestion is shown, never followed.
+   */
+  models?: ModelPolicy;
   /** A run is stopped after this long (default 120 min). */
   maxMinutes: number;
   /** Variables the agent gets although their names look like secrets (`handoffs.env`; absent: none). */
@@ -69,6 +76,9 @@ export interface RunRecord {
   resultFile?: string;
   task: string;
   from: string;
+  /** The model and effort it runs on (SPEC §67), when not the agent's defaults. */
+  model?: string;
+  effort?: HubEffort;
   /** A review run (SPEC §53): read-only, reports a result, and its checkout is removed at the end. */
   kind?: "review";
   review?: {
@@ -426,16 +436,49 @@ export class HandoffRunner implements HandoffRunnerLike {
     return this.ids.size < Math.max(0, this.deps.settings().maxRunning);
   }
 
-  private agentFor(kind?: "review"): { agent: HandoffAgent; bin: string } | undefined {
-    const which = this.deps.which ?? ((b: string) => findBin(b));
+  private binOf(agent: HandoffAgent): string | undefined {
+    return (this.deps.which ?? ((b: string) => findBin(b)))(agent);
+  }
+
+  /**
+   * What runs `h` on this machine (SPEC §67): the agent CLI (installed here), its model and effort, after this
+   * machine's model policy and the handoff's suggestion. The card a person reads before they accept and the run
+   * itself both come from here, so the card shows the model that runs. Undefined when no agent this machine may use
+   * is installed.
+   */
+  choose(h: Pick<HubHandoffAccepted, "kind" | "request" | "suggest" | "from"> | undefined): (ModelResolution & { bin: string }) | undefined {
     const settings = this.deps.settings();
-    const want = kind === "review" ? (settings.reviews?.agent ?? settings.agent) : settings.agent;
-    const order: HandoffAgent[] = want ? [want] : ["claude", "codex"];
-    for (const agent of order) {
-      const bin = which(agent);
-      if (bin) return { agent, bin };
+    const review = h?.kind === "review";
+    const base = review
+      ? { ...(settings.reviews?.agent ?? settings.agent ? { agent: settings.reviews?.agent ?? settings.agent } : {}), ...(settings.reviews?.model ?? settings.model ? { model: settings.reviews?.model ?? settings.model } : {}) }
+      : { ...(settings.agent ? { agent: settings.agent } : {}), ...(settings.model ? { model: settings.model } : {}) };
+    const bins = new Map<HandoffAgent, string | undefined>();
+    const binOf = (a: HandoffAgent) => {
+      if (!bins.has(a)) bins.set(a, this.binOf(a));
+      return bins.get(a);
+    };
+    const coord = this.deps.coord();
+    const r = resolveModel({
+      policy: settings.models,
+      suggest: h?.suggest,
+      slot: h ? slotOf(h) : review ? "review" : "other",
+      fromMe: h && coord ? coord.surelyMe(h.from) : false,
+      installed: (a) => binOf(a) !== undefined,
+      base,
+    });
+    const bin = r ? binOf(r.agent) : undefined;
+    return r && bin ? { ...r, bin } : undefined;
+  }
+
+  /** Why no agent can run it here, in words. */
+  private noAgent(h: Pick<HubHandoffAccepted, "kind">): string {
+    const settings = this.deps.settings();
+    const want = h.kind === "review" ? (settings.reviews?.agent ?? settings.agent) : settings.agent;
+    if (settings.models?.allow) {
+      const listed = (["claude", "codex"] as const).filter((a) => settings.models?.allow?.[a] !== undefined);
+      return listed.length ? `none of the agents in handoffs.models (${listed.join(", ")}) is installed here` : "handoffs.models allows no agent";
     }
-    return undefined;
+    return want ? `no ${want} CLI found on this machine` : "neither claude nor codex is installed here";
   }
 
   cannotRun(h: HubHandoffAccepted): string | undefined {
@@ -444,11 +487,7 @@ export class HandoffRunner implements HandoffRunnerLike {
       if (this.deps.settings().reviews?.accept === "never") return "this machine runs no reviews (`workmesh reviews policy never`)";
       if (!h.repo || !h.review) return "the review names no repo or PR";
     }
-    if (!this.agentFor(h.kind === "review" ? "review" : undefined)) {
-      const settings = this.deps.settings();
-      const want = h.kind === "review" ? (settings.reviews?.agent ?? settings.agent) : settings.agent;
-      return want ? `no ${want} CLI found on this machine` : "neither claude nor codex is installed here";
-    }
+    if (!this.choose(h)) return this.noAgent(h);
     // A review makes its own checkout (from this machine's checkout when it has one, else from GitHub).
     if (h.kind === "review") return undefined;
     if (h.repo && !this.deps.checkouts.find(h.repo, this.deps.settings().roots)) {
@@ -463,13 +502,18 @@ export class HandoffRunner implements HandoffRunnerLike {
    */
   plan(h: HubHandoffAccepted): HandoffPlan {
     const settings = this.deps.settings();
-    const picked = this.agentFor(h.kind === "review" ? "review" : undefined);
+    const picked = this.choose(h);
     const cannot = this.cannotRun(h);
+    // The model and effort that run, and why they differ from the suggestion (SPEC §67).
+    const model = picked
+      ? { ...(picked.model ? { model: picked.model } : {}), ...(picked.effort ? { effort: picked.effort } : {}), ...(picked.note ? { modelNote: picked.note } : {}) }
+      : {};
     if (h.kind === "review") {
-      return { ...(picked ? { agent: picked.agent } : {}), where: "review", ...(h.review ? { pr: h.review.pr } : {}), ...(cannot ? { cannot } : {}) };
+      return { ...(picked ? { agent: picked.agent } : {}), ...model, where: "review", ...(h.review ? { pr: h.review.pr } : {}), ...(cannot ? { cannot } : {}) };
     }
     return {
       ...(picked ? { agent: picked.agent } : {}),
+      ...model,
       ...(picked?.agent === "claude" ? { permissionMode: settings.permissionMode } : {}),
       where: !h.repo ? "scratch" : settings.worktree ? "worktree" : "checkout",
       ...(cannot ? { cannot } : {}),
@@ -494,13 +538,14 @@ export class HandoffRunner implements HandoffRunnerLike {
   private async runUnsafe(h: HubHandoffAccepted): Promise<void> {
     if (h.kind === "review") return this.runReview(h);
     const coord = this.deps.coord();
-    const picked = this.agentFor();
+    const picked = this.choose(h);
     if (!coord || !picked) return;
     const settings = this.deps.settings();
     const sessionId = picked.agent === "claude" ? randomUUID() : undefined;
     const sessionKey = sessionId ? `claude-code:${sessionId}` : undefined;
-    // The hub decides who runs it: the first `start` wins.
-    const claim = await coord.handoff({ action: "start", id: h.id, ...(sessionKey ? { sessionKey } : {}) });
+    const effort = await this.effortFor(picked);
+    // The hub decides who runs it: the first `start` wins. It hears what runs (SPEC §66).
+    const claim = await coord.handoff({ action: "start", id: h.id, ...(sessionKey ? { sessionKey } : {}), run: runReport(picked, effort) });
     if (!claim.ok || !claim.body.ok) {
       const why = claim.ok ? (claim.body.ok ? "" : claim.body.error) : claim.error;
       this.log(`handoff ${h.id}: not starting here (${why || "the hub said no"})`);
@@ -565,9 +610,10 @@ export class HandoffRunner implements HandoffRunnerLike {
       picked.agent === "claude"
         ? [
             picked.bin, "-p", "--session-id", sessionId!, "--output-format", "json", "--permission-mode", settings.permissionMode, "--name", name,
-            ...(settings.model ? ["--model", settings.model] : []),
+            ...(picked.model ? ["--model", picked.model] : []),
+            ...(effort ? ["--effort", effort] : []),
           ]
-        : codexExecArgs(picked.bin, { dir, resultFile, model: settings.model, approveForMe: await codexHasApproveForMe(picked.bin) });
+        : codexExecArgs(picked.bin, { dir, resultFile, model: picked.model, effort, approveForMe: await codexHasApproveForMe(picked.bin) });
     // Build the child environment from runtime settings, provider sign-in and the owner’s explicit additions.
     const passed = handoffEnv((this.deps.env ?? (() => process.env))(), picked.agent, settings.env);
     const env: NodeJS.ProcessEnv = { ...passed.env, PATH: await (this.deps.pathEnv ?? loginPath)(), WORKMESH_HANDOFF: h.id, WM_EXIT_FILE: exitFile };
@@ -610,10 +656,12 @@ export class HandoffRunner implements HandoffRunnerLike {
       ...(picked.agent === "codex" ? { resultFile } : {}),
       task: h.task.slice(0, 200),
       from: h.from.person,
+      ...(picked.model ? { model: picked.model } : {}),
+      ...(effort ? { effort } : {}),
     };
     this.records.set(h.id, record);
     this.persist();
-    this.log(`handoff ${h.id}: ${picked.agent} started in ${dir} (pid ${pid})`);
+    this.log(`handoff ${h.id}: ${picked.agent}${picked.model ? ` (${picked.model}${effort ? `, ${effort}` : ""})` : effort ? ` (${effort})` : ""} started in ${dir} (pid ${pid})`);
     this.deps.onStarted?.(record);
   }
 
@@ -692,10 +740,20 @@ export class HandoffRunner implements HandoffRunnerLike {
 
   /** The agent and model this machine's reviews run on, for the review policy it tells the hub. */
   reviewAgent(): { agent?: HandoffAgent; model?: string } {
-    const picked = this.agentFor("review");
-    const settings = this.deps.settings();
-    const model = settings.reviews?.model ?? settings.model;
-    return { ...(picked ? { agent: picked.agent } : {}), ...(model ? { model } : {}) };
+    const picked = this.choose({ kind: "review", from: { person: "" } } as Pick<HubHandoffAccepted, "kind" | "from">);
+    return { ...(picked ? { agent: picked.agent } : {}), ...(picked?.model ? { model: picked.model } : {}) };
+  }
+
+  /**
+   * The effort a run passes, when its CLI takes one: Claude Code's `--effort` (asked of the binary once), Codex's
+   * `model_reasoning_effort` (`max` runs as `xhigh`). An older Claude Code without the flag runs at its own effort.
+   */
+  private async effortFor(picked: { agent: HandoffAgent; bin: string; effort?: HubEffort }): Promise<HubEffort | undefined> {
+    if (!picked.effort) return undefined;
+    if (picked.agent === "codex") return picked.effort;
+    if (await claudeHasEffort(picked.bin)) return picked.effort;
+    this.log(`handoffs: this Claude Code has no --effort; running at its own effort`);
+    return undefined;
   }
 
   /**
@@ -705,7 +763,7 @@ export class HandoffRunner implements HandoffRunnerLike {
    */
   private async runReview(h: HubHandoffAccepted): Promise<void> {
     const coord = this.deps.coord();
-    const picked = this.agentFor("review");
+    const picked = this.choose(h);
     const review = h.review;
     if (!coord || !picked || !review || !h.repo) return;
     this.startingReviews.add(h.id);
@@ -714,7 +772,8 @@ export class HandoffRunner implements HandoffRunnerLike {
       const rs = settings.reviews;
       const sessionId = picked.agent === "claude" ? randomUUID() : undefined;
       const sessionKey = sessionId ? `claude-code:${sessionId}` : undefined;
-      const claim = await coord.handoff({ action: "start", id: h.id, ...(sessionKey ? { sessionKey } : {}) });
+      const effort = await this.effortFor(picked);
+      const claim = await coord.handoff({ action: "start", id: h.id, ...(sessionKey ? { sessionKey } : {}), run: runReport(picked, effort) });
       if (!claim.ok || !claim.body.ok) {
         const why = claim.ok ? (claim.body.ok ? "" : claim.body.error) : claim.error;
         this.log(`review ${h.id}: not starting here (${why || "the hub said no"})`);
@@ -784,12 +843,12 @@ export class HandoffRunner implements HandoffRunnerLike {
       } catch {
         return fail("couldn't write the review's prompt on this machine");
       }
-      const model = rs?.model ?? settings.model;
+      const model = picked.model;
       const name = `review ${h.repo.split("/")[1] ?? h.repo}#${review.pr} for ${label(h.from.person, 60)}`;
       const argv =
         picked.agent === "claude"
-          ? claudeReviewArgs(picked.bin, { sessionId: sessionId!, name, model })
-          : codexReviewArgs(picked.bin, { dir: checkoutDir, resultFile, schemaFile, model });
+          ? claudeReviewArgs(picked.bin, { sessionId: sessionId!, name, model, effort })
+          : codexReviewArgs(picked.bin, { dir: checkoutDir, resultFile, schemaFile, model, effort });
       const passed = handoffEnv(env0, picked.agent, settings.env);
       const env: NodeJS.ProcessEnv = {
         ...passed.env,
@@ -922,7 +981,7 @@ export class HandoffRunner implements HandoffRunnerLike {
  */
 export function codexExecArgs(
   bin: string,
-  o: { dir: string; resultFile: string; model?: string; approveForMe?: boolean },
+  o: { dir: string; resultFile: string; model?: string | undefined; effort?: HubEffort | undefined; approveForMe?: boolean },
 ): string[] {
   return [
     bin, "exec", "--json", "-C", o.dir,
@@ -930,8 +989,41 @@ export function codexExecArgs(
     "--skip-git-repo-check", "-o", o.resultFile,
     "-c", "sandbox_workspace_write.network_access=true",
     ...(o.model ? ["-m", o.model] : []),
+    ...codexEffortArgs(o.effort),
     "-",
   ];
+}
+
+/** Codex's reasoning effort (SPEC §67): the same words as Claude Code's, with `max` run as `xhigh`, its highest. */
+export function codexEffortArgs(effort: HubEffort | undefined): string[] {
+  return effort ? ["-c", `model_reasoning_effort="${effort === "max" ? "xhigh" : effort}"`] : [];
+}
+
+/** What a `start` tells the hub runs it (SPEC §66): the agent, model and effort, and how that met the suggestion. */
+export function runReport(r: Pick<ModelResolution, "agent" | "model" | "followed" | "lowered" | "asked">, effort: HubEffort | undefined): HubModelRun {
+  return {
+    agent: r.agent,
+    ...(r.model ? { model: r.model } : {}),
+    ...(effort ? { effort } : {}),
+    ...(r.lowered ? { lowered: true as const } : {}),
+    ...(r.asked ? { followed: r.followed === true && (effort !== undefined || r.asked.effort === undefined) } : {}),
+  };
+}
+
+const effortFlag = new Map<string, Promise<boolean>>();
+
+/** Whether this claude takes `--effort` (asked once per binary). */
+export function claudeHasEffort(bin: string): Promise<boolean> {
+  let p = effortFlag.get(bin);
+  if (!p) {
+    p = new Promise((resolve) => {
+      execFile(bin, ["--help"], { timeout: 10_000, encoding: "utf8", maxBuffer: 1024 * 1024 }, (err, stdout) =>
+        resolve(!err && String(stdout).includes("--effort")),
+      );
+    });
+    effortFlag.set(bin, p);
+  }
+  return p;
 }
 
 const approveForMe = new Map<string, Promise<boolean>>();
@@ -1037,12 +1129,13 @@ export const REVIEW_CLAUDE_ALLOWED = [
  * servers in the PR's checkout don't load, so the PR can't run anything as the reviewer), and no MCP servers. The
  * prompt comes on standard input.
  */
-export function claudeReviewArgs(bin: string, o: { sessionId: string; name: string; model?: string | undefined }): string[] {
+export function claudeReviewArgs(bin: string, o: { sessionId: string; name: string; model?: string | undefined; effort?: HubEffort | undefined }): string[] {
   return [
     bin, "-p", "--session-id", o.sessionId, "--output-format", "json", "--permission-mode", "dontAsk",
     "--setting-sources", "user", "--strict-mcp-config", "--tools", REVIEW_CLAUDE_TOOLS, "--allowedTools", REVIEW_CLAUDE_ALLOWED,
     "--name", o.name,
     ...(o.model ? ["--model", o.model] : []),
+    ...(o.effort ? ["--effort", o.effort] : []),
   ];
 }
 
@@ -1078,11 +1171,12 @@ export const REVIEW_OUTPUT_SCHEMA = {
  * and builds), no network, no escalation (`approval_policy = "never"`: a command the sandbox refuses stays refused),
  * and the final answer in the review's JSON shape. The prompt is read from standard input (`-`).
  */
-export function codexReviewArgs(bin: string, o: { dir: string; resultFile: string; schemaFile: string; model?: string | undefined }): string[] {
+export function codexReviewArgs(bin: string, o: { dir: string; resultFile: string; schemaFile: string; model?: string | undefined; effort?: HubEffort | undefined }): string[] {
   return [
     bin, "exec", "--json", "-C", o.dir, "-s", "workspace-write", "-c", 'approval_policy="never"',
     "--skip-git-repo-check", "-o", o.resultFile, "--output-schema", o.schemaFile,
     ...(o.model ? ["-m", o.model] : []),
+    ...codexEffortArgs(o.effort),
     "-",
   ];
 }

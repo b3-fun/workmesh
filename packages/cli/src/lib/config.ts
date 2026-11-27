@@ -2,8 +2,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { DEFAULT_DAEMON_PORT, DEFAULT_DEBOUNCE_MS, DEFAULT_STATUS_TTL_SEC } from "@workmesh/core";
-import { HUB_DEVICE_TOKEN_RE, HUB_GITHUB_LOGIN_RE, HUB_REPO_RE, hubProjectRuleSchema, hubRequestSizeSchema, hubShareLevelSchema } from "@workmesh/protocol";
+import {
+  HUB_DEVICE_TOKEN_RE,
+  HUB_GITHUB_LOGIN_RE,
+  HUB_REPO_RE,
+  hubAgentSchema,
+  hubEffortSchema,
+  hubModelNameSchema,
+  hubProjectRuleSchema,
+  hubRequestSizeSchema,
+  hubShareLevelSchema,
+} from "@workmesh/protocol";
 import { REQUEST_RULES_MAX, REQUEST_RULE_PER_DAY_MAX, type RequestRule } from "../daemon/request-rules";
+import type { ModelPolicy } from "../daemon/model-policy";
 import type { FormatOptions } from "@workmesh/core";
 import type { HubShareLevel } from "@workmesh/protocol";
 import { envSetting } from "./names";
@@ -15,6 +26,50 @@ export const requestRuleSchema = z.object({
   repo: z.string().max(200).regex(HUB_REPO_RE).optional(),
   maxSize: hubRequestSizeSchema,
   perDay: z.number().int().min(1).max(REQUEST_RULE_PER_DAY_MAX),
+});
+
+/** One choice of agent, model and effort, as `handoffs.models` keeps it (SPEC §67). A bad key reads as absent. */
+const modelChoiceSchema = z.object({
+  agent: hubAgentSchema.optional().catch(undefined),
+  model: hubModelNameSchema.optional().catch(undefined),
+  effort: hubEffortSchema.optional().catch(undefined),
+});
+/** A list of models, cheapest first: a malformed entry is dropped on its own. */
+const modelListSchema = z.preprocess(
+  (v) => (Array.isArray(v) ? v.filter((m) => hubModelNameSchema.safeParse(m).success).slice(0, 12) : v),
+  z.array(hubModelNameSchema),
+);
+
+/**
+ * `handoffs.models` (SPEC §67): this machine's model policy for handoffs and reviews. Set only at its terminal
+ * (`workmesh handoffs models set`); no hub route reads or writes it. Absent: a suggestion is shown, never followed.
+ */
+export const modelPolicySchema = z.object({
+  /** The agents this machine runs, each with its models, cheapest first. An agent left out isn't used. */
+  allow: z
+    .object({ claude: modelListSchema.optional().catch(undefined), codex: modelListSchema.optional().catch(undefined) })
+    .optional()
+    .catch(undefined),
+  /** The most a suggestion from anyone else may ask for: a model per agent (one on its list), and an effort. */
+  ceiling: z
+    .object({
+      claude: hubModelNameSchema.optional().catch(undefined),
+      codex: hubModelNameSchema.optional().catch(undefined),
+      effort: hubEffortSchema.optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+  /** What runs when nothing is suggested: per request size, for reviews, and for other handoffs. */
+  defaults: z
+    .object({
+      small: modelChoiceSchema.optional().catch(undefined),
+      medium: modelChoiceSchema.optional().catch(undefined),
+      large: modelChoiceSchema.optional().catch(undefined),
+      review: modelChoiceSchema.optional().catch(undefined),
+      other: modelChoiceSchema.optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
 });
 
 const templatesSchema = z
@@ -161,6 +216,11 @@ export const configSchema = z.object({
       permissionMode: z.enum(["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"]).optional().catch(undefined),
       /** The model a handoff's agent runs on (`--model` / `-m`, e.g. `haiku`, `sonnet`); absent: the agent's default. */
       model: z.string().regex(/^[\w.:\[\]/-]{1,80}$/).optional().catch(undefined),
+      /**
+       * Model choice (SPEC §67): the agents and models this machine runs (cheapest first), the default per size, and
+       * the ceiling for others' suggestions. Absent: a suggestion is shown, never followed.
+       */
+      models: modelPolicySchema.optional().catch(undefined),
       maxMinutes: z.number().int().min(5).max(24 * 60).optional().catch(undefined),
       /**
        * Environment variables a handoff's agent gets although their names look like secrets (`GH_TOKEN`). The agent
@@ -462,6 +522,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
   customGates: string[];
   requestRules: RequestRule[];
   reviewAccept: "auto" | "ask" | "never";
+  models?: ModelPolicy;
 } {
   const h = config.handoffs;
   return {
@@ -479,6 +540,25 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
     customGates: config.gates?.custom ?? [],
     requestRules: h?.requestRules ?? [],
     reviewAccept: config.reviews?.accept ?? "ask",
+    ...(h?.models ? { models: compactPolicy(h.models) } : {}),
+  };
+}
+
+/** A policy as the config read it, with the keys that read as absent left out. */
+export function compactPolicy(p: z.infer<typeof modelPolicySchema>): ModelPolicy {
+  const pick = <T extends object>(o: T | undefined): T | undefined => {
+    if (!o) return undefined;
+    const out = Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+    return Object.keys(out).length ? out : undefined;
+  };
+  const defaults = p.defaults
+    ? pick(Object.fromEntries(Object.entries(p.defaults).map(([k, v]) => [k, pick(v)])) as NonNullable<ModelPolicy["defaults"]>)
+    : undefined;
+  const allow = p.allow ? (Object.fromEntries(Object.entries(p.allow).filter(([, v]) => v !== undefined)) as NonNullable<ModelPolicy["allow"]>) : undefined;
+  return {
+    ...(allow && Object.keys(allow).length ? { allow } : {}),
+    ...(pick(p.ceiling) ? { ceiling: pick(p.ceiling)! } : {}),
+    ...(defaults ? { defaults } : {}),
   };
 }
 

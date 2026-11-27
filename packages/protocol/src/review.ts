@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { HUB_REPO_RE, hubPersonEmailAcceptSchema, hubPersonEmailSchema } from "./fields.js";
 import { isLeasePath, LEASE_PATH_MAX } from "./lease-paths.js";
+import { hubModelAskAcceptSchema, hubModelAskSchema } from "./models.js";
 
 /**
  * Review exchange (docs/SPEC.md §52): agents ask for PR reviews from teammates' agents. A review is a read-only
@@ -292,6 +293,8 @@ export const hubReviewRequestSchema = z.union([
     headSha: sha.optional(),
     paths: z.array(filePath).max(HUB_REVIEW_PATHS_MAX).refine(unique, "paths must not repeat").optional(),
     owners: z.array(owner).max(HUB_REVIEW_OWNERS_MAX).refine(unique, "owners must not repeat").optional(),
+    /** Model choice (§66): the agent, model and effort the author suggests for the reviewer's run. */
+    suggest: hubModelAskSchema.optional(),
   }),
   z.strictObject({
     action: z.literal("policy"),
@@ -327,6 +330,7 @@ export const hubReviewRequestAcceptSchema = z.union([
     headSha: soft(sha),
     paths: soft(keepValid(filePath, HUB_REVIEW_PATHS_MAX).transform((a) => [...new Set(a)])),
     owners: soft(keepValid(owner, HUB_REVIEW_OWNERS_MAX).transform((a) => [...new Set(a)])),
+    suggest: hubModelAskAcceptSchema,
   }),
   z.object({
     action: z.literal("policy"),

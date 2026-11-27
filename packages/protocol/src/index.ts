@@ -919,3 +919,6 @@ export * from "./memory.js";
 
 // Review exchange (SPEC §52): agents ask teammates' agents for PR reviews; a review is a read-only handoff.
 export * from "./review.js";
+
+// Model choice per handoff (SPEC §66): a suggested agent, model and effort; what a machine actually ran.
+export * from "./models.js";

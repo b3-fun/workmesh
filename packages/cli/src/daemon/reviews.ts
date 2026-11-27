@@ -308,7 +308,9 @@ export class Reviews {
       ok: true,
       text:
         `Asked ${names || "a teammate"} for an agent review of PR ${ref} (round ${round} of ${rounds}). Their machine runs it read-only ` +
-        "once they (or their standing rule) accept; the findings come back to this session as a Workmesh message. Carry on meanwhile.",
+        (key
+          ? "once they (or their standing rule) accept; the findings come back to this session as a Workmesh message. Carry on meanwhile."
+          : `once they (or their standing rule) accept; \`workmesh reviews\` and the board show the findings when they are in.`),
       data: b,
     };
   }

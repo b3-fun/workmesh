@@ -65,6 +65,7 @@ const REVIEW: HubHandoffAccepted = {
 } as HubHandoffAccepted;
 
 type Reply = { status: number; body?: unknown };
+const DONE: HubHandoffAccepted = { ...REVIEW, status: "done" };
 
 function hub(replies: Reply[] = []) {
   const calls: Array<{ url: string; body?: Record<string, unknown> }> = [];
@@ -160,7 +161,7 @@ describe("the read-only gate for review runs (SPEC §53)", () => {
       isReviewRun: (id) => id === "h_rev12345",
     });
     const ev = (sessionId: string, command: string): SessionEvent =>
-      ({ source: "codex", sessionId, kind: "tool", ts: T, cwd: ROOT, detail: { tool: "shell", command } }) as SessionEvent;
+      ({ source: "codex", sessionId, kind: "working", ts: T, cwd: ROOT, detail: { tool: "shell", command } }) as SessionEvent;
     // A Codex run before its thread named itself: the hook's WORKMESH_HANDOFF says it is the review.
     expect(reviews.gateRefusal(ev("t-1", "git push"), "PreToolUse", "h_rev12345")).toMatch(/push/);
     // A session that is no review: nothing.
@@ -284,7 +285,7 @@ describe("a review's answer (SPEC §52, §53)", () => {
       }),
       { agent: "codex", model: "gpt-5.5" },
     );
-    const text = reviewNotice({ ...REVIEW, status: "done" }, result);
+    const text = reviewNotice(DONE, result);
     const lines = text.split("\n");
     const open = lines.findIndex((l) => l.startsWith("<workmesh-review "));
     const close = lines.lastIndexOf("</workmesh-review>");
@@ -301,7 +302,7 @@ describe("a review's answer (SPEC §52, §53)", () => {
   it("a long review is cut inside its block, and says where the rest is", () => {
     const findings = Array.from({ length: 40 }, (_, i) => ({ file: `src/f${i}.ts`, line: i + 1, severity: "medium", summary: "x".repeat(200), suggestion: "y".repeat(300) }));
     const result = parseReviewOutput(JSON.stringify({ verdict: "changes_suggested", summary: "many", tests: "not_run", findings }), { agent: "claude" });
-    const text = reviewNotice({ ...REVIEW, status: "done" }, result);
+    const text = reviewNotice(DONE, result);
     expect(text.length).toBeLessThan(4000);
     expect(text).toMatch(/more findings: `workmesh reviews show h_rev12345`/);
     expect(text.endsWith("</workmesh-review>")).toBe(true);
@@ -312,7 +313,7 @@ describe("a review's answer (SPEC §52, §53)", () => {
       JSON.stringify({ verdict: "comments", summary: "cc @sean and @b3-fun/infra ![x](https://evil.test/p.png)", tests: "passed", findings: [{ file: "a.ts", line: 2, severity: "low", summary: "ping @an", suggestion: null }] }),
       { agent: "codex" },
     );
-    const body = reviewComment({ ...REVIEW, status: "done" }, result);
+    const body = reviewComment(DONE, result);
     expect(body).toMatch(/This is a comment, not an approval/);
     expect(body).not.toMatch(/(^|[^`])@sean/);
     expect(body).toContain("`@sean`");
@@ -389,7 +390,7 @@ describe("the author's side (SPEC §53)", () => {
       ({
         source: "claude-code",
         sessionId: "s1",
-        kind: "tool",
+        kind: "working",
         ts: T,
         cwd: ROOT,
         detail: { tool: "Bash", command, ok: true, toolResponseText: "https://github.com/b3-fun/b3os-beta/pull/212\n" },
@@ -550,7 +551,7 @@ describe("the reviewer's side: who starts a review here (SPEC §53, B3-7235)", (
     await flush();
     expect(x.calls.filter((c) => c.url.endsWith("/relay/handoffs"))).toHaveLength(0);
     expect(handoffHash(REVIEW)).not.toBe(handoffHash({ ...REVIEW, review: { ...REVIEW.review!, pr: 213 } }));
-    expect(handoffHash({ ...REVIEW, kind: undefined, review: undefined })).toBe(handoffHash({ task: REVIEW.task, repo: REVIEW.repo }));
+    expect(handoffHash({ ...REVIEW, kind: undefined, review: undefined })).toBe(handoffHash({ task: REVIEW.task, repo: REVIEW.repo, issue: undefined, context: undefined }));
   });
 
   it("says what Accept starts: a read-only review", () => {

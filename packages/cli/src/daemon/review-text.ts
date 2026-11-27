@@ -259,7 +259,18 @@ const VERDICT_WORDS: Record<HubReviewResult["verdict"], string> = {
 };
 
 /** One finding as marked lines' text (before marking): `[high] src/a.ts:12-18: summary` and its suggestion. */
-function findingText(f: HubReviewResultAccepted["findings"][number], n: number): string {
+type FindingLike = {
+  file?: string | undefined;
+  line?: number | undefined;
+  endLine?: number | undefined;
+  severity: HubReviewSeverity;
+  summary: string;
+  suggestion?: string | undefined;
+};
+/** A result as this module reads it: a result the relay made, or one the hub sent back. */
+type ResultLike = HubReviewResult | HubReviewResultAccepted;
+
+function findingText(f: FindingLike, n: number): string {
   const where = f.file ? ` ${f.file}${f.line ? `:${f.line}${f.endLine && f.endLine !== f.line ? `-${f.endLine}` : ""}` : ""}` : "";
   const head = `${n}. [${f.severity}]${where}: ${f.summary}`;
   return f.suggestion ? `${head}\n   Suggestion: ${f.suggestion}` : head;
@@ -272,7 +283,7 @@ function findingText(f: HubReviewResultAccepted["findings"][number], n: number):
  */
 export function reviewNotice(
   h: Pick<HubHandoffAccepted, "id" | "to" | "repo"> & { review?: { pr: number; round: number; rounds?: number | undefined } | undefined },
-  result: HubReviewResultAccepted,
+  result: ResultLike,
   budget = 3800,
 ): string {
   const who = label(h.to.person);
@@ -309,7 +320,7 @@ export function reviewNotice(
   const parts: string[] = [`Summary: ${result.summary}`];
   let used = parts[0]!.length;
   let shown = 0;
-  for (const [i, f] of result.findings.entries()) {
+  for (const [i, f] of (result.findings as readonly FindingLike[]).entries()) {
     const t = findingText(f, i + 1);
     if (used + t.length + 120 > room) break;
     parts.push(t);
@@ -365,14 +376,14 @@ export function reviewComment(
 /** A review result as `workmesh reviews show` prints it: the summary and every finding, the reviewer's words marked. */
 export function reviewView(
   h: Pick<HubHandoffAccepted, "id" | "status" | "from" | "to" | "repo"> & { review?: { pr: number; round: number; rounds?: number | undefined } | undefined },
-  result: HubReviewResultAccepted | undefined,
+  result: ResultLike | undefined,
 ): string {
   const ref = `${h.repo ?? "?"}#${h.review?.pr ?? "?"}`;
   const head = `Review ${h.id} · PR ${ref} · round ${h.review?.round ?? 1} of ${h.review?.rounds ?? HUB_REVIEW_ROUNDS_MAX} · ${h.status} · asked by ${label(h.from.person)}, reviewed by ${label(h.to.person)}`;
   if (!result) return `${head}\n(no result yet)`;
   const agent = result.agent ? ` · ${AGENT_NAMES[result.agent]}${result.model ? ` ${oneLine(result.model, 80)}` : ""}` : "";
   const lines = [`${head}${agent}`, `Verdict: ${VERDICT_WORDS[result.verdict]}${result.tests ? ` · tests ${result.tests.replace("_", " ")}` : ""}${result.posted ? " · posted on the PR" : ""}`, ""];
-  const body = [`Summary: ${result.summary}`, ...result.findings.map((f, i) => findingText(f, i + 1))].join("\n");
+  const body = [`Summary: ${result.summary}`, ...(result.findings as readonly FindingLike[]).map((f, i) => findingText(f, i + 1))].join("\n");
   lines.push(quoted(body));
   return lines.join("\n");
 }

@@ -423,6 +423,8 @@ Sean, 11-26: "a non technical person prompting or asking the mesh, and the work 
 
 ## Decision log
 
+- 11-27 Governor, shadow mode (B3-7265): a hub agent classifies every held message (question, info, status, action request, suspicious) and watches sessions for drift, loops, stuck work and cost spikes, logging what it would do; it changes nothing yet. It sits above the hard rules from B3-7231 and B3-7258 and never overrides them. Red team: 0 of 46 injections and 0 of 7 messages aimed at it would be delivered. Turning on automatic delivery needs two weeks of live agreement data and the team's review (internal doc "Workmesh trust: the rules we have, and a governor to cut the friction"). Also live: reviews and requests route by CODEOWNERS first (B3-7266).
+
 - 11-27 0.14.0: ask the mesh (B3-7260: a handoff can carry a request, and a person's own machine can accept by a rule they added at their terminal, #65), review exchange (B3-7259: agents request read-only reviews on another person's machine, #70, #72), tool approval after a teammate's delivered message (B3-7258, #68). 0.13.1 was never published; its changes ship here.
 
 - 11-27 Review exchange (B3-7259): an agent review is a read-only handoff of kind `review`, never an approval; there

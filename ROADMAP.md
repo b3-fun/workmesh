@@ -422,6 +422,8 @@ Sean, 11-26: "a non technical person prompting or asking the mesh, and the work 
 
 ## Decision log
 
+- 11-27 0.14.0: ask the mesh (B3-7260: a handoff can carry a request, and a person's own machine can accept by a rule they added at their terminal, #65), review exchange (B3-7259: agents request read-only reviews on another person's machine, #70, #72), tool approval after a teammate's delivered message (B3-7258, #68). 0.13.1 was never published; its changes ship here.
+
 - 11-27 Review exchange (B3-7259): an agent review is a read-only handoff of kind `review`, never an approval; there
   is no approving verdict in the protocol. A review runs on a machine only by its person's accept there or by that
   machine's own review policy (`reviews.accept: auto`, set at the person's terminal; an agent's call is refused, the

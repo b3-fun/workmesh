@@ -1936,3 +1936,56 @@ The first completed pairing poll returns a 15-minute `deviceToken` and a separat
 The daemon saves its successor before sending the exchange and can repeat that same predecessor/successor pair if the response is lost. The hub stores credential hashes. The daemon prefers the macOS login Keychain and otherwise writes an atomic mode-0600 file in the Workmesh config directory. `POST /relay/device/status` checks a refresh credential for its device without rotating it. Revoking a device from Settings immediately disables its access and refresh credentials, including pending retries.
 
 At hub upgrade, an existing pairing gets 15 minutes of ordinary access and up to 30 days for a single migration exchange, subject to the existing idle and revocation limits. Upgrade the daemon before the access window ends for continuous service. An older relay cannot renew access. An upgraded daemon paired to an older hub probes for refresh support periodically.
+
+# Requests: people without a relay ask for work (B3-7260, 2026-11-26)
+
+Sean, 11-26: "a non technical person prompting or asking the mesh, and the work executing on engineer's machines". A
+person who runs no relay (a PM, ops, design, sales) asks the hub for work in plain words. The hub records the request,
+proposes an engineer, and offers them an ordinary handoff (§30) in the requester's name. Nothing runs until the
+engineer accepts it on their machine, or one of that machine's own standing rules does. The requester follows it,
+comments and signs off on the hosted hub's board. The wire gains three optional fields.
+
+## 55. Requests on the wire
+
+Code form: `packages/protocol/src/delegate.ts` (`hubHandoffSchema`, `hubHandoffRequestSchema`,
+`HUB_REQUEST_SIZES`, `HUB_HANDOFF_RULE_MAX`).
+
+- **`request: { id, size? }`** is on a handoff that carries a request. `from` is the requester, with their `email`
+  (§48) and no `sessionKey`: they have no machine. `size` is the hub's estimate, `small`, `medium` or `large`, or
+  absent when nobody estimated one. A reader takes a size it doesn't know as absent, and a `request` it can't read as
+  none: the handoff is then an ordinary task, offered to the person like any other. A request runs exactly like a
+  task. A relay that predates this field shows it as one.
+- **`acceptedBy: "rule"` and `rule`** (at most 200 characters) are on the `accept` move (`POST /relay/handoffs`). The
+  accepting machine says that one of its own standing rules accepted the handoff (§56), not the person just now, and
+  gives that rule in its own words. The hub stores both. It lists them on the handoff from `accepted` on, so the
+  person's other machines and the board can say how it was accepted. **This is information only.** A machine starts
+  a handoff because its own record says it was accepted there (§31), never because a handoff says `acceptedBy`. The
+  hub never sends `acceptedBy` for an accept it made itself or one a person made. Nobody can set it from the hub,
+  and a requester can't set it either.
+- A reader drops any other value of `acceptedBy` and cuts `rule` to 200 characters.
+
+## 56. The relay side (`packages/cli`): standing rules for requests
+
+- **A standing rule** lets this machine accept, and start, some requests with no click from its person. It names
+  the requester by an exact email, and it can also name one repo. It takes requests up to a size (`small`,
+  `medium` or `large`) and at most a number a day (1 to 50, this machine's day). Rules live in this machine's config
+  (`handoffs.requestRules`, at most 20). There is no hub route that reads or writes them.
+- **Only the person adds one, at a terminal.** `workmesh handoffs rule add --from <email> [--repo owner/name]
+  [--size small|medium|large] [--per-day n]` prints the rule in words and what it does, then asks "Add this standing
+  rule? [y/N]". No option skips the question. With no terminal (an agent's shell, a pipe) nothing is added. `workmesh
+  handoffs rule` lists the rules, and `workmesh handoffs rule remove <n>` takes one away with no question, because
+  removing only takes away. An agent can still edit the config file itself, as with every relay setting (§31): a
+  rule is the person's choice on their machine, not a lock.
+- **The machine checks every rule itself**, against the handoff as the hub lists it. The handoff must be offered to
+  this person and carry `request`. Its `from.email` must equal the rule's email: a display name never matches. A
+  rule that names a repo needs that repo. The size must be at most the rule's, and a request with no size never
+  matches. The rule's count of accepts on this machine today must be under its limit. The person's own handoffs never
+  match: they follow `handoffs.accept` (§31). Nothing matches under `handoffs.accept: never`, or when this machine
+  can't run the handoff or has no room for another.
+- **A match** is accepted at once (`accept` with `acceptedBy: "rule"` and the rule's words, §55). It goes in the
+  record of handoffs accepted here (§31), marked `rule` with which rule took it, and covers the text this machine
+  listed. Then it starts like any accept made here, and the daemon's log says which rule took it.
+- **Everything else in §31 holds.** A handoff accepted somewhere else waits for "run it here", whatever its
+  `acceptedBy` says. A handoff listed with other text after its accept waits again. The started agent gets the same
+  environment, with secrets left out.
+

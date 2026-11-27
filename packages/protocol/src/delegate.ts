@@ -19,6 +19,12 @@ import { hubHandoffKindSchema, hubHandoffReviewAcceptSchema, hubHandoffReviewSch
 export const HUB_HANDOFF_TEXT_MAX = 4000;
 /** A note on a handoff's or an approval's change (why it was declined, failed, denied; what was done). */
 export const HUB_DELEGATE_NOTE_MAX = 500;
+/** A standing rule's words, as a machine says them on its accept (§55). */
+export const HUB_HANDOFF_RULE_MAX = 200;
+/** How big a request looks, as the hub's triage estimated it (§55). */
+export const HUB_REQUEST_SIZES = ["small", "medium", "large"] as const;
+export const hubRequestSizeSchema = z.enum(HUB_REQUEST_SIZES);
+export type HubRequestSize = z.infer<typeof hubRequestSizeSchema>;
 /** What an approval asks for, e.g. "gh pr merge 212 --merge in b3-fun/b3os-beta". */
 export const HUB_APPROVAL_DETAIL_MAX = 500;
 /** Handoffs and approvals one sync carries. */
@@ -273,6 +279,17 @@ export const hubHandoffSchema = z.object({
   kind: hubHandoffKindSchema.optional(),
   /** A review handoff's PR, round and outcome (§52). */
   review: hubHandoffReviewSchema.optional(),
+  /**
+   * A request (§55): work a person without a relay asked for, sent in their name (`from.email`). `size` is the hub's
+   * estimate. A machine's own standing rules may accept it (§56); nothing else about it differs from a task.
+   */
+  request: z.object({ id: recordId, size: hubRequestSizeSchema.optional() }).optional(),
+  /**
+   * `rule`: the machine that accepted it said one of its own standing rules did (§55), and `rule` gives that rule in
+   * its words. Only that machine's record of the accept starts anything; for every other reader this is information.
+   */
+  acceptedBy: z.literal("rule").optional(),
+  rule: z.string().min(1).max(HUB_HANDOFF_RULE_MAX).optional(),
 });
 export type HubHandoff = z.infer<typeof hubHandoffSchema>;
 const handoffAccept = z.object({
@@ -304,6 +321,10 @@ const handoffAccept = z.object({
     .transform((v) => v ?? undefined)
     .optional(),
   review: soft(hubHandoffReviewAcceptSchema).optional(),
+  /** A request this relay can't read reads as none: the handoff is then an ordinary task, offered to the person. */
+  request: soft(z.object({ id: recordId, size: soft(hubRequestSizeSchema) })).optional(),
+  acceptedBy: soft(z.literal("rule")).optional(),
+  rule: soft(z.string().min(1).transform((s) => s.slice(0, HUB_HANDOFF_RULE_MAX))).optional(),
 })
   // A review handoff without a readable `review` is dropped too: the relay builds a review's prompt from it.
   .refine((h) => h.kind !== "review" || h.review !== undefined, "a review handoff names its PR");
@@ -334,6 +355,9 @@ export const hubHandoffRequestSchema = z.union([
     id: recordId,
     sessionKey: sessionKey.optional(),
     note: note.optional(),
+    /** On `accept` (§55): this machine's own standing rule accepted it, not the person just now; `rule` says which. */
+    acceptedBy: z.literal("rule").optional(),
+    rule: z.string().min(1).max(HUB_HANDOFF_RULE_MAX).optional(),
   }),
 ]);
 export type HubHandoffRequest = z.infer<typeof hubHandoffRequestSchema>;
@@ -353,6 +377,8 @@ export const hubHandoffRequestAcceptSchema = z.union([
     id: recordId,
     sessionKey: opt(sessionKey),
     note: opt(cut(HUB_DELEGATE_NOTE_MAX)),
+    acceptedBy: soft(z.literal("rule")),
+    rule: soft(z.string().min(1).transform((s) => s.slice(0, HUB_HANDOFF_RULE_MAX))),
   }),
 ]);
 export type HubHandoffRequestAccepted = z.infer<typeof hubHandoffRequestAcceptSchema>;

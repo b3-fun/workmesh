@@ -525,6 +525,64 @@ describe("handoffs (SPEC §31)", () => {
     expect(neverConfirm.d.summary(() => undefined)!.handoffs).toEqual([]);
   });
 
+  it("a standing rule for requests (SPEC §56): this machine accepts, records and starts what its own rule takes", async () => {
+    const rule = { from: "allie@example.com", repo: "b3-fun/b3os-beta", maxSize: "small" as const, perDay: 1 };
+    const req = (over: Record<string, unknown> = {}) =>
+      handoff({ id: "h_req", from: { person: "Allie", email: "allie@example.com" }, request: { id: "rq_1", size: "small" }, ...over });
+    const accepted = handoff({ id: "h_req", status: "accepted", device: DEV, acceptedBy: "rule", from: { person: "Allie", email: "allie@example.com" }, request: { id: "rq_1", size: "small" } });
+    const runner = new FakeRunner();
+    const record = new AcceptedHere();
+    const x = harness({ runner, accepted: record, settings: { requestRules: [rule] }, replies: [{ status: 200, body: { ok: true, handoff: accepted } }] });
+    x.sync({ handoffs: [req()] as unknown as Handoffs });
+    await flush();
+    // One accept, saying a rule of this machine's did it; then it runs here, and the record says so.
+    expect(x.calls.map((c) => c.body)).toEqual([
+      { action: "accept", id: "h_req", acceptedBy: "rule", rule: "small requests from allie@example.com in b3-fun/b3os-beta, at most 1 a day" },
+    ]);
+    expect(runner.ran).toEqual(["h_req"]);
+    expect(record.list()).toMatchObject([{ id: "h_req", by: "rule", rule: "allie@example.com|b3-fun/b3os-beta|small|1" }]);
+    // The day's count is used up: the next one waits for the person.
+    const y = harness({ runner: new FakeRunner(), accepted: record, settings: { requestRules: [rule] } });
+    y.sync({ handoffs: [req({ id: "h_req2" })] as unknown as Handoffs });
+    await flush();
+    expect(y.calls).toEqual([]);
+  });
+
+  it("a standing rule never takes what it doesn't name: another sender, a name without an email, another repo, a bigger or unknown size, a plain handoff", async () => {
+    const rule = { from: "allie@example.com", repo: "b3-fun/b3os-beta", maxSize: "medium" as const, perDay: 5 };
+    const cases = [
+      handoff({ id: "h_a", from: { person: "Bob", email: "bob@example.com" }, request: { id: "rq_a", size: "small" } }),
+      handoff({ id: "h_b", from: { person: "allie@example.com" }, request: { id: "rq_b", size: "small" } }),
+      handoff({ id: "h_c", from: { person: "Allie", email: "allie@example.com" }, repo: "b3-fun/web", request: { id: "rq_c", size: "small" } }),
+      handoff({ id: "h_d", from: { person: "Allie", email: "allie@example.com" }, request: { id: "rq_d", size: "large" } }),
+      handoff({ id: "h_e", from: { person: "Allie", email: "allie@example.com" }, request: { id: "rq_e" } }),
+      handoff({ id: "h_f", from: { person: "Allie", email: "allie@example.com" } }),
+    ];
+    const runner = new FakeRunner();
+    const x = harness({ runner, settings: { requestRules: [rule] } });
+    x.sync({ handoffs: cases as unknown as Handoffs });
+    await flush();
+    expect(x.calls).toEqual([]);
+    expect(runner.ran).toEqual([]);
+    // And `never` runs none, rule or not.
+    const n = harness({ runner: new FakeRunner(), settings: { accept: "never", requestRules: [rule] } });
+    n.sync({ handoffs: [handoff({ id: "h_g", from: { person: "Allie", email: "allie@example.com" }, request: { id: "rq_g", size: "small" } })] as unknown as Handoffs });
+    await flush();
+    expect(n.calls).toEqual([]);
+  });
+
+  it("a rule's accept the hub lists for another machine of the person's is that machine's: nothing starts here", async () => {
+    const runner = new FakeRunner();
+    const x = harness({ runner });
+    const elsewhere = handoff({ id: "h_x", status: "accepted", device: OTHER_DEV, acceptedBy: "rule", rule: "small requests from allie@example.com", from: { person: "Allie", email: "allie@example.com" }, request: { id: "rq_x", size: "small" } });
+    const noDevice = handoff({ id: "h_y", status: "accepted", acceptedBy: "rule", rule: "small requests from allie@example.com", from: { person: "Allie", email: "allie@example.com" }, request: { id: "rq_y", size: "small" } });
+    x.sync({ handoffs: [elsewhere, noDevice] as unknown as Handoffs });
+    await flush();
+    // The hub's word that "a rule" accepted it is never enough: it waits for "run it here" like any accept elsewhere.
+    expect(runner.ran).toEqual([]);
+    expect(x.d.waitsToRunHere(read(noDevice as unknown as Handoffs[number]))).toBe(true);
+  });
+
   it("an accept on this machine is in the record: the person's, and the auto-self policy's", async () => {
     // The person's accept (the CLI or the menu bar made the hub call): it starts at once and at later syncs.
     const runner = new FakeRunner();

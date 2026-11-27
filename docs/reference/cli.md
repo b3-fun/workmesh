@@ -51,6 +51,7 @@ For what to run when, start with the [guide](../guide/getting-started.md).
 | [`workmesh whoami`](#workmesh-whoami) | Who you are on the team hub, and which agent session this is |
 | [`workmesh handoff`](#workmesh-handoff) | Hand a task to a teammate (or `me`: one of your other machines); their machine starts an agent for it once they accept |
 | [`workmesh handoffs`](#workmesh-handoffs) | Handoffs offered to you and sent by you; read one in full, accept or decline it, or run one accepted elsewhere |
+| [`workmesh handoffs rule`](#workmesh-handoffs-rule) | Standing rules for requests from teammates without a relay: accept and start some with no click (added only at a terminal) |
 | [`workmesh handoffs policy`](#workmesh-handoffs-policy) | Which handoffs this machine takes without a click: ask (the default: none), auto-self (your own), never |
 | [`workmesh roots`](#workmesh-roots) | Where your repos live, so a handoff finds its checkout here (repos your sessions worked in count too) |
 | [`workmesh gates`](#workmesh-gates) | Approval gates on your own agents: they ask before they merge, deploy, publish, force-push or spend |
@@ -850,17 +851,41 @@ Handoffs offered to you and sent by you; read one in full, accept or decline it,
 or run one accepted elsewhere
 
 Arguments:
-  action           list | show | accept | decline | run
-  id               the handoff, for show, accept, decline and run
+  action                       list | show | accept | decline | run
+  id                           the handoff, for show, accept, decline and run
 
 Options:
-  --note <text>    why (decline)
-  --json           machine-readable output
-  -h, --help       display help for command
+  --note <text>                why (decline)
+  --json                       machine-readable output
+  -h, --help                   display help for command
 
 Commands:
-  policy [policy]  Which handoffs this machine takes without a click: ask (the
-                   default: none), auto-self (your own), never
+  rule [options] [action] [n]  Standing rules for requests from teammates
+                               without a relay: accept and start some with no
+                               click (added only at a terminal)
+  policy [policy]              Which handoffs this machine takes without a
+                               click: ask (the default: none), auto-self (your
+                               own), never
+```
+
+## workmesh handoffs rule
+
+```text
+Usage: workmesh handoffs rule [options] [action] [n]
+
+Standing rules for requests from teammates without a relay: accept and start
+some with no click (added only at a terminal)
+
+Arguments:
+  action               list | add | remove
+  n                    for remove: the rule's number
+
+Options:
+  --from <email>       add: whose requests (their exact email)
+  --repo <owner/name>  add: only in this repo
+  --size <size>        add: up to small, medium or large (default small)
+  --per-day <n>        add: at most this many a day (default 3)
+  -h, --help           display help for command
 ```
 
 ## workmesh handoffs policy

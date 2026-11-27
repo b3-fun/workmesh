@@ -16,6 +16,7 @@ import type { GateMatch } from "./gates";
 import { formatInbox } from "./coord-hooks";
 import { AcceptedHere } from "./accepted-here";
 import type { AcceptedBy } from "./accepted-here";
+import { matchRule, ruleKey, ruleWords, type RequestRule } from "./request-rules";
 import { NOTHING_VISIBLE, handoffHash, handoffStart, readable, runHereQuestion } from "./handoff-text";
 import type { HandoffPlan, HandoffStart, RunHereWhy } from "./handoff-text";
 
@@ -59,6 +60,8 @@ export interface DelegateSettings {
   runAccepted: "confirm" | "auto";
   /** The person's own `custom` gate patterns. */
   customGates: readonly string[];
+  /** Standing rules for requests (SPEC §56): this machine's config, added only at its terminal. */
+  requestRules?: readonly RequestRule[];
 }
 
 /** Runs accepted handoffs on this machine (daemon/handoff-runner.ts). */
@@ -444,7 +447,9 @@ export class Delegate {
       // A handoff a session here sent: tell it how it went (not for what was already so when the daemon started).
       if (fromLocal && !seed && prev !== undefined && prev !== h.status) this.tellSender(coord, h, CoordClient.family(fromLocal));
       if (!coord.isMe(h.to)) continue;
-      if (h.status === "offered") this.maybeAutoAccept(coord, h, settings.accept, fromLocal !== undefined);
+      if (h.status === "offered") {
+        if (!this.maybeAcceptByRule(coord, h)) this.maybeAutoAccept(coord, h, settings.accept, fromLocal !== undefined);
+      }
       else if (h.status === "accepted") this.maybeStart(coord, h, settings.accept);
     }
     if (this.handoffStatus.size > 2000) {
@@ -482,6 +487,39 @@ export class Delegate {
         break;
     }
     if (text) coord.notify(local, text, { wake, from: who });
+  }
+
+  /**
+   * A request (SPEC §55) one of this person's standing rules takes (§56): accepted here, by this machine, and started.
+   * The rules are this machine's config, which only the person changes at its terminal; this machine checks them
+   * against the handoff as the hub lists it: the sender's exact email, the repo, the size, and its own count for the
+   * day. The accept tells the hub a rule did it, and the record here says so. True when it went for the accept.
+   */
+  private maybeAcceptByRule(coord: CoordClient, h: HubHandoffAccepted): boolean {
+    const runner = this.deps.runner;
+    const settings = this.deps.settings();
+    const rules = settings.requestRules ?? [];
+    if (!runner || settings.accept === "never" || !h.request || !rules.length) return false;
+    // One's own handoffs follow `auto-self`; a rule is for teammates' requests.
+    if (fromMe(h, coord)) return false;
+    if (this.handoffCalls.has(h.id) || runner.cannotRun(h) || !runner.hasRoom()) return false;
+    const rule = matchRule(rules, h, (k) => this.acceptedHere.countToday(k, this.now()));
+    if (!rule) return false;
+    const words = ruleWords(rule);
+    // The accept covers the text this machine lists now, as the person's own accept would.
+    const seen = handoffHash(h);
+    this.handoffCalls.add(h.id);
+    void coord
+      .handoff({ action: "accept", id: h.id, acceptedBy: "rule", rule: words })
+      .then((r) => {
+        if (r.ok && r.body.ok) {
+          this.log(`handoff ${h.id}: accepted by your standing rule (${words})`);
+          this.acceptedHere.add(h.id, "rule", this.now(), seen, ruleKey(rule));
+          if (r.body.handoff.status === "accepted") this.maybeStart(coord, r.body.handoff, settings.accept, true);
+        }
+      })
+      .finally(() => this.handoffCalls.delete(h.id));
+    return true;
   }
 
   private maybeAutoAccept(coord: CoordClient, h: HubHandoffAccepted, policy: HandoffAcceptPolicy, sentHere: boolean): void {

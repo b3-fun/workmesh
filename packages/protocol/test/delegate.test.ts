@@ -106,6 +106,25 @@ describe("handoffs (SPEC §30)", () => {
 });
 
 describe("approvals and gates (SPEC §30)", () => {
+  it("a request (§55): built strictly, read unchanged; an unreadable one reads as a plain task", () => {
+    const req = { ...handoff, from: { person: "Allie", email: "allie@example.com" }, request: { id: "rq_01J", size: "small" } } as const;
+    expect(hubHandoffResponseAcceptSchema.parse(hubHandoffResponseSchema.parse({ ok: true, handoff: req }))).toEqual({ ok: true, handoff: req });
+    const odd = hubHandoffResponseAcceptSchema.parse({ ok: true, handoff: { ...req, request: { id: "rq_01J", size: "huge" } } });
+    expect(odd.ok && odd.handoff.request).toEqual({ id: "rq_01J", size: undefined });
+    const none = hubHandoffResponseAcceptSchema.parse({ ok: true, handoff: { ...req, request: "rq" } });
+    expect(none.ok && none.handoff.request).toBeUndefined();
+    expect(() => hubHandoffResponseSchema.parse({ ok: true, handoff: { ...req, request: { id: "rq_01J", size: "huge" } } })).toThrow();
+  });
+
+  it("an accept says a machine's own standing rule did it (§55); the hub reads it, a long rule is cut", () => {
+    const accept = { action: "accept", id: "h_1", acceptedBy: "rule", rule: "small requests from allie@example.com, at most 3 a day" } as const;
+    expect(hubHandoffRequestAcceptSchema.parse(hubHandoffRequestSchema.parse(accept))).toMatchObject(accept);
+    const long = hubHandoffRequestAcceptSchema.parse({ ...accept, acceptedBy: "board", rule: "x".repeat(500) });
+    expect(long).toMatchObject({ acceptedBy: undefined });
+    expect((long as { rule?: string }).rule?.length).toBe(200);
+    expect(() => hubHandoffRequestSchema.parse({ ...accept, acceptedBy: "person" })).toThrow();
+  });
+
   it("request, approve and deny build strictly and read unchanged", () => {
     for (const b of [
       { action: "request", sessionKey: "claude-code:s1", gate: "merge", detail: approval.detail },

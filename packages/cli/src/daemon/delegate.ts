@@ -17,6 +17,8 @@ import { formatInbox } from "./coord-hooks";
 import { AcceptedHere } from "./accepted-here";
 import type { AcceptedBy } from "./accepted-here";
 import { matchRule, ruleKey, ruleWords, type RequestRule } from "./request-rules";
+import { matchPoolRule, poolRuleKey, poolRuleWords, type PoolSettings } from "./pool-rules";
+import { readFleetStatus, type FleetSnapshot } from "../lib/fleet";
 import { NOTHING_VISIBLE, handoffHash, handoffStart, readable, runHereQuestion } from "./handoff-text";
 import type { HandoffPlan, HandoffStart, RunHereWhy } from "./handoff-text";
 
@@ -67,6 +69,8 @@ export interface DelegateSettings {
    * never the hub's or an agent's word), `ask` (absent = this) waits for the person, `never` runs none.
    */
   reviewAccept?: "auto" | "ask" | "never";
+  /** Opt-in team delegation pool rules (SPEC §58): local terminal-only policy with qswap headroom floors. */
+  pool?: PoolSettings;
 }
 
 /** Runs accepted handoffs on this machine (daemon/handoff-runner.ts). */
@@ -95,6 +99,8 @@ export interface DelegateDeps {
   accepted?: AcceptedHere;
   /** Deliver a message into an idle Codex thread now; false when it couldn't (next-turn delivery stands). */
   codexWake?: (threadId: string, text: string) => Promise<boolean>;
+  /** Optional fleet capacity reader for local pool headroom checks (defaults to qswap's fleet_status.json). */
+  fleet?: () => FleetSnapshot | undefined;
   now?: () => number;
   log?: (message: string) => void;
 }
@@ -451,15 +457,19 @@ export class Delegate {
       const fromLocal = h.from.sessionKey ? coord.localKey(h.from.sessionKey) : undefined;
       // A handoff a session here sent: tell it how it went (not for what was already so when the daemon started).
       if (fromLocal && !seed && prev !== undefined && prev !== h.status) this.tellSender(coord, h, CoordClient.family(fromLocal));
-      if (!coord.isMe(h.to)) continue;
+      const forMe = coord.isMe(h.to);
+      const forPool = Boolean(h.pool && h.to.person.toLowerCase() === "pool");
+      if (!forMe && !forPool) continue;
       if (h.kind === "review") {
         // A review: this machine's own review policy decides (SPEC §53), never the handoff policy or a request rule.
-        if (h.status === "offered") this.maybeAutoAcceptReview(coord, h);
-        else if (h.status === "accepted") this.maybeStartReview(coord, h);
+        if (forMe && h.status === "offered") this.maybeAutoAcceptReview(coord, h);
+        else if (forMe && h.status === "accepted") this.maybeStartReview(coord, h);
         continue;
       }
       if (h.status === "offered") {
-        if (!this.maybeAcceptByRule(coord, h)) this.maybeAutoAccept(coord, h, settings.accept, fromLocal !== undefined);
+        if (forMe && this.maybeAcceptByRule(coord, h)) continue;
+        if (this.maybeAcceptByPool(coord, h)) continue;
+        if (forMe) this.maybeAutoAccept(coord, h, settings.accept, fromLocal !== undefined);
       }
       else if (h.status === "accepted") this.maybeStart(coord, h, settings.accept);
     }
@@ -572,6 +582,40 @@ export class Delegate {
           this.log(`handoff ${h.id}: accepted by your standing rule (${words})`);
           this.acceptedHere.add(h.id, "rule", this.now(), seen, ruleKey(rule));
           if (r.body.handoff.status === "accepted") this.maybeStart(coord, r.body.handoff, settings.accept, true);
+        }
+      })
+      .finally(() => this.handoffCalls.delete(h.id));
+    return true;
+  }
+
+  /**
+   * Opt-in team delegation pool (SPEC §58): accepts a teammate's handoff (either offered directly to this person or to
+   * `"pool"`) when one of this machine's local pool rules matches and live qswap headroom stays above its reserve floor.
+   */
+  private maybeAcceptByPool(coord: CoordClient, h: HubHandoffAccepted): boolean {
+    const runner = this.deps.runner;
+    const settings = this.deps.settings();
+    const pool = settings.pool;
+    if (!runner || settings.accept === "never" || !pool?.enabled || !pool.rules.length) return false;
+    if (fromMe(h, coord)) return false;
+    if (this.handoffCalls.has(h.id) || !runner.hasRoom()) return false;
+    const fleet = this.deps.fleet ? this.deps.fleet() : readFleetStatus();
+    const match = matchPoolRule(pool, h, fleet, (k) => this.acceptedHere.countToday(k, this.now()));
+    if (!match) return false;
+    const candidate: HubHandoffAccepted = { ...h, preferredAgent: match.provider };
+    if (runner.cannotRun(candidate)) return false;
+    const words = poolRuleWords(match.rule);
+    const seen = handoffHash(h);
+    this.handoffCalls.add(h.id);
+    void coord
+      .handoff({ action: "accept", id: h.id, acceptedBy: "pool", rule: words })
+      .then((r) => {
+        if (r.ok && r.body.ok) {
+          this.log(`handoff ${h.id}: accepted by your pool rule (${words}; provider ${match.provider}: ${match.reason})`);
+          this.acceptedHere.add(h.id, "rule", this.now(), seen, poolRuleKey(match.rule));
+          if (r.body.handoff.status === "accepted") {
+            this.maybeStart(coord, { ...r.body.handoff, preferredAgent: match.provider }, settings.accept, true);
+          }
         }
       })
       .finally(() => this.handoffCalls.delete(h.id));

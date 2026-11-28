@@ -617,6 +617,8 @@ Sean, 11-26: "a non technical person prompting or asking the mesh, and the work 
 - 11-24 Slack links and subagent titles are conversation-level; Linear, PR and issue links are metadata (they repeat
   `issues` and `pr`).
 
+- 11-27 Multi-provider fleet, cross-agent delegation & opt-in capacity pools (SPEC §61–62): OpenCode, Gemini CLI, and Harness adapters; multi-agent handoff runner across 13 popular CLIs (`claude`, `codex`, `opencode`, `gemini`, `antigravity`, `grok`, `cursor`, `copilot`, `windsurf`, `amp`, `aider`, `cline`, `harness`); `fleet_status` and `delegate` MCP tools with recursion guard; opt-in secret-free capacity reporting (`off | availability | detailed`) and terminal-only local pool rules (`readonly` and `worktree` PR tasks).
+
 ## Links
 
 - Linear (project "Workmesh", team NPC Labs): B3-7165 (parent), B3-7166 (v0), B3-7167 (v1), B3-7168 (v2), B3-7203 (v3 Memory), B3-7259 (review exchange), B3-7260 (ask the mesh).

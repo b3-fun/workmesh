@@ -93,6 +93,26 @@ these keys again within a few seconds of a change, so a hand edit needs no resta
 | `adapters.workflow` | | Live agent counts for Claude Code workflow runs. |
 | `adapters.workflow.enabled` | `true` | |
 | `adapters.workflow.projectsDir` | `~/.claude/projects` | |
+| `adapters.opencode` | | OpenCode sessions read-only from `opencode.db` (DeepSeek API, etc.). |
+| `adapters.opencode.enabled` | `true` | |
+| `adapters.opencode.dbPath` | `~/.local/share/opencode/opencode.db` | |
+| `adapters.gemini` | | Gemini CLI sessions read-only from `~/.gemini/tmp/*/chats/session-*.json`. |
+| `adapters.gemini.enabled` | `true` | |
+| `adapters.gemini.dir` | `~/.gemini` | |
+| `adapters.harness` | | Bridges non-Claude/non-Codex Harness CLI sessions (`antigravity`, `gemini-cli`, `grok`, `cursor`, `copilot`, `windsurf`, `amp`, `aider`, `cline`, `zed`, etc.) via `harness ps --json`. |
+| `adapters.harness.enabled` | `true` | |
+
+## Capacity and delegation pool
+
+Opt-in subscription headroom sharing and teammate compute delegation (SPEC §61–62). Off until you enable them at your own terminal.
+
+| Key | Default | What it is |
+|---|---|---|
+| `capacity` | absent | Opt-in capacity reporting from `qswap`'s `~/.ai-quota-swap/fleet_status.json`. |
+| `capacity.share` | `off` | `off` (nothing sent), `availability` (coarse buckets + reset countdown only), or `detailed` (+ headroom % and est. API value; never emails or keys). Set with `workmesh capacity share <level>`. |
+| `pool` | absent | Opt-in team delegation pool: auto-accepts teammates' read-only and worktree PR tasks while your live `qswap` headroom stays above your reserve floor. |
+| `pool.enabled` | `false` | Turn on or off with `workmesh pool on\|off`. |
+| `pool.rules` | `[]` | Local pool rules added interactively at your terminal with `workmesh pool rule add` (sender/team, providers, modes `readonly`/`worktree`, optional repo filter, `minHeadroom`, `expiringFloor`, `perDay`). |
 
 ## Slack status
 
@@ -155,6 +175,7 @@ Set by Workmesh itself, useful when you debug:
 |---|---|
 | `WORKMESH_SERVICE` | In the daemon's environment when launchd or systemd runs it. |
 | `WORKMESH_HANDOFF` | In a handoff run's environment: the handoff id. A session with it is never woken (nobody is there to answer). Its hooks send the id to the daemon, which holds a review run's writes. |
+| `WORKMESH_DELEGATION_DEPTH` | Nesting depth of delegated agent runs (starts at `1` inside a delegated run; prevents recursive delegation loops). |
 | `WORKMESH_REVIEW` | `1` in a review run's environment (a read-only review of a teammate's PR). |
 
 ## Files

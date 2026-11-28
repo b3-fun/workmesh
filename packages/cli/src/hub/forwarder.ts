@@ -27,6 +27,7 @@ import {
 import type { AgentSession, SessionEvent } from "@workmesh/core";
 import type {
   HubActivityEvent,
+  HubCapacityReport,
   HubEventKind,
   HubLink,
   HubProjectRule,
@@ -157,6 +158,8 @@ export interface HubForwarderOptions {
   isGone?: (s: AgentSession) => boolean;
   /** Puts restored sessions back in the daemon's store (`SessionStore.restore`). */
   seedSessions?: (sessions: AgentSession[]) => void;
+  /** SPEC §57: opt-in fleet capacity report sent on full heartbeats (absent = off). */
+  capacity?: () => HubCapacityReport | undefined;
 }
 
 export interface HubForwarderStatus {
@@ -504,6 +507,7 @@ export class HubForwarder {
   private readonly aliveOf: ((s: AgentSession) => boolean | undefined) | undefined;
   private readonly isGone: ((s: AgentSession) => boolean) | undefined;
   private readonly seedSessions: ((sessions: AgentSession[]) => void) | undefined;
+  private readonly capacity: (() => HubCapacityReport | undefined) | undefined;
   private readonly startedAt: number;
   private readonly startupGraceMs: number;
   /** Last heartbeat-driven send (full, or held back to `full: false` right after a start). */
@@ -563,6 +567,7 @@ export class HubForwarder {
     this.aliveOf = opts.aliveOf;
     this.isGone = opts.isGone;
     this.seedSessions = opts.seedSessions;
+    this.capacity = opts.capacity;
     this.startedAt = this.now();
     this.startupGraceMs = opts.startupGraceMs ?? 120_000;
   }
@@ -2057,6 +2062,7 @@ export class HubForwarder {
     // Oldest first by time: transcript messages are read a beat after the
     // hook events around them.
     const ordered = [...events].sort((a, b) => a.ts - b.ts);
+    const cap = full ? this.capacity?.() : undefined;
     const req = hubIngestRequestSchema.safeParse({
       v: HUB_WIRE_VERSION,
       sentAt: now,
@@ -2064,6 +2070,7 @@ export class HubForwarder {
       // v0.6: the avatar rides on heartbeats.
       ...(full && this.github ? { person: { github: this.github } } : {}),
       ...(this.client ? { client: this.client } : {}),
+      ...(cap ? { capacity: cap } : {}),
       full,
       sessions: batchSessions.map(([t]) => t.current),
       events: ordered,

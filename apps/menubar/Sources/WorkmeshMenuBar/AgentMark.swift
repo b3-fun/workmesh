@@ -11,8 +11,8 @@ enum AgentMark: CaseIterable {
 
     /// The mark for a session `source`; nil for sources drawn with an SF Symbol.
     init?(source: String) {
-        switch source {
-        case "claude-code": self = .anthropic
+        switch source.lowercased() {
+        case "claude-code", "claude": self = .anthropic
         case "codex": self = .openai
         default: return nil
         }
@@ -64,11 +64,21 @@ struct AgentGlyph: View {
     }
 
     static func symbol(for source: String) -> String {
-        switch source {
-        case "claude-code": return "asterisk"
+        switch source.lowercased() {
+        case "claude-code", "claude": return "asterisk"
         case "codex": return "chevron.left.forwardslash.chevron.right"
         case "workflow": return "point.3.connected.trianglepath.dotted"
-        case "gemini-cli": return "sparkle"
+        case "gemini-cli", "gemini", "antigravity", "agy": return "sparkle"
+        case "opencode": return "cpu"
+        case "grok": return "bolt.fill"
+        case "cursor": return "cursorarrow.rays"
+        case "copilot", "github-copilot": return "airplane"
+        case "windsurf": return "wind"
+        case "amp": return "waveform"
+        case "aider": return "wrench.and.screwdriver"
+        case "cline": return "terminal.fill"
+        case "zed": return "z.square"
+        case "harness": return "square.grid.2x2"
         default: return "terminal"
         }
     }

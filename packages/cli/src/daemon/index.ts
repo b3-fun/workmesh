@@ -6,8 +6,17 @@ import { CODEX_NOTIFY_HOOK_EVENT, codexDaemonEvent, codexSessionsDir, createCode
 import type { CodexWatcher } from "../adapters/codex";
 import { claudeProjectsDir, createWorkflowWatcher } from "../adapters/workflow";
 import type { WorkflowWatcher } from "../adapters/workflow";
+import { createOpenCodeWatcher, defaultOpenCodeDbPath } from "../adapters/opencode";
+import type { OpenCodeWatcher } from "../adapters/opencode";
+import { createGeminiWatcher, defaultGeminiDir } from "../adapters/gemini";
+import type { GeminiWatcher } from "../adapters/gemini";
+import { createHarnessWatcher } from "../adapters/harness";
+import type { HarnessWatcher } from "../adapters/harness";
+import { buildCapacityReport, readFleetStatus } from "../lib/fleet";
+import { advertisedPoolModes } from "./pool-rules";
 import {
   autoUpdateSettings,
+  capacityShareLevel,
   delegateSettings,
   messageSettings,
   formatOptionsFromConfig,
@@ -16,6 +25,7 @@ import {
   loadConfig,
   loadConfigSafe,
   patchReviewConfig,
+  poolSettings,
   readHubConfig,
   reviewSettings,
   safeConfig,
@@ -256,6 +266,13 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       isGone: (s) => s.source === "claude-code" && liveClaude !== undefined && !liveClaude.has(s.sessionId),
       seedSessions: (list) => {
         if (store.restore(list) > 0) pusher.notify();
+      },
+      capacity: () => {
+        const disk = loadConfigSafe();
+        const share = capacityShareLevel(disk);
+        if (share === "off") return undefined;
+        const fleet = readFleetStatus();
+        return buildCapacityReport(fleet, share, advertisedPoolModes(poolSettings(disk), fleet));
       },
     });
     if (carried) fwd.restoreState({ state: carried });
@@ -567,6 +584,11 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         coord: coordSummary(),
         delegate: delegate.summary((local) => store.get(local)?.name),
         newDevices: newDevices.active(coord?.hubNow()),
+        pool: (() => {
+          const disk = loadConfigSafe();
+          const p = poolSettings(disk);
+          return { enabled: p.enabled, rulesCount: p.rules.length, capacityShare: capacityShareLevel(disk) };
+        })(),
       };
     },
     applyHookEvent,
@@ -637,6 +659,8 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         gates: onDisk.gates,
         reviews: onDisk.reviews,
         update: onDisk.update,
+        capacity: onDisk.capacity,
+        pool: onDisk.pool,
       };
       formatOpts = formatOptionsFromConfig(liveConfig);
       pusher.applyConfig(formatOpts, liveConfig.statusPolicy);
@@ -688,6 +712,23 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
       log(`watching Claude Code workflows in ${projectsDir}`);
     }
 
+    let ocWatcher: OpenCodeWatcher | undefined;
+    if (config.adapters.opencode?.enabled !== false) {
+      const ocDb = config.adapters.opencode?.dbPath ?? defaultOpenCodeDbPath();
+      ocWatcher = createOpenCodeWatcher({ dbPath: ocDb, onEvent: applyEvent, log });
+    }
+
+    let geminiWatcher: GeminiWatcher | undefined;
+    if (config.adapters.gemini?.enabled !== false) {
+      const gDir = config.adapters.gemini?.dir ?? defaultGeminiDir();
+      geminiWatcher = createGeminiWatcher({ dir: gDir, onEvent: applyEvent, log });
+    }
+
+    let harnessWatcher: HarnessWatcher | undefined;
+    if (config.adapters.harness?.enabled !== false) {
+      harnessWatcher = createHarnessWatcher({ onEvent: applyEvent, log });
+    }
+
     // End Claude Code sessions whose process died without a SessionEnd, keep
     // ones Claude Code reports busy from going stale mid tool call, and pick
     // up session names for the menu bar.
@@ -732,6 +773,9 @@ export async function runDaemon(config: Config, opts: RunDaemonOptions = {}): Pr
         try {
           await watcher?.close();
           await wfWatcher?.close();
+          ocWatcher?.stop();
+          geminiWatcher?.stop();
+          harnessWatcher?.stop();
         } catch {
           // best effort
         }

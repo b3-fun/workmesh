@@ -60,6 +60,8 @@ export type TeamState =
        * `doctor`): heard of in the last 24 hours and not dismissed, newest first.
        */
       newDevices?: NewDeviceNotice[];
+      /** SPEC §57–58: local opt-in capacity sharing & pool summary for menu bar / studio-pixbar. */
+      pool?: { enabled: boolean; rulesCount: number; capacityShare: string };
     };
 
 /** v1: what the menu bar shows about coordination (this machine's agents only). */

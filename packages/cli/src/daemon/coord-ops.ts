@@ -4,13 +4,25 @@ import { z } from "zod";
 import {
   HUB_ASK_QUESTION_MAX,
   HUB_GATE_ACTIONS,
+  HUB_HANDOFF_AGENTS,
   HUB_LEASE_TTL_DEFAULT_SEC,
   HUB_LEASE_TTL_MAX_SEC,
   HUB_LEASE_TTL_MIN_SEC,
+  HUB_POOL_MODES,
+  HUB_TASK_KINDS,
   LEASE_PATH_MAX,
   normalizeLeasePath,
 } from "@workmesh/protocol";
-import type { HubGateAction, HubHandoffAccepted, HubLeaseAccepted, HubMessageTo } from "@workmesh/protocol";
+import type {
+  HubGateAction,
+  HubHandoffAccepted,
+  HubHandoffAgent,
+  HubLeaseAccepted,
+  HubMessageTo,
+  HubPoolMode,
+  HubTaskKind,
+} from "@workmesh/protocol";
+import { formatFleetSummary, pickBestProvider, readFleetStatus } from "../lib/fleet";
 import type { AgentSession } from "@workmesh/core";
 import { CoordClient } from "../hub/coord";
 import type { CoordResult } from "../hub/coord";
@@ -68,6 +80,9 @@ export const COORD_OPS = [
   "request_review",
   "reviews",
   "review_policy",
+  // Multi-provider capacity & delegation mesh (SPEC §57–58)
+  "fleet_status",
+  "delegate",
 ] as const;
 export type CoordOp = (typeof COORD_OPS)[number];
 
@@ -83,6 +98,8 @@ export const coordCallerSchema = z
     codexThreadId: z.string().max(128).optional(),
     /** The MCP client's name (`claude-code`, `codex-mcp-client`), or `cli`. */
     client: z.string().max(80).optional(),
+    /** Nesting depth of delegated runs (prevents recursive delegation loops). */
+    delegationDepth: z.number().int().min(0).max(10).optional(),
   })
   .default({});
 export type CoordCaller = z.infer<typeof coordCallerSchema>;
@@ -598,6 +615,97 @@ async function runUnsafe(req: CoordOpRequest, deps: CoordOpsDeps): Promise<Coord
           ? `Handed to yourself (handoff ${idOf(h.id)}${repo ? `, ${repo}` : ""}): one of your machines starts an agent for it if its policy allows, else it waits for your Accept on the board or in the menu bar.`
           : `Handed to ${to} (handoff ${idOf(h.id)}${repo ? `, ${repo}` : ""}). It waits for ${to}'s Accept on the board or in their menu bar; you'll get a message here when they take it and when it's done.`,
         data: { handoff: h },
+      };
+    }
+
+    case "fleet_status": {
+      const fleet = readFleetStatus();
+      return {
+        ok: true,
+        text: formatFleetSummary(fleet),
+        data: { fleet: fleet ?? null },
+      };
+    }
+
+    case "delegate": {
+      if (unavailable) return unavailable;
+      if ((req.caller.delegationDepth ?? 0) >= 1) {
+        return fail("Workmesh refused nested delegation: a delegated agent may not spawn another delegated agent.");
+      }
+      const task = scrubText(str(a.task, 16_000), { home, max: 4000 })?.text;
+      if (!task) return fail("`delegate` needs `task`: a self-contained task description.");
+      const scopeRaw = (str(a.scope, 20) ?? "self").toLowerCase();
+      if (scopeRaw !== "self" && scopeRaw !== "pool" && scopeRaw !== "person") {
+        return fail("`scope` must be `self`, `pool`, or `person`.");
+      }
+      const taskKindRaw = (str(a.taskKind, 30) ?? "coding").toLowerCase();
+      if (!HUB_TASK_KINDS.includes(taskKindRaw as HubTaskKind)) {
+        return fail(`\`taskKind\` must be one of: ${HUB_TASK_KINDS.join(", ")}.`);
+      }
+      const taskKind = taskKindRaw as HubTaskKind;
+      const modeRaw = (str(a.mode, 20) ?? "worktree").toLowerCase();
+      if (!HUB_POOL_MODES.includes(modeRaw as HubPoolMode)) {
+        return fail(`\`mode\` must be one of: ${HUB_POOL_MODES.join(", ")}.`);
+      }
+      const mode = modeRaw as HubPoolMode;
+      const providerRaw = (str(a.provider, 30) ?? "auto").toLowerCase();
+      let preferredAgent: HubHandoffAgent | undefined;
+      let routeNote = "";
+      if (providerRaw === "auto") {
+        const callerProvider = key?.startsWith("claude-code:") ? "claude" : key?.startsWith("codex:") ? "codex" : undefined;
+        const picked = pickBestProvider(readFleetStatus(), { taskKind, caller: callerProvider });
+        if (picked) {
+          preferredAgent = picked.provider;
+          routeNote = ` (routed to ${picked.provider}: ${picked.reason})`;
+        }
+      } else if (HUB_HANDOFF_AGENTS.includes(providerRaw as HubHandoffAgent)) {
+        preferredAgent = providerRaw as HubHandoffAgent;
+      } else {
+        return fail(`\`provider\` must be \`auto\` or one of: ${HUB_HANDOFF_AGENTS.join(", ")}.`);
+      }
+
+      let target: { person: string; email?: string } | undefined;
+      if (scopeRaw === "self") {
+        target = myself.person ? { person: myself.person, email: myself.email } : undefined;
+        if (!target) return fail("Workmesh doesn't know your identity on this hub yet.");
+      } else if (scopeRaw === "pool") {
+        target = { person: "pool" };
+      } else {
+        const toRaw = str(a.to, 200);
+        if (!toRaw) return fail("`delegate` with `scope: person` needs `to`: a teammate's display name or email.");
+        const resolved = personOf(toRaw, st, myself);
+        if (!resolved) return fail(`Workmesh doesn't know who ${toRaw} is on this team (\`roster\` lists people).`);
+        if ("error" in resolved) return fail(resolved.error);
+        target = resolved;
+      }
+
+      const repoArg = str(a.repo, 200);
+      const repo = repoArg ?? (cwd ? deps.classify(cwd)?.repo : undefined);
+      if (repo && !/^[\w.-]+\/[\w.-]+$/.test(repo)) return fail("`repo` is owner/name, e.g. b3-fun/workmesh.");
+      const issue = str(a.issue, 24)?.toUpperCase();
+      if (issue && !/^[A-Z][A-Z0-9]{0,9}-\d{1,6}$/.test(issue)) return fail("`issue` is a Linear issue id, like B3-123.");
+      const context = scrubText(str(a.context, 16_000), { home, max: 4000 })?.text;
+
+      const r = await coord.handoff({
+        action: "create",
+        ...(key ? { from: CoordClient.family(key) } : {}),
+        to: { person: target.person, ...(target.email ? { email: target.email } : {}) },
+        task,
+        ...(repo ? { repo } : {}),
+        ...(issue ? { issue } : {}),
+        ...(context ? { context } : {}),
+        ...(preferredAgent ? { preferredAgent } : {}),
+        taskKind,
+        mode,
+        ...(scopeRaw === "pool" ? { pool: true } : {}),
+      });
+      if (!r.ok) return delegateError(r);
+      if (!r.body.ok) return fail(`Workmesh: ${hubSaid(r.body.error, "the hub didn't take the delegated task")}`);
+      const h = r.body.handoff;
+      return {
+        ok: true,
+        text: `Delegated ${idOf(h.id)} (${mode}, ${taskKind}) to ${label(target.person)}${routeNote}. You'll hear here when it starts and finishes.`,
+        data: { handoff: h, routedProvider: preferredAgent ?? null },
       };
     }
 

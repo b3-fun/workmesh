@@ -672,6 +672,22 @@ struct MenuContent: View {
         case .people(let v, let people):
             let online = people.filter(\.online).count
             sectionHeader("Team", count: online > 0 ? "\(online) online" : nil)
+            if let pool = model.team?.pool, pool.enabled || pool.capacityShare != "off" {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(pool.enabled ? Color.green : Color.secondary.opacity(0.5))
+                        .frame(width: 6, height: 6)
+                    Text(pool.enabled
+                        ? "Delegation pool ON · \(pool.capacityShare) · \(pool.rulesCount) rule\(pool.rulesCount == 1 ? "" : "s")"
+                        : "Capacity sharing: \(pool.capacityShare) · pool OFF")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+            }
             if people.isEmpty {
                 Text("No teammates on this hub yet")
                     .font(.system(size: 11))

@@ -166,6 +166,12 @@ private struct Lossy<T: Decodable>: Decodable {
     init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }
 
+struct PoolSummary: Decodable, Equatable {
+    let enabled: Bool
+    let rulesCount: Int
+    let capacityShare: String
+}
+
 struct TeamState: Decodable {
     let enabled: Bool
     let hubUrl: String?
@@ -193,11 +199,13 @@ struct TeamState: Decodable {
     let coord: CoordState?
     /// v2: handoffs offered to me or running here, and pending approvals (absent from older daemons).
     let delegate: DelegateState?
+    /// Opt-in capacity sharing & delegation pool status (SPEC §62).
+    let pool: PoolSummary?
     /// Machines that joined my account in the last day and weren't dismissed (none from older daemons).
     let newDevices: [NewDeviceNotice]
 
     private enum K: String, CodingKey {
-        case enabled, hubUrl, boardUrl, hubName, deviceId, share, connected, halted, available, fetchedAt, error, pollMs, team, coord, delegate, newDevices
+        case enabled, hubUrl, boardUrl, hubName, deviceId, share, connected, halted, available, fetchedAt, error, pollMs, team, coord, delegate, pool, newDevices
     }
 
     init(from decoder: Decoder) throws {
@@ -217,6 +225,7 @@ struct TeamState: Decodable {
         team = c.lenient(TeamView.self, .team)
         coord = c.lenient(CoordState.self, .coord)
         delegate = c.lenient(DelegateState.self, .delegate)
+        pool = c.lenient(PoolSummary.self, .pool)
         newDevices = c.lossy(NewDeviceNotice.self, .newDevices)
     }
 

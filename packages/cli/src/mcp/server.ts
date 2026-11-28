@@ -283,14 +283,45 @@ export const MCP_TOOLS: readonly ToolDef[] = [
     },
     annotations: READ,
   },
+  // Multi-provider capacity & delegation mesh (SPEC §57–58)
+  {
+    name: "fleet_status",
+    description:
+      "Show live remaining headroom and reset countdowns across your local AI subscriptions (Claude Code, Codex, OpenCode, Antigravity, Grok Bot) from qswap, plus recommended providers by task kind.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: READ,
+  },
+  {
+    name: "delegate",
+    description:
+      "Delegate a bounded subtask to another model/agent on your own machines (`scope: self`), the opted-in team capacity pool (`scope: pool`), or a teammate (`scope: person`). With `provider: auto`, routes using qswap headroom and reset urgency across Claude, Codex, OpenCode, Antigravity, and Grok.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task: s("What to do, self-contained (up to 4,000 characters)."),
+        scope: { type: "string", enum: ["self", "pool", "person"], description: "Where to run: `self` (default: your own machines), `pool` (opted-in teammate pool), or `person`." },
+        to: s("When `scope` is `person`: teammate display name or email."),
+        taskKind: { type: "string", enum: ["coding", "review", "long_context", "research", "bulk"], description: "Task shape used for provider routing (default: coding)." },
+        provider: { type: "string", enum: ["auto", "claude", "codex", "opencode", "antigravity", "grok", "harness"], description: "Target provider or `auto` (default: auto via qswap)." },
+        mode: { type: "string", enum: ["readonly", "worktree"], description: "`worktree` (default: isolated git worktree PR task) or `readonly` (inspect/review/research only)." },
+        repo: s("owner/name (default: this session's repo)."),
+        issue: s("Linear issue id, e.g. B3-123 (optional)."),
+        context: s("Extra context: links, decisions, starting files (optional, up to 4,000 characters)."),
+      },
+      required: ["task"],
+      additionalProperties: false,
+    },
+    annotations: TEAM_WRITE,
+  },
 ];
 
 export const MCP_INSTRUCTIONS =
   "Workmesh connects this session to your team's agents. Claim the Linear issue you work on, lease files before larger " +
   "edits (edits to another session's leased files are refused), read your inbox, and message a file's holder with " +
-  "`send` instead of editing around them. `handoff` gives a task to a teammate's (or your other machine's) agent; " +
-  "`ask` asks the team board what teammates' agents are doing. `recall` searches the team's memory (decisions, " +
-  "conventions, gotchas) and `remember` proposes what the team should keep.";
+  "`send` instead of editing around them. `fleet_status` shows remaining quota across Claude, Codex, OpenCode, Antigravity, " +
+  "and Grok; `delegate` routes a subtask to whichever subscription has the most headroom (or to the opted-in team pool). " +
+  "`handoff` gives a task to a teammate's (or your other machine's) agent; `ask` asks the team board what teammates' " +
+  "agents are doing. `recall` searches the team's memory (decisions, conventions, gotchas) and `remember` proposes what the team should keep.";
 
 export interface McpServerOptions {
   input: NodeJS.ReadableStream;

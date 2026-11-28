@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { HUB_DELEGATE_NOTE_MAX } from "@workmesh/protocol";
-import type { HubHandoffAccepted } from "@workmesh/protocol";
+import type { HubHandoffAccepted, HubHandoffAgent } from "@workmesh/protocol";
 import { QUOTE_MARK, cleanText, oneLine } from "../lib/untrusted";
 
 /**
@@ -19,7 +19,7 @@ export const NOTHING_VISIBLE = "(no visible text)";
 /** What accepting a handoff would start on this machine, as the runner would do it (daemon/handoff-runner.ts). */
 export interface HandoffPlan {
   /** The agent CLI that would run it; absent when none is installed here. */
-  agent?: "claude" | "codex";
+  agent?: HubHandoffAgent;
   /** Claude Code's `--permission-mode` for the run. Codex has none. */
   permissionMode?: string;
   /**
@@ -36,14 +36,28 @@ export interface HandoffPlan {
 /** What Accept starts, as the person is told: the CLI prints `text`, the menu bar shows it. */
 export interface HandoffStart {
   /** The agent that starts; absent when this machine can't run the handoff. */
-  agent?: "claude" | "codex";
+  agent?: HubHandoffAgent;
   /** Its Claude Code permission mode. */
   permissionMode?: string;
   /** One line, ready to show. */
   text: string;
 }
 
-const AGENT_NAMES = { claude: "Claude Code", codex: "Codex" } as const;
+const AGENT_NAMES: Record<HubHandoffAgent, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  opencode: "OpenCode",
+  gemini: "Gemini CLI",
+  antigravity: "Antigravity",
+  grok: "Grok",
+  cursor: "Cursor",
+  copilot: "GitHub Copilot",
+  windsurf: "Windsurf",
+  amp: "Amp",
+  aider: "Aider",
+  cline: "Cline",
+  harness: "Harness",
+};
 
 /**
  * The line that says what Accept starts: which agent, in which permission mode, where. `lead` opens the sentence
@@ -156,7 +170,12 @@ export function handoffListLine(
   const more = hasMoreText(h) ? ` [more: workmesh handoffs show ${h.id}]` : "";
   const run = o.runHere ? ` [workmesh handoffs run ${h.id}]` : "";
   const request = h.request ? ` · request${h.request.size ? `, ${h.request.size}` : ""}` : "";
-  const rule = h.acceptedBy === "rule" ? " · accepted by a standing rule" : "";
+  const rule =
+    h.acceptedBy === "pool"
+      ? " · accepted by your pool"
+      : h.acceptedBy === "rule"
+        ? " · accepted by a standing rule"
+        : "";
   return `- ${h.id} · ${o.runHere ?? h.status} · ${who}${where ? ` · ${where}` : ""}${request}${rule}${here}: ${task}${note}${more}${run}`;
 }
 

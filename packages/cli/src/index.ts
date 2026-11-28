@@ -30,6 +30,7 @@ import { runEmit } from "./commands/emit";
 import { runHook } from "./commands/hook";
 import { runInit } from "./commands/init";
 import { runHandoffPolicy, runRequestRule, runRoots } from "./commands/roots";
+import { runCapacity, runPool, runPoolRule } from "./commands/mesh";
 import { runWake, runWakeWait } from "./commands/wake";
 import {
   EXAMPLE_HUB_URL,
@@ -513,6 +514,35 @@ program
   .command("mcp")
   .description("Serve the team coordination tools over MCP (stdio), for Claude Code and Codex")
   .action(wrap(runMcp));
+
+program
+  .command("capacity")
+  .description("View local qswap subscription headroom and opt in to sharing capacity with your team hub")
+  .argument("[action]", "status | share")
+  .argument("[level]", "with share: off | availability | detailed")
+  .option("--json", "machine-readable output")
+  .action(wrap((action: string | undefined, level: string | undefined, opts: { json?: boolean }) => runCapacity(action, level, opts)));
+
+const poolCmd = program
+  .command("pool")
+  .description("Opt in to letting teammates delegate worktree PR and read-only tasks to your spare subscriptions")
+  .argument("[action]", "status | on | off")
+  .option("--json", "machine-readable output")
+  .action(wrap((action: string | undefined, opts: { json?: boolean }) => runPool(action, opts)));
+
+poolCmd
+  .command("rule")
+  .description("Manage local capacity pool rules (terminal-only consent; checked against live qswap headroom)")
+  .argument("[action]", "list | add | remove")
+  .argument("[n]", "rule number to remove")
+  .option("--from <team|email>", "teammate email or `team` (default: team)")
+  .option("--providers <list>", "comma-separated providers: claude,codex,opencode,antigravity,grok")
+  .option("--modes <list>", "comma-separated modes: readonly,worktree (default: readonly,worktree)")
+  .option("--repo <owner/name>", "optional repo or org/* filter")
+  .option("--min-headroom <pct>", "reserve headroom % kept for yourself (default: 30)")
+  .option("--expiring-floor <pct>", "lower reserve % when quota resets within 12h or has expiring credits (default: 10)")
+  .option("--per-day <n>", "max pooled tasks per day (default: 10)")
+  .action(wrap((action: string | undefined, n: string | undefined, opts: Parameters<typeof runPoolRule>[2]) => runPoolRule(action, n, opts)));
 
 program
   .command("doctor")

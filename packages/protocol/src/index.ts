@@ -7,8 +7,10 @@ import {
   hubPersonEmailAcceptSchema,
   hubPersonEmailSchema,
 } from "./fields.js";
+import { hubCapacityReportAcceptSchema, hubCapacityReportSchema } from "./capacity.js";
 
 export { HUB_ISSUE_RE, HUB_PERSON_EMAIL_MAX, HUB_PERSON_EMAIL_RE, HUB_REPO_RE, hubPersonEmailAcceptSchema, hubPersonEmailSchema };
+export * from "./capacity.js";
 
 /**
  * Workmesh relay ↔ hub wire protocol, v1 (docs/SPEC.md §3 and §8–10).
@@ -417,6 +419,8 @@ export const hubIngestRequestSchema = z.strictObject({
   person: hubPersonSchema.optional(),
   /** v0.10 (SPEC §24): the relay's name and version, `workmesh/0.10.0`, on every request. */
   client: clientName.optional(),
+  /** SPEC §57: opt-in fleet capacity summary from qswap (absent unless the person opted in). */
+  capacity: hubCapacityReportSchema.optional(),
   /** Heartbeat: `sessions` is the complete shared set for this device. */
   full: z.boolean(),
   sessions: z.array(hubSessionUpsertSchema).max(HUB_MAX_SESSIONS_PER_REQUEST),
@@ -643,6 +647,8 @@ export const hubIngestAcceptSchema = z.object({
   ).catch(undefined),
   /** v0.10: any short string is kept (a relay from another vendor names itself its own way); a bad one is absent. */
   client: opt(z.string().trim().min(1).max(64)).catch(undefined),
+  /** SPEC §57: malformed capacity report is dropped on its own, never a 400. */
+  capacity: opt(hubCapacityReportAcceptSchema).catch(undefined),
   full: z.boolean().default(false),
   sessions: z.array(hubSessionUpsertAcceptSchema).max(HUB_MAX_SESSIONS_PER_REQUEST).default([]),
   events: z.array(hubActivityEventAcceptSchema).max(HUB_MAX_EVENTS_PER_REQUEST).default([]),

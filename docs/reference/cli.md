@@ -61,6 +61,9 @@ For what to run when, start with the [guide](../guide/getting-started.md).
 | [`workmesh approvals`](#workmesh-approvals) | Approvals your agents asked for, and ones you can decide; approve or deny one |
 | [`workmesh wake`](#workmesh-wake) | Show or set whether an idle session wakes (on by default), and whose messages may wake it (replies by default) |
 | [`workmesh mcp`](#workmesh-mcp) | Serve the team coordination tools over MCP (stdio), for Claude Code and Codex |
+| [`workmesh capacity`](#workmesh-capacity) | View local qswap subscription headroom and opt in to sharing capacity with your team hub |
+| [`workmesh pool`](#workmesh-pool) | Opt in to letting teammates delegate worktree PR and read-only tasks to your spare subscriptions |
+| [`workmesh pool rule`](#workmesh-pool-rule) | Manage local capacity pool rules (terminal-only consent; checked against live qswap headroom) |
 | [`workmesh doctor`](#workmesh-doctor) | Check config, daemon, relay, and hook installs |
 
 ## workmesh
@@ -71,106 +74,116 @@ Usage: workmesh [options] [command]
 Your coding agents, live on your team's board and in your Slack status.
 
 Options:
-  -V, --version                      output the version number
-  -h, --help                         display help for command
+  -V, --version                        output the version number
+  -h, --help                           display help for command
 
 Commands:
-  init [options] <hub-url>           Set this machine up for a team hub in one
-                                     go: hooks, MCP tools, the daemon, and
-                                     pairing (safe to run again)
-  update [options]                   Install the newest Workmesh the way it was
-                                     installed, refresh hooks, MCP and the
-                                     daemon, roll back if it fails (safe to run
-                                     again)
-  setup [options]                    Connect Slack, pick a privacy level, and
-                                     install agent hooks
-  service                            Run the daemon under launchd (macOS) or
-                                     systemd --user (Linux), so it comes back
-                                     after a crash, kill or reboot
-  uninstall [options]                Remove Workmesh's hooks and MCP server from
-                                     Claude Code and Codex, and its daemon
-                                     service, keeping every other hook (backs up
-                                     each file)
-  start [options]                    Run the sync daemon (foreground unless
-                                     --detach)
-  stop                               Stop the background daemon and wait for it
-                                     to exit (clears your Slack status)
-  restart                            Stop the daemon, wait for it to exit, and
-                                     start it again in the background
-  status [options]                   Show live agent sessions and the status
-                                     Workmesh would set
-  emit [options]                     Send a custom session event to the daemon
-  report [options]                   Report a fan-out of concurrent agents
-                                     (workflows, CI) so "N agents working" is
-                                     accurate
-  hook <source> [payload]            Adapter entrypoint for agent hooks — never
-                                     fails the host session
-  pause [options]                    Pause status updates and clear your Slack
-                                     status
-  resume                             Resume status updates
-  unlink                             Revoke this device on the relay and remove
-                                     the saved token
-  hub                                Show your agent sessions on a team hub (the
-                                     Workmesh board), from repos you share:
-                                     metadata, or the conversation too
-  leases [options]                   Active file leases on your team: who holds
-                                     which paths, for how long
-  lease [options] <paths...>         Lease files, directories or globs for this
-                                     agent session (edits by other sessions are
-                                     refused)
-  unlease [options] [paths...]       Release this agent session's leases (the
-                                     paths given, or all of them)
-  claims [options]                   Linear issues claimed by your team's agents
-  claim [options] <issue>            Claim a Linear issue for this agent session
-                                     (--release to let it go)
-  send [options] <to> <text...>      Send a message. Teammates review it before
-                                     delivery unless they trust the sender.
-  inbox [options] [action] [id]      Messages waiting for this machine's agents
-                                     (or, inside an agent session, for that
-                                     session); deliver or drop one held for you
-  note [options] <text...>           Leave a note every teammate's agent can
-                                     read
-  notes [options]                    Your team's newest shared notes
-  ask [options] <question...>        Ask the team board about teammates' agents,
-                                     in plain words (read-only)
-  remember [options] <title...>      Write down a decision, convention, gotcha,
-                                     rule or fact for your team's agents (a
-                                     person accepts it on the board)
-  recall [options] <words...>        Search your team's accepted memories (this
-                                     repo's first)
-  forget [options] <id>              Propose retiring a team memory that no
-                                     longer holds (a person retires it on the
-                                     board)
-  memories [options]                 Your team's accepted memories, newest first
-  whoami [options]                   Who you are on the team hub, and which
-                                     agent session this is
-  handoff [options] <to> <task...>   Hand a task to a teammate (or `me`: one of
-                                     your other machines); their machine starts
-                                     an agent for it once they accept
-  handoffs [options] [action] [id]   Handoffs offered to you and sent by you;
-                                     read one in full, accept or decline it, or
-                                     run one accepted elsewhere
-  review [options] [pr]              Ask a teammate's agent for a read-only
-                                     review of a PR (never an approval); the
-                                     findings come back to the asking session
-  reviews [options] [action] [id]    Agent reviews you asked for and ones asked
-                                     of you; read one's findings
-  roots [action] [dir]               Where your repos live, so a handoff finds
-                                     its checkout here (repos your sessions
-                                     worked in count too)
-  gates [options] [action] [gates]   Approval gates on your own agents: they ask
-                                     before they merge, deploy, publish,
-                                     force-push or spend
-  approvals [options] [action] [id]  Approvals your agents asked for, and ones
-                                     you can decide; approve or deny one
-  wake [value]                       Show or set whether an idle session wakes
-                                     (on by default), and whose messages may
-                                     wake it (replies by default)
-  mcp                                Serve the team coordination tools over MCP
-                                     (stdio), for Claude Code and Codex
-  doctor [options]                   Check config, daemon, relay, and hook
-                                     installs
-  help [command]                     display help for command
+  init [options] <hub-url>             Set this machine up for a team hub in one
+                                       go: hooks, MCP tools, the daemon, and
+                                       pairing (safe to run again)
+  update [options]                     Install the newest Workmesh the way it
+                                       was installed, refresh hooks, MCP and the
+                                       daemon, roll back if it fails (safe to
+                                       run again)
+  setup [options]                      Connect Slack, pick a privacy level, and
+                                       install agent hooks
+  service                              Run the daemon under launchd (macOS) or
+                                       systemd --user (Linux), so it comes back
+                                       after a crash, kill or reboot
+  uninstall [options]                  Remove Workmesh's hooks and MCP server
+                                       from Claude Code and Codex, and its
+                                       daemon service, keeping every other hook
+                                       (backs up each file)
+  start [options]                      Run the sync daemon (foreground unless
+                                       --detach)
+  stop                                 Stop the background daemon and wait for
+                                       it to exit (clears your Slack status)
+  restart                              Stop the daemon, wait for it to exit, and
+                                       start it again in the background
+  status [options]                     Show live agent sessions and the status
+                                       Workmesh would set
+  emit [options]                       Send a custom session event to the daemon
+  report [options]                     Report a fan-out of concurrent agents
+                                       (workflows, CI) so "N agents working" is
+                                       accurate
+  hook <source> [payload]              Adapter entrypoint for agent hooks —
+                                       never fails the host session
+  pause [options]                      Pause status updates and clear your Slack
+                                       status
+  resume                               Resume status updates
+  unlink                               Revoke this device on the relay and
+                                       remove the saved token
+  hub                                  Show your agent sessions on a team hub
+                                       (the Workmesh board), from repos you
+                                       share: metadata, or the conversation too
+  leases [options]                     Active file leases on your team: who
+                                       holds which paths, for how long
+  lease [options] <paths...>           Lease files, directories or globs for
+                                       this agent session (edits by other
+                                       sessions are refused)
+  unlease [options] [paths...]         Release this agent session's leases (the
+                                       paths given, or all of them)
+  claims [options]                     Linear issues claimed by your team's
+                                       agents
+  claim [options] <issue>              Claim a Linear issue for this agent
+                                       session (--release to let it go)
+  send [options] <to> <text...>        Send a message. Teammates review it
+                                       before delivery unless they trust the
+                                       sender.
+  inbox [options] [action] [id]        Messages waiting for this machine's
+                                       agents (or, inside an agent session, for
+                                       that session); deliver or drop one held
+                                       for you
+  note [options] <text...>             Leave a note every teammate's agent can
+                                       read
+  notes [options]                      Your team's newest shared notes
+  ask [options] <question...>          Ask the team board about teammates'
+                                       agents, in plain words (read-only)
+  remember [options] <title...>        Write down a decision, convention,
+                                       gotcha, rule or fact for your team's
+                                       agents (a person accepts it on the board)
+  recall [options] <words...>          Search your team's accepted memories
+                                       (this repo's first)
+  forget [options] <id>                Propose retiring a team memory that no
+                                       longer holds (a person retires it on the
+                                       board)
+  memories [options]                   Your team's accepted memories, newest
+                                       first
+  whoami [options]                     Who you are on the team hub, and which
+                                       agent session this is
+  handoff [options] <to> <task...>     Hand a task to a teammate (or `me`: one
+                                       of your other machines); their machine
+                                       starts an agent for it once they accept
+  handoffs [options] [action] [id]     Handoffs offered to you and sent by you;
+                                       read one in full, accept or decline it,
+                                       or run one accepted elsewhere
+  review [options] [pr]                Ask a teammate's agent for a read-only
+                                       review of a PR (never an approval); the
+                                       findings come back to the asking session
+  reviews [options] [action] [id]      Agent reviews you asked for and ones
+                                       asked of you; read one's findings
+  roots [action] [dir]                 Where your repos live, so a handoff finds
+                                       its checkout here (repos your sessions
+                                       worked in count too)
+  gates [options] [action] [gates]     Approval gates on your own agents: they
+                                       ask before they merge, deploy, publish,
+                                       force-push or spend
+  approvals [options] [action] [id]    Approvals your agents asked for, and ones
+                                       you can decide; approve or deny one
+  wake [value]                         Show or set whether an idle session wakes
+                                       (on by default), and whose messages may
+                                       wake it (replies by default)
+  mcp                                  Serve the team coordination tools over
+                                       MCP (stdio), for Claude Code and Codex
+  capacity [options] [action] [level]  View local qswap subscription headroom
+                                       and opt in to sharing capacity with your
+                                       team hub
+  pool [options] [action]              Opt in to letting teammates delegate
+                                       worktree PR and read-only tasks to your
+                                       spare subscriptions
+  doctor [options]                     Check config, daemon, relay, and hook
+                                       installs
+  help [command]                       display help for command
 ```
 
 ## workmesh init
@@ -1051,6 +1064,69 @@ Serve the team coordination tools over MCP (stdio), for Claude Code and Codex
 
 Options:
   -h, --help  display help for command
+```
+
+## workmesh capacity
+
+```text
+Usage: workmesh capacity [options] [action] [level]
+
+View local qswap subscription headroom and opt in to sharing capacity with your
+team hub
+
+Arguments:
+  action      status | share
+  level       with share: off | availability | detailed
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+```
+
+## workmesh pool
+
+```text
+Usage: workmesh pool [options] [command] [action]
+
+Opt in to letting teammates delegate worktree PR and read-only tasks to your
+spare subscriptions
+
+Arguments:
+  action                       status | on | off
+
+Options:
+  --json                       machine-readable output
+  -h, --help                   display help for command
+
+Commands:
+  rule [options] [action] [n]  Manage local capacity pool rules (terminal-only
+                               consent; checked against live qswap headroom)
+```
+
+## workmesh pool rule
+
+```text
+Usage: workmesh pool rule [options] [action] [n]
+
+Manage local capacity pool rules (terminal-only consent; checked against live
+qswap headroom)
+
+Arguments:
+  action                  list | add | remove
+  n                       rule number to remove
+
+Options:
+  --from <team|email>     teammate email or `team` (default: team)
+  --providers <list>      comma-separated providers:
+                          claude,codex,opencode,antigravity,grok
+  --modes <list>          comma-separated modes: readonly,worktree (default:
+                          readonly,worktree)
+  --repo <owner/name>     optional repo or org/* filter
+  --min-headroom <pct>    reserve headroom % kept for yourself (default: 30)
+  --expiring-floor <pct>  lower reserve % when quota resets within 12h or has
+                          expiring credits (default: 10)
+  --per-day <n>           max pooled tasks per day (default: 10)
+  -h, --help              display help for command
 ```
 
 ## workmesh doctor

@@ -2,10 +2,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { DEFAULT_DAEMON_PORT, DEFAULT_DEBOUNCE_MS, DEFAULT_STATUS_TTL_SEC } from "@workmesh/core";
-import { HUB_DEVICE_TOKEN_RE, HUB_GITHUB_LOGIN_RE, HUB_REPO_RE, hubProjectRuleSchema, hubRequestSizeSchema, hubShareLevelSchema } from "@workmesh/protocol";
+import {
+  HUB_DEVICE_TOKEN_RE,
+  HUB_GITHUB_LOGIN_RE,
+  HUB_REPO_RE,
+  hubCapacityProviderSchema,
+  hubCapacityShareSchema,
+  hubHandoffAgentSchema,
+  hubPoolModeSchema,
+  hubProjectRuleSchema,
+  hubRequestSizeSchema,
+  hubShareLevelSchema,
+} from "@workmesh/protocol";
 import { REQUEST_RULES_MAX, REQUEST_RULE_PER_DAY_MAX, type RequestRule } from "../daemon/request-rules";
+import { POOL_RULES_MAX, POOL_RULE_PER_DAY_MAX, type PoolRule, type PoolSettings } from "../daemon/pool-rules";
 import type { FormatOptions } from "@workmesh/core";
-import type { HubShareLevel } from "@workmesh/protocol";
+import type { HubCapacityShareLevel, HubHandoffAgent, HubShareLevel } from "@workmesh/protocol";
 import { envSetting } from "./names";
 import { configPath } from "./paths";
 
@@ -15,6 +27,26 @@ export const requestRuleSchema = z.object({
   repo: z.string().max(200).regex(HUB_REPO_RE).optional(),
   maxSize: hubRequestSizeSchema,
   perDay: z.number().int().min(1).max(REQUEST_RULE_PER_DAY_MAX),
+});
+
+/** One local opt-in capacity pool rule (SPEC §58), added only at the owner's terminal. */
+export const poolRuleSchema = z.object({
+  from: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .max(254)
+    .refine((v) => v === "team" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "from must be `team` or an email"),
+  providers: z.array(hubCapacityProviderSchema).min(1).max(8),
+  modes: z.array(hubPoolModeSchema).min(1).max(2),
+  repo: z
+    .string()
+    .max(200)
+    .refine((v) => HUB_REPO_RE.test(v) || /^[\w.-]+\/\*$/.test(v), "repo must be owner/name or owner/*")
+    .optional(),
+  minHeadroom: z.number().min(0).max(95).default(30),
+  expiringFloor: z.number().min(0).max(95).default(10),
+  perDay: z.number().int().min(1).max(POOL_RULE_PER_DAY_MAX).default(10),
 });
 
 const templatesSchema = z
@@ -124,11 +156,31 @@ export const configSchema = z.object({
           projectsDir: z.string().optional(),
         })
         .default({ enabled: true }),
+      opencode: z
+        .object({
+          enabled: z.boolean().default(true),
+          dbPath: z.string().optional(),
+        })
+        .default({ enabled: true }),
+      gemini: z
+        .object({
+          enabled: z.boolean().default(true),
+          dir: z.string().optional(),
+        })
+        .default({ enabled: true }),
+      harness: z
+        .object({
+          enabled: z.boolean().default(true),
+        })
+        .default({ enabled: true }),
     })
     .default({
       claudeCode: { enabled: true },
       codex: { enabled: true },
       workflow: { enabled: true },
+      opencode: { enabled: true },
+      gemini: { enabled: true },
+      harness: { enabled: true },
     }),
   autoStartDaemon: z.boolean().default(true),
   /**
@@ -150,8 +202,8 @@ export const configSchema = z.object({
        * word that you accepted it.
        */
       runAccepted: z.enum(["confirm", "auto"]).optional().catch(undefined),
-      /** The agent CLI that runs handoffs (default: claude when found, else codex). */
-      agent: z.enum(["claude", "codex"]).optional().catch(undefined),
+      /** The agent CLI that runs handoffs (default: auto by qswap headroom, else claude/codex/opencode). */
+      agent: hubHandoffAgentSchema.optional().catch(undefined),
       /** Dirs whose git repos count as checkouts for handoffs (`workmesh roots add <dir>`). */
       roots: z.array(z.string()).default([]).catch([]),
       /** Run each handoff in a new git worktree on its own branch (default true). */
@@ -270,6 +322,32 @@ export const configSchema = z.object({
       auto: z.boolean().optional().catch(undefined),
       scope: z.enum(["patch", "minor"]).optional().catch(undefined),
       waitHours: z.number().min(0).max(MAX_UPDATE_WAIT_HOURS).optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+  /**
+   * Opt-in fleet capacity reporting (SPEC §57): off by default. Set only at the person's terminal
+   * (`workmesh capacity share off|availability|detailed`).
+   */
+  capacity: z
+    .object({
+      share: hubCapacityShareSchema.optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+  /**
+   * Opt-in team delegation pool (SPEC §58): lets teammates delegate worktree PR and readonly tasks
+   * to this machine's spare subscriptions when live qswap headroom stays above the local reserve floor.
+   */
+  pool: z
+    .object({
+      enabled: z.boolean().optional().catch(undefined),
+      rules: z
+        .preprocess(
+          (v) => (Array.isArray(v) ? v.filter((r) => poolRuleSchema.safeParse(r).success).slice(0, POOL_RULES_MAX) : undefined),
+          z.array(poolRuleSchema).optional(),
+        )
+        .catch(undefined),
     })
     .optional()
     .catch(undefined),
@@ -447,11 +525,13 @@ export function messageSettings(config: Pick<Config, "messages">): MessageSettin
   return { wake: m?.wake ?? "replies", hold: m?.hold ?? "bypass", holdMinutes: m?.holdMinutes ?? 60, from: m?.from ?? "team" };
 }
 
-export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gates"> & Partial<Pick<Config, "reviews">>): {
+export function delegateSettings(
+  config: Pick<Config, "handoffs" | "wake" | "gates"> & Partial<Pick<Config, "reviews" | "pool">>,
+): {
   wake: boolean;
   accept: "ask" | "auto-self" | "never";
   runAccepted: "confirm" | "auto";
-  agent?: "claude" | "codex";
+  agent?: HubHandoffAgent;
   roots: string[];
   worktree: boolean;
   maxRunning: number;
@@ -462,6 +542,7 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
   customGates: string[];
   requestRules: RequestRule[];
   reviewAccept: "auto" | "ask" | "never";
+  pool: PoolSettings;
 } {
   const h = config.handoffs;
   return {
@@ -479,6 +560,18 @@ export function delegateSettings(config: Pick<Config, "handoffs" | "wake" | "gat
     customGates: config.gates?.custom ?? [],
     requestRules: h?.requestRules ?? [],
     reviewAccept: config.reviews?.accept ?? "ask",
+    pool: poolSettings(config),
+  };
+}
+
+export function capacityShareLevel(config: Partial<Pick<Config, "capacity">>): HubCapacityShareLevel {
+  return config.capacity?.share ?? "off";
+}
+
+export function poolSettings(config: Partial<Pick<Config, "pool">>): PoolSettings {
+  return {
+    enabled: config.pool?.enabled === true,
+    rules: (config.pool?.rules ?? []) as PoolRule[],
   };
 }
 
@@ -511,7 +604,8 @@ export interface ReviewSettings {
 
 export function reviewSettings(config: Pick<Config, "reviews" | "handoffs">): ReviewSettings {
   const r = config.reviews;
-  const agent = r?.agent ?? config.handoffs?.agent;
+  const fallbackAgent = config.handoffs?.agent === "claude" || config.handoffs?.agent === "codex" ? config.handoffs.agent : undefined;
+  const agent = r?.agent ?? fallbackAgent;
   const model = r?.model ?? config.handoffs?.model;
   return {
     accept: r?.accept ?? "ask",

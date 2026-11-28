@@ -1,9 +1,22 @@
-export type HandoffAgentName = "claude" | "codex";
+import type { HubHandoffAgent } from "@workmesh/protocol";
+
+export type HandoffAgentName = HubHandoffAgent;
 
 /** What each agent tool signs in with. */
 const SIGN_IN: Record<HandoffAgentName, readonly string[]> = {
   claude: ["CLAUDE_CONFIG_DIR", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
   codex: ["CODEX_HOME", "OPENAI_BASE_URL", "OPENAI_API_KEY"],
+  opencode: ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"],
+  gemini: ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT", "GEMINI_MODEL"],
+  antigravity: ["GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTIGRAVITY_LS_ADDRESS", "ANTIGRAVITY_CSRF_TOKEN"],
+  grok: ["XAI_API_KEY", "GROK_API_KEY", "GROK_BASE_URL"],
+  cursor: ["CURSOR_API_KEY", "CURSOR_AUTH_TOKEN"],
+  copilot: ["GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN"],
+  windsurf: ["WINDSURF_API_KEY", "CODEIUM_API_KEY"],
+  amp: ["AMP_API_KEY", "SRC_ACCESS_TOKEN"],
+  aider: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "XAI_API_KEY"],
+  cline: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"],
+  harness: ["HARNESS_HOME", "HARNESS_MACHINE"],
 };
 
 /** The cloud credentials Claude Code signs in with when it is told to use that provider. */

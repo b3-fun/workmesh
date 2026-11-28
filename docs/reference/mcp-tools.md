@@ -13,9 +13,11 @@ What an agent reads when it connects (the server's `instructions`):
 
 > Workmesh connects this session to your team's agents. Claim the Linear issue you work on, lease files before
 > larger edits (edits to another session's leased files are refused), read your inbox, and message a file's
-> holder with `send` instead of editing around them. `handoff` gives a task to a teammate's (or your other
-> machine's) agent; `ask` asks the team board what teammates' agents are doing. `recall` searches the team's
-> memory (decisions, conventions, gotchas) and `remember` proposes what the team should keep.
+> holder with `send` instead of editing around them. `fleet_status` shows remaining quota across Claude, Codex,
+> OpenCode, Antigravity, and Grok; `delegate` routes a subtask to whichever subscription has the most headroom
+> (or to the opted-in team pool). `handoff` gives a task to a teammate's (or your other machine's) agent; `ask`
+> asks the team board what teammates' agents are doing. `recall` searches the team's memory (decisions,
+> conventions, gotchas) and `remember` proposes what the team should keep.
 
 | Tool | Kind | What it does |
 |---|---|---|
@@ -39,6 +41,8 @@ What an agent reads when it connects (the server's `instructions`):
 | [`request_review`](#requestreview) | writes to the hub | Ask a teammate's agent to review a PR (read-only, on their machine; never an approval). Default: the PR this session opened. The findings come back to this session as a Workmesh message; fix what holds up and ask again for the next round (3 at most). |
 | [`reviews`](#reviews) | reads | Agent reviews this session asked for, one line each; with `id`, one review's findings in full. |
 | [`ask`](#ask) | reads | Ask the team board about teammates' agents and work, in plain words ("what is An's agent doing on B3-7167?", "who touched apps/hub today?"). Answered from what the board shows (states, summaries, files, claims, leases, notes), never other sessions' prompts or messages. Read-only; a few questions a minute. |
+| [`fleet_status`](#fleetstatus) | reads | Show live remaining headroom and reset countdowns across your local AI subscriptions (Claude Code, Codex, OpenCode, Antigravity, Grok Bot) from qswap, plus recommended providers by task kind. |
+| [`delegate`](#delegate) | writes to the hub | Delegate a bounded subtask to another model/agent on your own machines (`scope: self`), the opted-in team capacity pool (`scope: pool`), or a teammate (`scope: person`). With `provider: auto`, routes using qswap headroom and reset urgency across Claude, Codex, OpenCode, Antigravity, and Grok. |
 
 ## whoami
 
@@ -264,3 +268,29 @@ Read-only.
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `question` | string | yes | The question (up to 2,000 characters). |
+
+## fleet_status
+
+Show live remaining headroom and reset countdowns across your local AI subscriptions (Claude Code, Codex, OpenCode, Antigravity, Grok Bot) from qswap, plus recommended providers by task kind.
+
+Read-only.
+
+No parameters.
+
+## delegate
+
+Delegate a bounded subtask to another model/agent on your own machines (`scope: self`), the opted-in team capacity pool (`scope: pool`), or a teammate (`scope: person`). With `provider: auto`, routes using qswap headroom and reset urgency across Claude, Codex, OpenCode, Antigravity, and Grok.
+
+Changes team state on the hub; destructive: no.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `task` | string | yes | What to do, self-contained (up to 4,000 characters). |
+| `scope` | `self` \| `pool` \| `person` | no | Where to run: `self` (default: your own machines), `pool` (opted-in teammate pool), or `person`. |
+| `to` | string | no | When `scope` is `person`: teammate display name or email. |
+| `taskKind` | `coding` \| `review` \| `long_context` \| `research` \| `bulk` | no | Task shape used for provider routing (default: coding). |
+| `provider` | `auto` \| `claude` \| `codex` \| `opencode` \| `antigravity` \| `grok` \| `harness` | no | Target provider or `auto` (default: auto via qswap). |
+| `mode` | `readonly` \| `worktree` | no | `worktree` (default: isolated git worktree PR task) or `readonly` (inspect/review/research only). |
+| `repo` | string | no | owner/name (default: this session's repo). |
+| `issue` | string | no | Linear issue id, e.g. B3-123 (optional). |
+| `context` | string | no | Extra context: links, decisions, starting files (optional, up to 4,000 characters). |

@@ -403,7 +403,10 @@ describe("handoff runner (SPEC §31)", () => {
     // Codex takes no Claude Code permission mode; a handoff with no repo runs in a scratch directory.
     expect(make({}, ["codex"]).plan({ ...HANDOFF, repo: undefined })).toEqual({ agent: "codex", where: "scratch" });
     expect(make({ agent: "codex" }, ["claude", "codex"]).plan(HANDOFF)).toEqual({ agent: "codex", where: "worktree" });
-    expect(make({}, []).plan(HANDOFF)).toEqual({ where: "worktree", cannot: "neither claude nor codex is installed here" });
+    expect(make({}, []).plan(HANDOFF)).toEqual({
+      where: "worktree",
+      cannot: "no supported agent CLI (claude, codex, opencode, harness) is installed here",
+    });
     expect(make({}, ["claude"]).plan({ ...HANDOFF, repo: "b3-fun/nope" })).toMatchObject({ agent: "claude", cannot: expect.stringContaining("no checkout of b3-fun/nope here") });
     expect(hub.calls).toEqual([]);
     expect(fs.existsSync(path.join(home, "handoffs"))).toBe(false);

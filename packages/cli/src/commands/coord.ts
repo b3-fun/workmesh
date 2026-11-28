@@ -14,12 +14,15 @@ import { confirm, red, yellow } from "../lib/ui";
 
 /** This process as the daemon needs to find its session. */
 export function callerOf(client: string): CoordCaller {
+  const depthRaw = process.env.WORKMESH_DELEGATION_DEPTH;
+  const depth = depthRaw ? Number.parseInt(depthRaw, 10) : undefined;
   return {
     ppid: process.ppid > 1 ? process.ppid : undefined,
     cwd: process.cwd(),
     claudeSessionId: process.env.CLAUDE_CODE_SESSION_ID || undefined,
     codexThreadId: process.env.CODEX_THREAD_ID || undefined,
     client,
+    ...(depth !== undefined && Number.isInteger(depth) && depth >= 0 && depth <= 10 ? { delegationDepth: depth } : {}),
   };
 }
 

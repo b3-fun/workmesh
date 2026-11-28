@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { HUB_ISSUE_RE, HUB_REPO_RE, hubPersonEmailAcceptSchema, hubPersonEmailSchema } from "./fields.js";
 import { hubHandoffKindSchema, hubHandoffReviewAcceptSchema, hubHandoffReviewSchema } from "./review.js";
+import { hubHandoffAgentSchema, hubPoolModeSchema, hubTaskKindSchema } from "./capacity.js";
 
 /**
  * v2 Delegate (docs/SPEC.md §30): handoffs to a person's runner, approval gates on an agent's risky actions, and
@@ -285,11 +286,16 @@ export const hubHandoffSchema = z.object({
    */
   request: z.object({ id: recordId, size: hubRequestSizeSchema.optional() }).optional(),
   /**
-   * `rule`: the machine that accepted it said one of its own standing rules did (§55), and `rule` gives that rule in
-   * its words. Only that machine's record of the accept starts anything; for every other reader this is information.
+   * `rule` | `pool`: the machine that accepted it said one of its own standing rules or capacity pool rules did
+   * (§55, §58), and `rule` gives that rule in its words.
    */
-  acceptedBy: z.literal("rule").optional(),
+  acceptedBy: z.enum(["rule", "pool"]).optional(),
   rule: z.string().min(1).max(HUB_HANDOFF_RULE_MAX).optional(),
+  /** SPEC §58: optional routing hints for multi-provider / capacity-pool handoffs. */
+  preferredAgent: hubHandoffAgentSchema.optional(),
+  taskKind: hubTaskKindSchema.optional(),
+  mode: hubPoolModeSchema.optional(),
+  pool: z.boolean().optional(),
 });
 export type HubHandoff = z.infer<typeof hubHandoffSchema>;
 const handoffAccept = z.object({
@@ -323,8 +329,12 @@ const handoffAccept = z.object({
   review: soft(hubHandoffReviewAcceptSchema).optional(),
   /** A request this relay can't read reads as none: the handoff is then an ordinary task, offered to the person. */
   request: soft(z.object({ id: recordId, size: soft(hubRequestSizeSchema) })).optional(),
-  acceptedBy: soft(z.literal("rule")).optional(),
+  acceptedBy: soft(z.enum(["rule", "pool"])).optional(),
   rule: soft(z.string().min(1).transform((s) => s.slice(0, HUB_HANDOFF_RULE_MAX))).optional(),
+  preferredAgent: soft(hubHandoffAgentSchema).optional(),
+  taskKind: soft(hubTaskKindSchema).optional(),
+  mode: soft(hubPoolModeSchema).optional(),
+  pool: soft(z.boolean()).optional(),
 })
   // A review handoff without a readable `review` is dropped too: the relay builds a review's prompt from it.
   .refine((h) => h.kind !== "review" || h.review !== undefined, "a review handoff names its PR");
@@ -349,14 +359,18 @@ export const hubHandoffRequestSchema = z.union([
     repo: repoName.optional(),
     issue: issueId.optional(),
     context: handoffText.optional(),
+    preferredAgent: hubHandoffAgentSchema.optional(),
+    taskKind: hubTaskKindSchema.optional(),
+    mode: hubPoolModeSchema.optional(),
+    pool: z.boolean().optional(),
   }),
   z.strictObject({
     action: hubHandoffUpdateActionSchema,
     id: recordId,
     sessionKey: sessionKey.optional(),
     note: note.optional(),
-    /** On `accept` (§55): this machine's own standing rule accepted it, not the person just now; `rule` says which. */
-    acceptedBy: z.literal("rule").optional(),
+    /** On `accept` (§55, §58): this machine's own standing rule or pool rule accepted it; `rule` says which. */
+    acceptedBy: z.enum(["rule", "pool"]).optional(),
     rule: z.string().min(1).max(HUB_HANDOFF_RULE_MAX).optional(),
   }),
 ]);
@@ -371,13 +385,17 @@ export const hubHandoffRequestAcceptSchema = z.union([
     /** Issue keys read case-insensitively. */
     issue: opt(issueId.transform((s) => s.toUpperCase())),
     context: opt(textAccept(HUB_HANDOFF_TEXT_MAX)),
+    preferredAgent: soft(hubHandoffAgentSchema),
+    taskKind: soft(hubTaskKindSchema),
+    mode: soft(hubPoolModeSchema),
+    pool: soft(z.boolean()),
   }),
   z.object({
     action: hubHandoffUpdateActionSchema,
     id: recordId,
     sessionKey: opt(sessionKey),
     note: opt(cut(HUB_DELEGATE_NOTE_MAX)),
-    acceptedBy: soft(z.literal("rule")),
+    acceptedBy: soft(z.enum(["rule", "pool"])),
     rule: soft(z.string().min(1).transform((s) => s.slice(0, HUB_HANDOFF_RULE_MAX))),
   }),
 ]);

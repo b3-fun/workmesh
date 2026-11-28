@@ -2064,3 +2064,50 @@ Code form: `packages/protocol/src/delegate.ts` (`hubHandoffSchema`, `hubHandoffR
   `acceptedBy` says. A handoff listed with other text after its accept waits again. The started agent gets the same
   environment, with secrets left out.
 
+# Multi-provider capacity, cross-agent delegation & opt-in pools (2026-11-27)
+
+Teammates increasingly pay for subscriptions across several AI coding agents (Claude Code, Codex, OpenCode, Gemini CLI,
+Antigravity, Grok, Cursor, GitHub Copilot, Windsurf, Amp, Aider, Cline). These sections add an opt-in, secret-free
+capacity snapshot on heartbeats and local, terminal-consented delegation pool rules so idle or expiring quota can be
+shared across a developer's own agents and teammates without ever exposing credentials or giving the hub control over
+what runs on a machine.
+
+## 61. Capacity and pool fields on the wire
+
+Code form: `packages/protocol/src/capacity.ts` (`hubCapacityReportSchema`, `hubCapacityReportAcceptSchema`,
+`HUB_CAPACITY_PROVIDERS`, `HUB_HANDOFF_AGENTS`, `HUB_TASK_KINDS`, `HUB_POOL_MODES`) and
+`packages/protocol/src/delegate.ts`.
+
+- **`capacity`** is an optional field on `POST /relay/ingest` (sent on `full` heartbeats only, omitted when
+  `capacity.share` is `"off"`, the default). It carries `share` (`"availability"` or `"detailed"`), `updatedAt` (epoch
+  ms), optional `todayUsd` and `sevenDayUsd` (only at `"detailed"`), and `providers`: up to 16 entries with `id`,
+  `bucket` (`abundant | moderate | tight | exhausted | unavailable`), optional `headroomPct` (only at `"detailed"`),
+  `resetsInSec`, `expiringCredits`, `acceptsPool` (`readonly`, `worktree`), and `quotaMode`
+  (`live | budget | inferred | headers`).
+- **Strictly secret-free.** `capacity` never carries emails, account numbers, organization UUIDs, API keys, or tokens.
+  Ownership comes exclusively from the device token.
+- **Handoff extensions (`POST /relay/handoffs`, `/relay/sync`).** Optional fields:
+  - `preferredAgent`: one of `HUB_HANDOFF_AGENTS` (`claude`, `codex`, `opencode`, `gemini`, `antigravity`, `grok`,
+    `cursor`, `copilot`, `windsurf`, `amp`, `aider`, `cline`, `harness`).
+  - `taskKind`: one of `coding | review | long_context | research | bulk`.
+  - `mode`: `readonly` or `worktree`.
+  - `pool: true`: marks a handoff routed via `to: { person: "pool" }`.
+  - `acceptedBy: "pool"` beside `"rule"` on `accept`, carrying the local pool rule's summary string.
+
+## 62. The relay side (`packages/cli`): multi-provider adapters, delegation & local pool rules
+
+- **Multi-CLI adapters.** Beside Claude Code hooks and Codex hooks/rollout watcher, the daemon polls:
+  - OpenCode (`adapters.opencode`, read-only SQLite `session_v2` in `~/.local/share/opencode/opencode.db`),
+  - Gemini CLI (`adapters.gemini`, read-only `~/.gemini/tmp/*/chats/session-*.json`),
+  - Harness (`adapters.harness`, `harness ps --json`, skipping Claude Code and Codex so native hooks never duplicate).
+- **Local fleet reader & MCP tools.** `lib/fleet.ts` reads qswap's `~/.ai-quota-swap/fleet_status.json` (mtime-cached,
+  secret-free). `workmesh mcp` adds `fleet_status` (read-only) and `delegate` (offers a handoff to `self`, a teammate,
+  or `pool`). A delegated runner sets `WORKMESH_DELEGATION_DEPTH = prev + 1`; any call at depth ≥ 1 is refused to
+  prevent recursive fan-out.
+- **Opt-in capacity & terminal-only pool rules.** `workmesh capacity share <off|availability|detailed>` controls what
+  leaves the machine. `workmesh pool on|off` and `workmesh pool rule add` require an interactive terminal and ask for
+  explicit confirmation. There is no hub endpoint or MCP tool that enables the pool or writes pool rules. Before
+  auto-accepting any offered handoff (`readonly` or `worktree`), the local daemon independently verifies the sender,
+  repo glob, mode, provider allowlist, daily cap, and live qswap headroom floor.
+
+
